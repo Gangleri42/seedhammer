@@ -35,6 +35,7 @@ import (
 	"seedhammer.com/gui/saver"
 	"seedhammer.com/gui/text"
 	"seedhammer.com/gui/widget"
+	"seedhammer.com/nip19"
 	"seedhammer.com/nonstandard"
 	"seedhammer.com/seedqr"
 	slip39words "seedhammer.com/slip39"
@@ -1808,6 +1809,8 @@ func engraveObjectFlow(ctx *Context, th *Colors, obj any) bool {
 		textFlow(ctx, th, scan)
 	case curvesPayload:
 		curvesFlow(ctx, th, scan)
+	case nip19.Key:
+		nostrFlow(ctx, th, scan)
 	default:
 		return false
 	}
@@ -1883,6 +1886,147 @@ func textFlow(ctx *Context, th *Colors, txt plainText) {
 			return
 		}
 	}
+}
+
+// NostrScreen confirms a scanned Nostr key before engraving. For an
+// nsec, Npub holds the derived public key shown alongside the secret;
+// for an npub, Npub is zero. The full key is shown — visual
+// side-channel through the on-device screen is out of scope per the
+// security model, and a partial render would prevent the user from
+// verifying the scan.
+type NostrScreen struct {
+	Key  nip19.Key
+	Npub nip19.Key
+}
+
+func (s *NostrScreen) Confirm(ctx *Context, th *Colors) bool {
+	backBtn := &Clickable{Button: Button1}
+	confirmBtn := &Clickable{Button: Button3}
+	for !ctx.Done {
+		if backBtn.Clicked(ctx) {
+			return false
+		}
+		if confirmBtn.Clicked(ctx) {
+			return true
+		}
+		dims := ctx.Platform.DisplaySize()
+		nav, _ := layoutNavigation(&ctx.B, th, dims, []NavButton{
+			{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack},
+			{Clickable: confirmBtn, Style: StylePrimary, Icon: assets.IconCheckmark},
+		}...)
+		ctx.Frame(op.Layer(nav, s.Draw(ctx, th, dims)))
+	}
+	return false
+}
+
+func (s *NostrScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {
+	const infoSpacing = 8
+
+	r := layout.Rectangle{Max: dims}
+	btnw := assets.NavBtnPrimary.Bounds().Dx()
+	body := r.Shrink(leadingSize, btnw, 0, btnw)
+
+	var bodytxt richText
+	bodyst := ctx.Styles.body
+	subst := ctx.Styles.subtitle
+	switch s.Key.HRP {
+	case nip19.HRPSec:
+		bodytxt.Add(&ctx.B, subst, body.Dx(), th.Text, "Secret (nsec)")
+		bodytxt.Add(&ctx.B, bodyst, body.Dx(), th.Text, s.Key.Bech32())
+		bodytxt.Y += infoSpacing
+		bodytxt.Add(&ctx.B, subst, body.Dx(), th.Text, "Public (npub)")
+		bodytxt.Add(&ctx.B, bodyst, body.Dx(), th.Text, s.Npub.Bech32())
+	case nip19.HRPPub:
+		bodytxt.Add(&ctx.B, subst, body.Dx(), th.Text, "Public (npub)")
+		bodytxt.Add(&ctx.B, bodyst, body.Dx(), th.Text, s.Key.Bech32())
+	}
+	bodyOp := bodytxt.Content.Offset(body.Min.Add(image.Pt(0, scrollFadeDist)))
+
+	title := "Engrave Nostr Key"
+	if s.Key.HRP == nip19.HRPPub {
+		title = "Engrave Public Key"
+	}
+	titleOp, _ := layoutTitle(ctx, dims.X, th.Text, title)
+	return op.Layer(
+		bodyOp,
+		titleOp,
+		op.Color(&ctx.B, th.Background),
+	)
+}
+
+var (
+	errNsecPlate  = errors.New("The secret-key plate does not fit.")
+	errNpubPlate  = errors.New("The public-key plate does not fit.")
+	errNpubDerive = errors.New("Could not derive the public key.")
+)
+
+func nostrFlow(ctx *Context, th *Colors, key nip19.Key) {
+	scr := &NostrScreen{Key: key}
+	if key.HRP == nip19.HRPSec {
+		npub, err := nip19.NpubFrom(key)
+		if err != nil {
+			showError(ctx, th, errNpubDerive, scr.Draw)
+			return
+		}
+		scr.Npub = npub
+		if !scr.Confirm(ctx, th) {
+			return
+		}
+		if !nostrEngrave(ctx, th, scr, backupNsecPlan(ctx, key)) {
+			return
+		}
+		// Re-use the confirmation screen for the public-plate prompt so
+		// the user sees the same key info before the second engraving.
+		scr.Key = npub
+		scr.Npub = nip19.Key{}
+		if !scr.Confirm(ctx, th) {
+			return
+		}
+		nostrEngrave(ctx, th, scr, backupNpubPlan(ctx, npub))
+	} else {
+		if !scr.Confirm(ctx, th) {
+			return
+		}
+		nostrEngrave(ctx, th, scr, backupNpubPlan(ctx, key))
+	}
+}
+
+// nostrPlan pairs a plate plan with the error shown when it cannot fit.
+type nostrPlan struct {
+	plan engrave.Engraving
+	err  error
+	fail error
+}
+
+func backupNsecPlan(ctx *Context, nsec nip19.Key) nostrPlan {
+	plan, err := backup.EngraveNsec(ctx.Platform.EngraverParams(), backup.Nsec{
+		Title: "NSEC",
+		Key:   nsec,
+		Font:  constant.Font,
+	})
+	return nostrPlan{plan: plan, err: err, fail: errNsecPlate}
+}
+
+func backupNpubPlan(ctx *Context, npub nip19.Key) nostrPlan {
+	plan, err := backup.EngraveNpub(ctx.Platform.EngraverParams(), backup.Npub{
+		Title: "NPUB",
+		Key:   npub,
+		Font:  constant.Font,
+	})
+	return nostrPlan{plan: plan, err: err, fail: errNpubPlate}
+}
+
+func nostrEngrave(ctx *Context, th *Colors, scr *NostrScreen, p nostrPlan) bool {
+	if p.err != nil {
+		showError(ctx, th, p.fail, scr.Draw)
+		return false
+	}
+	plate, err := toPlate(p.plan, ctx.Platform.EngraverParams())
+	if err != nil {
+		showError(ctx, th, p.fail, scr.Draw)
+		return false
+	}
+	return NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme)
 }
 
 func newInputFlow(ctx *Context, th *Colors) (any, bool) {

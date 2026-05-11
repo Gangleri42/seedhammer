@@ -11,6 +11,7 @@ import (
 	"seedhammer.com/codex32"
 	"seedhammer.com/curves"
 	"seedhammer.com/font/sh"
+	"seedhammer.com/nip19"
 	"seedhammer.com/nonstandard"
 )
 
@@ -30,6 +31,7 @@ var (
 	errScanInProgress    = errors.New("scan: in progress")
 	errScanOverflow      = errors.New("scan: buffer overflow")
 	errScanUnknownFormat = errors.New("scan: unknown format")
+	errScanCompoundNostr = errors.New("scan: nostr compound entity")
 )
 
 func (s *scanner) Scan(r io.Reader) (any, error) {
@@ -87,6 +89,10 @@ func (s *scanner) Scan(r io.Reader) (any, error) {
 		return d, nil
 	} else if s, err := codex32.New(string(buf)); err == nil {
 		return s, nil
+	} else if k, err := nip19.ParseKey(string(bytes.TrimSpace(buf))); err == nil {
+		return k, nil
+	} else if nip19.IsCompound(string(bytes.TrimSpace(buf))) {
+		return nil, errScanCompoundNostr
 	} else if t, ok := parsePlainText(buf); ok {
 		return t, nil
 	} else {

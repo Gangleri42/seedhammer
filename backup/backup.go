@@ -47,6 +47,34 @@ const MaxTitleLen = 18
 const outerMargin = 3
 const innerMargin = 10
 
+// plateSize is the width and height of a plate in millimeters.
+const plateSize = 85
+
+// CharsPerLine returns the number of fixed-width characters that fit
+// on one plate line at the given text size in millimeters.
+func CharsPerLine(params engrave.Params, fnt *vector.Face, fontMM float32) int {
+	width := params.F(plateSize) - 2*params.I(outerMargin)
+	return width / fixedCharWidth(fnt, params.F(fontMM))
+}
+
+// LinesPerPlate returns the number of text lines that fit a plate at
+// the given text size in millimeters. Together with CharsPerLine it
+// defines the character grid composition tools rely on.
+func LinesPerPlate(params engrave.Params, fontMM float32) int {
+	height := params.F(plateSize) - 2*params.I(outerMargin)
+	return height / params.F(fontMM)
+}
+
+// fixedCharWidth returns the character advance at fontSize machine
+// units, assuming the font is fixed width.
+func fixedCharWidth(fnt *vector.Face, fontSize int) int {
+	w, _, ok := fnt.Decode('W')
+	if !ok {
+		panic("W not in font")
+	}
+	return int(float32(w*fontSize) / float32(fnt.Metrics().Height))
+}
+
 func TitleString(face *vector.Face, s string) string {
 	s = strings.ToUpper(s)
 	res := ""
@@ -261,19 +289,14 @@ func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 		fontSize := params.F(fontMM)
 		fnt := plate.Font
 
-		// Compute character width, assuming the font is fixed width.
-		charWidthf, _, ok := fnt.Decode('W')
-		if !ok {
-			panic("W not in font")
-		}
-		charWidth := int(float32(charWidthf*fontSize) / float32(fnt.Metrics().Height))
+		charWidth := fixedCharWidth(fnt, fontSize)
 		margin := params.I(outerMargin)
 		plateDims := image.Point{
-			X: params.F(85),
-			Y: params.F(85),
+			X: params.F(plateSize),
+			Y: params.F(plateSize),
 		}
 		width := plateDims.X - 2*margin
-		charPerLine := int(width / charWidth)
+		charPerLine := CharsPerLine(params, fnt, fontMM)
 		offy := params.I(outerMargin)
 		for i, p := range plate.Paragraphs {
 			qrLines := 0
@@ -293,22 +316,36 @@ func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 			}
 			lineno := 0
 			txt := p.Text
+			// A '\n' forces a line break; lines longer than the plate
+			// width wrap.
 			for len(txt) > 0 {
-				n := charPerLine
-				if lineno < qrLines {
-					n = charPerQRLine
+				seg := txt
+				if i := strings.IndexByte(txt, '\n'); i >= 0 {
+					seg = txt[:i]
+					txt = txt[i+1:]
+				} else {
+					txt = ""
 				}
-				if n < 1 {
-					n = 1
+				for {
+					n := charPerLine
+					if lineno < qrLines {
+						n = charPerQRLine
+					}
+					if n < 1 {
+						n = 1
+					}
+					if l := len(seg); n > l {
+						n = l
+					}
+					s := seg[:n]
+					seg = seg[n:]
+					t.Offset(margin, offy+lineno*fontSize)
+					engrave.String(fnt, fontSize, s).Engrave(t.Yield)
+					lineno++
+					if len(seg) == 0 {
+						break
+					}
 				}
-				if l := len(txt); n > l {
-					n = l
-				}
-				s := txt[:n]
-				txt = txt[n:]
-				t.Offset(margin, offy+lineno*fontSize)
-				engrave.String(fnt, fontSize, s).Engrave(t.Yield)
-				lineno++
 			}
 			if qr != nil {
 				qrx := plateDims.X - qrsz - margin - qrBorder

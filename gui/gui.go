@@ -381,12 +381,16 @@ var progressImageGen = op.RegisterParameterizedImage(func() op.ParameterizedImag
 	}
 })
 
+// plateFontSizes is the descending ladder of text sizes in millimeters
+// tried until an engraving fits its plate.
+var plateFontSizes = []float32{3.8, 3.4, 3.0}
+
 func NewErrorScreen(err error) *ErrorScreen {
 	switch {
 	case errors.Is(err, ErrTooLarge):
 		return &ErrorScreen{
 			Title: "Too Large",
-			Body:  "The descriptor cannot fit any plate size.",
+			Body:  "The engraving cannot fit any plate size.",
 		}
 	default:
 		return &ErrorScreen{
@@ -425,7 +429,7 @@ func validateDescriptor(params engrave.Params, desc *bip380.Descriptor) ([]strin
 	// QR modules until the engraving fits the plate. QR module size
 	// outranks text size because engraved QR codes are the hardest
 	// element to scan.
-	fontSizes := []float32{3.8, 3.4, 3.0}
+	fontSizes := plateFontSizes
 	qrScales := []int{3, 2}
 	var validLabels []string
 	var validEngravings []Plate
@@ -467,6 +471,42 @@ func validateDescriptor(params engrave.Params, desc *bip380.Descriptor) ([]strin
 		return nil, nil, lastErr
 	}
 	return validLabels, validEngravings, nil
+}
+
+// validateText builds a plate from free-form text, choosing the
+// largest font size whose character grid holds the text without
+// re-wrapping any line, so an engraving matches the composed layout.
+func validateText(params engrave.Params, text string) (Plate, error) {
+	maxLine, lines, n := 0, 1, 0
+	for i := 0; i < len(text); i++ {
+		if text[i] == '\n' {
+			lines++
+			n = 0
+			continue
+		}
+		n++
+		maxLine = max(maxLine, n)
+	}
+	var lastErr error
+	for _, size := range plateFontSizes {
+		if maxLine > backup.CharsPerLine(params, sh.Font, size) ||
+			lines > backup.LinesPerPlate(params, size) {
+			lastErr = ErrTooLarge
+			continue
+		}
+		plan := backup.EngraveText(params, backup.Text{
+			Paragraphs: []backup.Paragraph{{Text: text}},
+			Font:       sh.Font,
+			FontSize:   size,
+		})
+		plate, err := toPlate(plan, params)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return plate, nil
+	}
+	return Plate{}, lastErr
 }
 
 type Plate struct {
@@ -1444,6 +1484,8 @@ func (m *StartScreen) Flow(ctx *Context, th *Colors) (startScreenAction, bool) {
 						continue
 					default:
 						log.Printf("unknown debug command: %q", cmd)
+						m.Status = scanUnknownFormat
+						continue
 					}
 				}
 				return startScreenAction{scan: cnt}, true
@@ -1754,6 +1796,8 @@ func engraveObjectFlow(ctx *Context, th *Colors, obj any) bool {
 		backupSeedStringFlow(ctx, th, s)
 	case *bip380.Descriptor:
 		descriptorFlow(ctx, th, scan)
+	case plainText:
+		textFlow(ctx, th, scan)
 	default:
 		return false
 	}
@@ -1811,6 +1855,23 @@ func descriptorFlow(ctx *Context, th *Colors, desc *bip380.Descriptor) {
 	}
 	for {
 		plate, ok := ds.Confirm(ctx, th)
+		if !ok {
+			break
+		}
+		completed := NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme)
+		if completed {
+			return
+		}
+	}
+}
+
+func textFlow(ctx *Context, th *Colors, txt plainText) {
+	ts := &TextScreen{
+		Text:   string(txt),
+		Notice: textNotice(string(txt)),
+	}
+	for {
+		plate, ok := ts.Confirm(ctx, th)
 		if !ok {
 			break
 		}
@@ -2176,6 +2237,139 @@ func (s *DescriptorScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.O
 	title, _ := layoutTitle(ctx, dims.X, th.Text, "Engrave Descriptor")
 	return op.Layer(
 		bodyOp,
+		title,
+		op.Color(&ctx.B, th.Background),
+	)
+}
+
+type TextScreen struct {
+	Text string
+	// Notice warns about content that resembles a corrupted
+	// structured backup. See textNotice.
+	Notice string
+
+	scroll  int
+	txtclip int
+	inp     InputTracker
+}
+
+// textNotice warns when a text payload resembles a corrupted wallet
+// backup, so an operator does not engrave a broken descriptor or seed
+// phrase believing it still works. Intact backups never reach the
+// text flow; the scanner's structured parsers take them first.
+func textNotice(text string) string {
+	const engraved = " It engraves as plain text."
+	first := text
+	if i := strings.IndexByte(first, '\n'); i >= 0 {
+		first = first[:i]
+	}
+	first = strings.ToLower(strings.TrimLeft(first, " "))
+	for _, p := range []string{"wsh(", "wpkh(", "sh(", "pkh(", "tr(", "multi(", "sortedmulti(", "[", "xpub", "ypub", "zpub", "tpub"} {
+		if strings.HasPrefix(first, p) {
+			return "Looks like a corrupted descriptor." + engraved
+		}
+	}
+	if strings.HasPrefix(first, "ms1") {
+		return "Looks like a corrupted codex32 share." + engraved
+	}
+	// A seed phrase length worth of words, all but at most one in the
+	// BIP39 word list. Valid mnemonics parse before reaching the text
+	// flow, so a match here means a bad word or checksum.
+	words := strings.Fields(text)
+	if n := len(words); n >= 12 && n <= 24 && n%3 == 0 {
+		known := 0
+		for _, w := range words {
+			if _, ok := bip39.ClosestWord(strings.ToUpper(w)); ok {
+				known++
+			}
+		}
+		if known >= n-1 {
+			return "Looks like a seed phrase with a bad word or checksum." + engraved
+		}
+	}
+	return ""
+}
+
+func (s *TextScreen) Confirm(ctx *Context, th *Colors) (Plate, bool) {
+	showErr := func(errScreen *ErrorScreen) {
+		for !ctx.Done {
+			dims := ctx.Platform.DisplaySize()
+			d, dismissed := errScreen.Layout(ctx, th, dims)
+			if dismissed {
+				break
+			}
+			main := s.Draw(ctx, th, dims)
+			ctx.Frame(op.Layer(d, main))
+		}
+	}
+	backBtn := &Clickable{Button: Button1}
+	confirmBtn := &Clickable{Button: Button3}
+	for !ctx.Done {
+		if backBtn.Clicked(ctx) {
+			break
+		}
+		if confirmBtn.Clicked(ctx) {
+			plate, err := validateText(ctx.Platform.EngraverParams(), s.Text)
+			if err != nil {
+				showErr(NewErrorScreen(err))
+				continue
+			}
+			return plate, true
+		}
+
+		dims := ctx.Platform.DisplaySize()
+		nav, _ := layoutNavigation(&ctx.B, th, dims, []NavButton{
+			{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack},
+			{Clickable: confirmBtn, Style: StylePrimary, Icon: assets.IconCheckmark},
+		}...)
+		content := s.Draw(ctx, th, dims)
+		ctx.Frame(op.Layer(nav, content))
+	}
+	return Plate{}, false
+}
+
+func (s *TextScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {
+	// Scroll with the up/down buttons so every line can be reviewed
+	// before engraving.
+	for {
+		e, ok := s.inp.Next(ctx, ButtonFilter(Up), ButtonFilter(Down))
+		if !ok {
+			break
+		}
+		if e, ok := e.AsButton(); ok && e.Pressed {
+			switch e.Button {
+			case Up:
+				s.scroll -= s.txtclip / 2
+			case Down:
+				s.scroll += s.txtclip / 2
+			}
+		}
+	}
+	btnw := assets.NavBtnPrimary.Bounds().Dx()
+	bodyTop := leadingSize
+	var notice op.Op
+	if s.Notice != "" {
+		var sz image.Point
+		notice, sz = widget.Labelw(&ctx.B, ctx.Styles.subtitle, dims.X-2*btnw, th.Text, s.Notice)
+		notice = notice.Offset(image.Pt(btnw, bodyTop))
+		bodyTop += sz.Y
+	}
+	bodyClip := image.Rectangle{
+		Min: image.Pt(btnw, bodyTop),
+		Max: image.Pt(dims.X-btnw, dims.Y),
+	}
+	body, bodysz := widget.Labelw(&ctx.B, ctx.Styles.body, bodyClip.Dx(), th.Text, s.Text)
+	s.txtclip = bodyClip.Dy()
+	maxScroll := bodysz.Y - (bodyClip.Dy() - 2*scrollFadeDist)
+	s.scroll = min(s.scroll, maxScroll)
+	s.scroll = max(s.scroll, 0)
+	body = body.Offset(image.Pt(bodyClip.Min.X, bodyClip.Min.Y+scrollFadeDist-s.scroll))
+	body = fadeClip(&ctx.B, body, bodyClip)
+
+	title, _ := layoutTitle(ctx, dims.X, th.Text, "Engrave Text")
+	return op.Layer(
+		body,
+		notice,
 		title,
 		op.Color(&ctx.B, th.Background),
 	)

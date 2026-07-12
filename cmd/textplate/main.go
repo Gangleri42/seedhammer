@@ -17,8 +17,10 @@ import (
 
 	"seedhammer.com/backup"
 	"seedhammer.com/bspline"
+	"seedhammer.com/curves"
 	"seedhammer.com/engrave"
 	"seedhammer.com/font/sh"
+	"seedhammer.com/nfc/type4"
 )
 
 // The SH2 engraver parameters, as in cmd/controller/platform_sh2.go.
@@ -56,6 +58,12 @@ type fontData struct {
 	StrokeMM float32           `json:"strokeMM"`
 	Sizes    []sizeEntry       `json:"sizes"`
 	Glyphs   map[string]string `json:"glyphs"`
+
+	// The seedhammer.com:curves record parameters, for compiling
+	// compositions to vector payloads.
+	RecordType string `json:"recordType"`
+	Version    int    `json:"version"`
+	PayloadCap int    `json:"payloadCap"`
 }
 
 func main() {
@@ -76,6 +84,11 @@ func main() {
 		MarginMM: 3,
 		StrokeMM: 0.3,
 		Glyphs:   make(map[string]string),
+
+		RecordType: curves.RecordType,
+		Version:    curves.Version,
+		// The NDEF file cap, minus record framing headroom.
+		PayloadCap: type4.NDEFFileSize - 64,
 	}
 	for _, size := range plateFontSizes {
 		data.Sizes = append(data.Sizes, sizeEntry{
@@ -105,25 +118,44 @@ func main() {
 	}
 }
 
-// glyphPath renders a single glyph through the engraving planner and
-// returns its strokes as SVG path commands in font units.
+// glyphPath returns a glyph's strokes as SVG path commands in font
+// units. The path is pure geometry from the font spline, without the
+// planner's travel and acceleration knots, so it doubles as the
+// glyph's curves payload fragment.
 func glyphPath(ch rune) string {
-	em := sh.Font.Metrics().Height
-	plan := engrave.Engraving(func(yield func(engrave.Command) bool) {
-		engrave.String(sh.Font, em, string(ch)).Engrave(yield)
-	})
+	_, spline, ok := sh.Font.Decode(ch)
+	if !ok {
+		panic("glyph not in font")
+	}
+	ascent := sh.Font.Metrics().Ascent
 	var b strings.Builder
 	var seg bspline.Segment
-	for k := range engrave.PlanEngraving(conf, plan) {
+	var prev bspline.Knot
+	first := true
+	emit := func(k bspline.Knot) {
 		c, dt, line := seg.Knot(k)
 		if dt == 0 {
-			continue
+			return
 		}
+		// Font knots are baseline-relative; shift to the cell top.
 		if line {
-			fmt.Fprintf(&b, "C%d %d %d %d %d %d", c.C1.X, c.C1.Y, c.C2.X, c.C2.Y, c.C3.X, c.C3.Y)
+			fmt.Fprintf(&b, "C%d %d %d %d %d %d", c.C1.X, c.C1.Y+ascent, c.C2.X, c.C2.Y+ascent, c.C3.X, c.C3.Y+ascent)
 		} else {
-			fmt.Fprintf(&b, "M%d %d", c.C3.X, c.C3.Y)
+			fmt.Fprintf(&b, "M%d %d", c.C3.X, c.C3.Y+ascent)
 		}
+	}
+	for {
+		vk, ok := spline.Next()
+		if !ok {
+			break
+		}
+		k := bspline.Knot{Ctrl: vk.Ctrl, T: 1, Engrave: vk.Line}
+		if !first && k.Ctrl == prev.Ctrl {
+			k.T = 0
+		}
+		first = false
+		prev = k
+		emit(k)
 	}
 	return b.String()
 }

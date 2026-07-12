@@ -11,6 +11,13 @@ import (
 
 const chunkSize = 128
 
+// NDEFFileSize is the NDEF file size advertised in the capability
+// container: the ceiling on any single message written to the tag.
+// It is the largest value the 2-byte NDEF File Control TLV may hold
+// under mapping version 2.0; 0x8000 and above need the extended TLV,
+// which some phone stacks reject outright.
+const NDEFFileSize = 0x7fff
+
 // Tag emulates a writable empty tag.
 type Tag struct {
 	d            Device
@@ -72,7 +79,6 @@ const (
 	// FSCI 8 corresponds to frame size 256 (table 66).
 	maxFrameSize = 256
 	ndefFileID   = 0x0001
-	maxNDEFSize  = 32768
 	blockSize    = 4
 	readSize     = 16
 
@@ -122,10 +128,10 @@ func init() {
 	// Control block TLV. Section 5.1.2.1.
 	capContainer = append(capContainer, 0x04)
 	capContainer = append(capContainer, 0x06)
-	capContainer = bo.AppendUint16(capContainer, ndefFileID)  // File identifier.
-	capContainer = bo.AppendUint16(capContainer, maxNDEFSize) // Maximum NDEF size.
-	capContainer = append(capContainer, 0x00)                 // Read allowed.
-	capContainer = append(capContainer, 0x00)                 // Write allowed.
+	capContainer = bo.AppendUint16(capContainer, ndefFileID)   // File identifier.
+	capContainer = bo.AppendUint16(capContainer, NDEFFileSize) // Maximum NDEF size.
+	capContainer = append(capContainer, 0x00)                  // Read allowed.
+	capContainer = append(capContainer, 0x00)                  // Write allowed.
 }
 
 // Read file contents written by a NFC writer.

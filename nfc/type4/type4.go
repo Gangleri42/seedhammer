@@ -72,7 +72,7 @@ const (
 	// FSCI 8 corresponds to frame size 256 (table 66).
 	maxFrameSize = 256
 	ndefFileID   = 0x0001
-	maxNDEFSize  = 8192
+	maxNDEFSize  = 32768
 	blockSize    = 4
 	readSize     = 16
 

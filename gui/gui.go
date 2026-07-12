@@ -1824,16 +1824,9 @@ func backupWalletFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic) {
 		}
 		plate, err := engraveSeed(ctx.Platform.EngraverParams(), mnemonic)
 		if err != nil {
-			errScr := NewErrorScreen(err)
-			for !ctx.Done {
-				dims := ctx.Platform.DisplaySize()
-				d, dismissed := errScr.Layout(ctx, th, dims)
-				if dismissed {
-					break
-				}
-				main := ss.Draw(ctx, th, dims, mnemonic)
-				ctx.Frame(op.Layer(d, main))
-			}
+			showError(ctx, th, err, func(ctx *Context, th *Colors, dims image.Point) op.Op {
+				return ss.Draw(ctx, th, dims, mnemonic)
+			})
 			continue
 		}
 		completed := NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme)
@@ -2162,18 +2155,24 @@ type DescriptorScreen struct {
 	Descriptor *bip380.Descriptor
 }
 
-func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (Plate, bool) {
-	showErr := func(errScreen *ErrorScreen) {
-		for !ctx.Done {
-			dims := ctx.Platform.DisplaySize()
-			d, dismissed := errScreen.Layout(ctx, th, dims)
-			if dismissed {
-				break
-			}
-			main := s.Draw(ctx, th, dims)
-			ctx.Frame(op.Layer(d, main))
+// showError overlays err's screen over draw until dismissed.
+func showError(ctx *Context, th *Colors, err error, draw func(*Context, *Colors, image.Point) op.Op) {
+	scr := NewErrorScreen(err)
+	for !ctx.Done {
+		dims := ctx.Platform.DisplaySize()
+		d, dismissed := scr.Layout(ctx, th, dims)
+		if dismissed {
+			break
 		}
+		ctx.Frame(op.Layer(d, draw(ctx, th, dims)))
 	}
+}
+
+// confirmScreen drives a back/confirm navigation loop over draw. The
+// confirm button calls validate: an error overlays the screen and the
+// loop continues; ok reports whether the plate is ready, and false
+// with a nil error re-enters the loop (e.g. a cancelled choice).
+func confirmScreen(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Point) op.Op, validate func() (Plate, bool, error)) (Plate, bool) {
 	backBtn := &Clickable{Button: Button1}
 	confirmBtn := &Clickable{Button: Button3}
 	for !ctx.Done {
@@ -2181,21 +2180,15 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (Plate, bool) {
 			break
 		}
 		if confirmBtn.Clicked(ctx) {
-			labels, engravings, err := validateDescriptor(ctx.Platform.EngraverParams(), s.Descriptor)
+			plate, ok, err := validate()
 			if err != nil {
-				showErr(NewErrorScreen(err))
+				showError(ctx, th, err, draw)
 				continue
 			}
-			cs := &ChoiceScreen{
-				Title:   "Engrave",
-				Lead:    "Choose engraving",
-				Choices: labels,
-			}
-			choice, ok := cs.Choose(ctx, th)
 			if ok {
-				e := engravings[choice]
-				return e, true
+				return plate, true
 			}
+			continue
 		}
 
 		dims := ctx.Platform.DisplaySize()
@@ -2203,10 +2196,28 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (Plate, bool) {
 			{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack},
 			{Clickable: confirmBtn, Style: StylePrimary, Icon: assets.IconCheckmark},
 		}...)
-		content := s.Draw(ctx, th, dims)
-		ctx.Frame(op.Layer(nav, content))
+		ctx.Frame(op.Layer(nav, draw(ctx, th, dims)))
 	}
 	return Plate{}, false
+}
+
+func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (Plate, bool) {
+	return confirmScreen(ctx, th, s.Draw, func() (Plate, bool, error) {
+		labels, engravings, err := validateDescriptor(ctx.Platform.EngraverParams(), s.Descriptor)
+		if err != nil {
+			return Plate{}, false, err
+		}
+		cs := &ChoiceScreen{
+			Title:   "Engrave",
+			Lead:    "Choose engraving",
+			Choices: labels,
+		}
+		choice, ok := cs.Choose(ctx, th)
+		if !ok {
+			return Plate{}, false, nil
+		}
+		return engravings[choice], true, nil
+	})
 }
 
 func (s *DescriptorScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {
@@ -2303,41 +2314,10 @@ func textNotice(text string) string {
 }
 
 func (s *TextScreen) Confirm(ctx *Context, th *Colors) (Plate, bool) {
-	showErr := func(errScreen *ErrorScreen) {
-		for !ctx.Done {
-			dims := ctx.Platform.DisplaySize()
-			d, dismissed := errScreen.Layout(ctx, th, dims)
-			if dismissed {
-				break
-			}
-			main := s.Draw(ctx, th, dims)
-			ctx.Frame(op.Layer(d, main))
-		}
-	}
-	backBtn := &Clickable{Button: Button1}
-	confirmBtn := &Clickable{Button: Button3}
-	for !ctx.Done {
-		if backBtn.Clicked(ctx) {
-			break
-		}
-		if confirmBtn.Clicked(ctx) {
-			plate, err := validateText(ctx.Platform.EngraverParams(), s.Text)
-			if err != nil {
-				showErr(NewErrorScreen(err))
-				continue
-			}
-			return plate, true
-		}
-
-		dims := ctx.Platform.DisplaySize()
-		nav, _ := layoutNavigation(&ctx.B, th, dims, []NavButton{
-			{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack},
-			{Clickable: confirmBtn, Style: StylePrimary, Icon: assets.IconCheckmark},
-		}...)
-		content := s.Draw(ctx, th, dims)
-		ctx.Frame(op.Layer(nav, content))
-	}
-	return Plate{}, false
+	return confirmScreen(ctx, th, s.Draw, func() (Plate, bool, error) {
+		plate, err := validateText(ctx.Platform.EngraverParams(), s.Text)
+		return plate, err == nil, err
+	})
 }
 
 func (s *TextScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {

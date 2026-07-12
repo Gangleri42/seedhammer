@@ -402,7 +402,6 @@ func validateDescriptor(params engrave.Params, desc *bip380.Descriptor) ([]strin
 	if err != nil {
 		return nil, nil, err
 	}
-	const qrScale = 3
 	type textEngraving struct {
 		Label     string
 		Paragraph backup.Paragraph
@@ -411,7 +410,7 @@ func validateDescriptor(params engrave.Params, desc *bip380.Descriptor) ([]strin
 	engravings := []textEngraving{
 		{
 			"TEXT + QR",
-			backup.Paragraph{Text: enc, QR: qrc, QRScale: qrScale},
+			backup.Paragraph{Text: enc, QR: qrc},
 		},
 		{
 			"TEXT ONLY",
@@ -419,26 +418,50 @@ func validateDescriptor(params engrave.Params, desc *bip380.Descriptor) ([]strin
 		},
 		{
 			"QR ONLY",
-			backup.Paragraph{QR: qrc, QRScale: qrScale},
+			backup.Paragraph{QR: qrc},
 		},
 	}
+	// For each variant, fall back to smaller text and then to finer
+	// QR modules until the engraving fits the plate. QR module size
+	// outranks text size because engraved QR codes are the hardest
+	// element to scan.
+	fontSizes := []float32{3.8, 3.4, 3.0}
+	qrScales := []int{3, 2}
 	var validLabels []string
 	var validEngravings []Plate
 
 	var lastErr error
 	for _, e := range engravings {
-		descPlate := backup.Text{
-			Paragraphs: []backup.Paragraph{e.Paragraph},
-			Font:       sh.Font,
+		sizes := fontSizes
+		if e.Paragraph.Text == "" {
+			// The text size doesn't affect a lone QR.
+			sizes = fontSizes[:1]
 		}
-		plan := backup.EngraveText(params, descPlate)
-		plate, err := toPlate(plan, params)
-		if err != nil {
-			lastErr = err
-			continue
+		scales := qrScales
+		if e.Paragraph.QR == nil {
+			scales = qrScales[:1]
 		}
-		validLabels = append(validLabels, e.Label)
-		validEngravings = append(validEngravings, plate)
+	search:
+		for _, scale := range scales {
+			for _, size := range sizes {
+				p := e.Paragraph
+				p.QRScale = scale
+				descPlate := backup.Text{
+					Paragraphs: []backup.Paragraph{p},
+					Font:       sh.Font,
+					FontSize:   size,
+				}
+				plan := backup.EngraveText(params, descPlate)
+				plate, err := toPlate(plan, params)
+				if err != nil {
+					lastErr = err
+					continue
+				}
+				validLabels = append(validLabels, e.Label)
+				validEngravings = append(validEngravings, plate)
+				break search
+			}
+		}
 	}
 	if len(validEngravings) == 0 {
 		return nil, nil, lastErr
@@ -1350,6 +1373,8 @@ func (m *StartScreen) Flow(ctx *Context, th *Colors) (startScreenAction, bool) {
 		wakeup := ctx.Platform.Wakeup
 		go func() {
 			s := new(scanner)
+			var lastStatus scanStatus
+			var lastWake time.Time
 			for {
 				select {
 				case <-closer:
@@ -1371,6 +1396,14 @@ func (m *StartScreen) Flow(ctx *Context, th *Colors) (startScreenAction, bool) {
 					scan.Status = scanFailed
 					log.Printf("nfc scan: %v", err)
 				}
+				// Deliver only news: every wakeup redraws a full frame,
+				// and a redraw per received chunk starves this goroutine
+				// past the writer's frame waiting time. Unchanged status
+				// is refreshed at half the label decay interval.
+				if scan.Object == nil && scan.Status == lastStatus &&
+					time.Since(lastWake) < scanStatusTimeout/2 {
+					continue
+				}
 				// Merge the previous result.
 				select {
 				case old := <-scans:
@@ -1382,6 +1415,8 @@ func (m *StartScreen) Flow(ctx *Context, th *Colors) (startScreenAction, bool) {
 				}
 				scans <- scan
 				wakeup()
+				lastStatus = scan.Status
+				lastWake = time.Now()
 				if scan.Status == scanFailed {
 					// Wait a bit before attempting to scan again.
 					time.Sleep(1 * time.Second)
@@ -2389,6 +2424,11 @@ func Run(pl Platform, version string) func(yield func() bool) {
 				if !ok {
 					break
 				}
+				// Yield between chunks: rasterization doesn't block
+				// on I/O, and goroutines such as the NFC pump must
+				// respond within their protocol deadlines even while
+				// a frame is drawn.
+				runtime.Gosched()
 				fbdims := fb.Bounds().Size()
 				npix := fbdims.X * fbdims.Y
 				if a.mask == nil || len(a.mask.Pix) < npix {

@@ -462,24 +462,27 @@ func Sample(points []Point, b Cubic, spacing int) []Point {
 	adjSpacing := (totalDist + nsamples - 1) / nsamples
 	prev = first
 	var d int
-	pi := 0
-	// Sample inner points.
+	// Sample inner points. Spacings finer than the estimate
+	// partition degenerate into repeated positions; skip them
+	// rather than emit duplicate samples.
 	in = new(Interpolator)
 	in.Segment(b, samplingRate)
 	for range nsamples - 1 {
-		var s Point
-		for d < adjSpacing {
-			pi++
-			in.Step()
+		s := prev
+		for d < adjSpacing && in.Step() {
 			s = in.Position()
 			d += dist(prev, s)
 			prev = s
 		}
-		points = append(points, s)
+		if len(points) == 0 || points[len(points)-1] != s {
+			points = append(points, s)
+		}
 		d -= adjSpacing
 	}
 	// Force endpoint to align with curve segment end.
-	points = append(points, b.C3)
+	if len(points) == 0 || points[len(points)-1] != b.C3 {
+		points = append(points, b.C3)
+	}
 	return points
 }
 

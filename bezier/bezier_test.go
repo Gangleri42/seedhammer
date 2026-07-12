@@ -10,6 +10,38 @@ import (
 	"testing"
 )
 
+func TestSampleFineSpacing(t *testing.T) {
+	// Sampling finer than the internal length-estimate partition
+	// must not emit duplicate or zero-value points.
+	line := func(p0, p1 Point) Cubic {
+		return Cubic{
+			C0: p0,
+			C1: p0.Mul(2).Add(p1).Div(3),
+			C2: p1.Mul(2).Add(p0).Div(3),
+			C3: p1,
+		}
+	}
+	tests := []Cubic{
+		line(Pt(32000, 32000), Pt(512000, 32000)),
+		line(Pt(512000, 32000), Pt(32000, 33000)),
+		{C0: Pt(0, 0), C1: Pt(0, 400000), C2: Pt(400000, 400000), C3: Pt(400000, 0)},
+	}
+	for _, c := range tests {
+		samples := Sample([]Point{c.C0}, c, 1920)
+		for i, s := range samples {
+			if i == 0 {
+				continue
+			}
+			if s == samples[i-1] {
+				t.Errorf("Sample(%v): duplicate point %v at %d", c, s, i)
+			}
+		}
+		if got := samples[len(samples)-1]; got != c.C3 {
+			t.Errorf("Sample(%v) ends at %v, want %v", c, got, c.C3)
+		}
+	}
+}
+
 func TestBezierAccuracy(t *testing.T) {
 	curves := []struct {
 		steps uint

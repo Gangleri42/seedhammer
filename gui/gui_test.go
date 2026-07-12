@@ -9,6 +9,7 @@ import (
 	"io"
 	"iter"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -152,6 +153,45 @@ func newTestEngraveScreen(t *testing.T, ctx *Context) *EngraveScreen {
 		ctx,
 		engravings[0],
 	)
+}
+
+func TestValidateDescriptorFallback(t *testing.T) {
+	multisig := func(threshold, nkeys int) *bip380.Descriptor {
+		desc := &bip380.Descriptor{
+			Script:    bip380.P2WSH,
+			Threshold: threshold,
+			Type:      bip380.SortedMulti,
+			Keys:      make([]bip380.Key, nkeys),
+		}
+		fillDescriptor(t, desc, desc.Script.DerivationPath(), 12, 0)
+		return desc
+	}
+	tests := []struct {
+		threshold, nkeys int
+		want             []string
+	}{
+		// Fits every layout, falling back to smaller text and finer
+		// QR modules where needed.
+		{2, 3, []string{"TEXT + QR", "TEXT ONLY", "QR ONLY"}},
+		// Too long for text wrapped around a QR at any fallback.
+		{4, 6, []string{"TEXT ONLY", "QR ONLY"}},
+	}
+	for _, test := range tests {
+		labels, engravings, err := validateDescriptor(engraverParams, multisig(test.threshold, test.nkeys))
+		if err != nil {
+			t.Fatalf("%d-of-%d: %v", test.threshold, test.nkeys, err)
+		}
+		if !slices.Equal(labels, test.want) {
+			t.Errorf("%d-of-%d: got engravings %q, want %q", test.threshold, test.nkeys, labels, test.want)
+		}
+		if len(engravings) != len(labels) {
+			t.Errorf("%d-of-%d: %d engravings for %d labels", test.threshold, test.nkeys, len(engravings), len(labels))
+		}
+	}
+	// Beyond the largest QR code that fits the plate.
+	if _, _, err := validateDescriptor(engraverParams, multisig(9, 16)); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("16-key descriptor: got %v, want ErrTooLarge", err)
+	}
 }
 
 func TestEngraveScreenCancel(t *testing.T) {

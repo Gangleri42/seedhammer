@@ -4,7 +4,6 @@ package backup
 import (
 	"fmt"
 	"image"
-	"math"
 	"strings"
 
 	qr "github.com/seedhammer/kortschak-qr"
@@ -32,6 +31,9 @@ type SeedString struct {
 type Text struct {
 	Paragraphs []Paragraph
 	Font       *vector.Face
+	// FontSize is the text size in millimeters. If zero, it defaults
+	// to plateFontSizeUR (3.8mm).
+	FontSize float32
 }
 
 type Paragraph struct {
@@ -252,7 +254,11 @@ func stringColumn(t engrave.Transform, constant *engrave.ConstantStringer, font 
 func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 	return func(yield func(engrave.Command) bool) {
 		t := engrave.NewTransform(yield)
-		fontSize := params.F(plateFontSizeUR)
+		fontMM := plate.FontSize
+		if fontMM == 0 {
+			fontMM = plateFontSizeUR
+		}
+		fontSize := params.F(fontMM)
 		fnt := plate.Font
 
 		// Compute character width, assuming the font is fixed width.
@@ -262,9 +268,6 @@ func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 		}
 		charWidth := int(float32(charWidthf*fontSize) / float32(fnt.Metrics().Height))
 		margin := params.I(outerMargin)
-		innerMargin := params.I(innerMargin)
-		holeChars := int(math.Ceil(float64(innerMargin-margin) / float64(charWidth)))
-		holeLines := int(math.Ceil(float64(innerMargin-margin) / float64(fontSize)))
 		plateDims := image.Point{
 			X: params.F(85),
 			Y: params.F(85),
@@ -292,22 +295,8 @@ func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 			txt := p.Text
 			for len(txt) > 0 {
 				n := charPerLine
-				offx := 0
-				isQRLine := holeLines <= lineno && lineno < holeLines+qrLines
-				if isQRLine {
+				if lineno < qrLines {
 					n = charPerQRLine
-				}
-				// Avoid screw holes on the smaller plates on the first and last lines.
-				holeLine := offy+lineno*fontSize < innerMargin ||
-					offy+(lineno+1)*fontSize > plateDims.Y-innerMargin
-				if holeLine {
-					if !isQRLine {
-						// End of line.
-						n -= holeChars
-					}
-					// Beginning of line.
-					n -= holeChars
-					offx = holeChars * charWidth
 				}
 				if n < 1 {
 					n = 1
@@ -317,13 +306,13 @@ func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 				}
 				s := txt[:n]
 				txt = txt[n:]
-				t.Offset(offx+margin, offy+lineno*fontSize)
+				t.Offset(margin, offy+lineno*fontSize)
 				engrave.String(fnt, fontSize, s).Engrave(t.Yield)
 				lineno++
 			}
 			if qr != nil {
 				qrx := plateDims.X - qrsz - margin - qrBorder
-				qry := offy + holeLines*fontSize + (qrLines*fontSize-qrsz)/2
+				qry := offy + (qrLines*fontSize-qrsz)/2
 				if len(p.Text) == 0 {
 					// Center QR.
 					qrx, qry = (plateDims.X-qrsz)/2, (plateDims.Y-qrsz)/2

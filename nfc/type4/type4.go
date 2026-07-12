@@ -58,8 +58,12 @@ const (
 		0b1<<5 | // Include TB(1).
 		0b1<<6 | // Include TC(1).
 		fsci
-	atsTA1 = 0x00   // Bit rate 106kb/s only.
-	atsTB1 = 8<<4 | // FWI = FWImax (~77ms)
+	atsTA1 = 0x00    // Bit rate 106kb/s only.
+	atsTB1 = 12<<4 | // FWI = 12 (FWT ~1.24s). The NFC Forum tag limit is
+		// 8 (~77ms), but the pump goroutine shares the gui render path,
+		// and a slow frame between UPDATE_BINARY commands makes phones
+		// abort NDEF writes. Readers accept FWI up to the ISO 14443-4
+		// maximum of 14 (~4.95s).
 		0 // SFGT = 0 (no guard time)
 	atsTC1 = 0 // No support for NAD nor DID.
 

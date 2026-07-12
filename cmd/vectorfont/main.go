@@ -12,13 +12,13 @@ import (
 	"math"
 	"os"
 	"runtime"
-	"strconv"
 	"strings"
 	"unicode"
 
 	"seedhammer.com/bezier"
 	"seedhammer.com/bspline"
 	"seedhammer.com/font/vector"
+	"seedhammer.com/svgpath"
 )
 
 var (
@@ -36,20 +36,6 @@ type Face struct {
 	// Spline knots encoded as line byte(0 or 1), int16(x-coord), int16(y-coord).
 	Splines []byte
 }
-
-type segment struct {
-	Op   SegmentOp
-	Args [4]bezier.Point
-}
-
-type SegmentOp uint32
-
-const (
-	SegmentOpMoveTo SegmentOp = iota
-	SegmentOpLineTo
-	SegmentOpQuadTo
-	SegmentOpCubeTo
-)
 
 func main() {
 	flag.Parse()
@@ -97,13 +83,13 @@ func run(infile, name string) error {
 	return nil
 }
 
-func buildBSplines(f *Face, runeToSegs map[rune][]segment) (samples map[rune][]bezier.Point, err error) {
+func buildBSplines(f *Face, runeToSegs map[rune][]svgpath.Segment) (samples map[rune][]bezier.Point, err error) {
 	// Spline optimization is slow, so smear out the work across
 	// available CPUs.
 	var index [unicode.MaxASCII][]byte
 	type job struct {
 		r    rune
-		segs []segment
+		segs []svgpath.Segment
 	}
 	type result struct {
 		r       rune
@@ -123,7 +109,7 @@ func buildBSplines(f *Face, runeToSegs map[rune][]segment) (samples map[rune][]b
 				if !ok {
 					return
 				}
-				s, spline, err := segmentsToBSpline(j.segs, prec)
+				s, spline, err := svgpath.ToBSpline(j.segs, prec, *splice)
 				res <- result{j.r, s, encodeBSpline(spline), err}
 			}
 		}()
@@ -166,92 +152,6 @@ func encodeBSpline(spline []vector.Knot) []byte {
 		knots = bo.AppendUint16(knots, uint16(y))
 	}
 	return knots
-}
-
-func segmentsToBSpline(segs []segment, prec int) (allSamples []bezier.Point, spline []vector.Knot, err error) {
-	var samples []bezier.Point
-	var interpolateErr error
-	flushSamples := func(line bool) {
-		if interpolateErr != nil || len(samples) == 0 {
-			return
-		}
-		for i, s := range samples[:len(samples)-1] {
-			s2 := samples[i+1]
-			if s == s2 {
-				interpolateErr = fmt.Errorf("overlapping sampling point %v", s)
-				return
-			}
-		}
-
-		uspline, err := bspline.InterpolatePoints(samples)
-		allSamples = append(allSamples, samples...)
-		samples = samples[:0]
-		if err != nil {
-			interpolateErr = err
-			return
-		}
-		for _, k := range uspline[3:] {
-			spline = append(spline, vector.Knot{
-				Ctrl: k,
-				Line: line,
-			})
-		}
-	}
-	appendBezier := func(c bezier.Cubic) {
-		if len(samples) == 0 {
-			samples = append(samples, c.C0)
-		}
-		samples = bezier.Sample(samples, c, prec)
-	}
-	p0 := bezier.Point{}
-	for i, s := range segs {
-		switch s.Op {
-		case SegmentOpMoveTo:
-			flushSamples(true)
-			p1 := s.Args[0]
-			if n := len(spline); n > 0 {
-				spline[n-1].Line = false
-			}
-			k := vector.Knot{Ctrl: p1}
-			spline = append(spline, k, k, k)
-			p0 = p1
-		case SegmentOpLineTo:
-			p1 := s.Args[0]
-			c := bezier.Cubic{
-				C0: p0,
-				C1: p0.Mul(2).Add(p1).Div(3),
-				C2: p1.Mul(2).Add(p0).Div(3),
-				C3: p1,
-			}
-			p0 = p1
-			// If this line is part of a longer shape,
-			// append it as a (straight) curve segment.
-			if *splice && (i >= 0 && segs[i-1].Op != SegmentOpMoveTo ||
-				i < len(segs)-1 && segs[i+1].Op != SegmentOpMoveTo) {
-				appendBezier(c)
-				break
-			}
-			flushSamples(true)
-			if n := len(spline); n > 0 {
-				spline[n-1].Line = true
-			}
-			k := vector.Knot{Ctrl: p1, Line: true}
-			spline = append(spline, k, k, k)
-		case SegmentOpCubeTo:
-			p1 := s.Args[0]
-			p2 := s.Args[1]
-			p3 := s.Args[2]
-			c := bezier.Cubic{
-				C0: p0, C1: p1, C2: p2, C3: p3,
-			}
-			p0 = p3
-			appendBezier(c)
-		default:
-			panic("unknown segment type")
-		}
-	}
-	flushSamples(true)
-	return allSamples, spline, interpolateErr
 }
 
 var bo = binary.LittleEndian
@@ -307,7 +207,7 @@ type MetaData struct {
 	Advance, Height, Baseline int
 }
 
-func convert(svg []byte) (*Face, map[rune][]segment, error) {
+func convert(svg []byte) (*Face, map[rune][]svgpath.Segment, error) {
 	d := xml.NewDecoder(bytes.NewReader(svg))
 	for {
 		root, err := d.Token()
@@ -380,9 +280,9 @@ func mustInt(v float64) int {
 	return int(math.Round(v * sf))
 }
 
-func parseChars(face *Face, d *xml.Decoder, adv, ascent int) (map[rune][]segment, error) {
+func parseChars(face *Face, d *xml.Decoder, adv, ascent int) (map[rune][]svgpath.Segment, error) {
 	offx := 0
-	runeToSegs := make(map[rune][]segment)
+	runeToSegs := make(map[rune][]svgpath.Segment)
 	for {
 		t, err := d.Token()
 		if err != nil {
@@ -419,7 +319,7 @@ func parseChars(face *Face, d *xml.Decoder, adv, ascent int) (map[rune][]segment
 		if err != nil {
 			return nil, err
 		}
-		if segs2 := optimizeSegments(segs); len(segs2) > 0 {
+		if segs2 := svgpath.Optimize(segs); len(segs2) > 0 {
 			runeToSegs[r] = segs2
 		}
 		face.Index[r] = vector.Glyph{
@@ -430,78 +330,9 @@ func parseChars(face *Face, d *xml.Decoder, adv, ascent int) (map[rune][]segment
 	return runeToSegs, nil
 }
 
-func optimizeSegments(segs []segment) []segment {
-	var opt []segment
-	var p0, pMinusOne bezier.Point
-skip:
-	for _, s := range segs {
-		var pNext bezier.Point
-		for {
-			switch s.Op {
-			case SegmentOpMoveTo, SegmentOpLineTo:
-				p1 := s.Args[0]
-				if p1 == p0 {
-					continue skip
-				}
-				pNext = p1
-				// Merge colinear segments of the same type.
-				if len(opt) > 0 {
-					if prevSeg := opt[len(opt)-1]; prevSeg.Op == s.Op {
-						if onSegment(p0, pMinusOne, p1) {
-							opt[len(opt)-1].Args[0] = p1
-							continue skip
-						}
-					}
-				}
-			case SegmentOpQuadTo:
-				p12 := s.Args[0]
-				p3 := s.Args[1]
-				// Expand to cubic.
-				p1 := mix(p12, p0, 1.0/3.0)
-				p2 := mix(p12, p3, 1.0/3.0)
-				s.Op = SegmentOpCubeTo
-				copy(s.Args[:], []bezier.Point{
-					p1, p2, p3,
-				})
-				continue
-			case SegmentOpCubeTo:
-				p1 := s.Args[0]
-				p2 := s.Args[1]
-				p3 := s.Args[2]
-				// Check whether the segment degenerates into
-				// a line, which is equivalent to checking whether
-				// the two inner control points lie on the line segment
-				// of the endpoints.
-				if onSegment(p1, p0, p3) && onSegment(p2, p0, p3) {
-					s.Op = SegmentOpLineTo
-					s.Args[0] = p3
-					continue
-				}
-				pNext = p3
-			}
-			break
-		}
-		opt = append(opt, s)
-		p0, pMinusOne = pNext, p0
-	}
-	return opt
-}
-
-// onSegment checks if point p lies on the segment between a and b.
-func onSegment(p, a, b bezier.Point) bool {
-	// Check collinearity using the cross product.
-	if cross := (p.Y-a.Y)*(b.X-a.X) - (p.X-a.X)*(b.Y-a.Y); cross != 0 {
-		return false
-	}
-
-	// p must also lie in the bounding box with a and b as corners.
-	return p.X >= min(a.X, b.X) && p.X <= max(a.X, b.X) &&
-		p.Y >= min(a.Y, b.Y) && p.Y <= max(a.Y, b.Y)
-}
-
-func parseSegments(face *Face, d *xml.Decoder, e xml.StartElement, offx, offy int, segs []segment) ([]segment, error) {
-	encode := func(op SegmentOp, args ...bezier.Point) {
-		seg := segment{Op: op}
+func parseSegments(face *Face, d *xml.Decoder, e xml.StartElement, offx, offy int, segs []svgpath.Segment) ([]svgpath.Segment, error) {
+	encode := func(op svgpath.SegmentOp, args ...bezier.Point) {
+		seg := svgpath.Segment{Op: op}
 		if len(args) > len(seg.Args) {
 			panic("too many arguments")
 		}
@@ -535,8 +366,8 @@ func parseSegments(face *Face, d *xml.Decoder, e xml.StartElement, offx, offy in
 		if err := d.DecodeElement(&line, &e); err != nil {
 			return segs, err
 		}
-		encode(SegmentOpMoveTo, bezier.Pt(mustInt(line.X1)+offx, mustInt(line.Y1)+offy))
-		encode(SegmentOpLineTo, bezier.Pt(mustInt(line.X2)+offx, mustInt(line.Y2)+offy))
+		encode(svgpath.MoveTo, bezier.Pt(mustInt(line.X1)+offx, mustInt(line.Y1)+offy))
+		encode(svgpath.LineTo, bezier.Pt(mustInt(line.X2)+offx, mustInt(line.Y2)+offy))
 		return segs, nil
 	case "polyline":
 		points, ok := findAttr(e, "points")
@@ -550,9 +381,9 @@ func parseSegments(face *Face, d *xml.Decoder, e xml.StartElement, offx, offy in
 			if _, err := fmt.Sscanf(c, "%f,%f", &x, &y); err != nil {
 				return segs, fmt.Errorf("invalid coordinates %q in <polyline>:", c)
 			}
-			op := SegmentOpLineTo
+			op := svgpath.LineTo
 			if i == 0 {
-				op = SegmentOpMoveTo
+				op = svgpath.MoveTo
 			}
 			encode(op, bezier.Pt(mustInt(x)+offx, mustInt(y)+offy))
 		}
@@ -562,143 +393,15 @@ func parseSegments(face *Face, d *xml.Decoder, e xml.StartElement, offx, offy in
 		if !ok {
 			return segs, errors.New("missing d attribute for <path>")
 		}
-		cmds = strings.TrimSpace(cmds)
-		pen := bezier.Pt(offx, offy)
-		initPoint := pen
-		ctrl2 := pen
-		for {
-			cmds = strings.TrimLeft(cmds, " ,\t\n")
-			if len(cmds) == 0 {
-				break
-			}
-			orig := cmds
-			op := rune(cmds[0])
-			cmds = cmds[1:]
-			switch op {
-			case 'M', 'm', 'V', 'v', 'L', 'l', 'H', 'h', 'C', 'c', 'S', 's':
-			case 'Z', 'z':
-				if pen != initPoint {
-					encode(SegmentOpLineTo, initPoint)
-					pen = initPoint
-				}
-				ctrl2 = initPoint
-				continue
-			default:
-				return segs, fmt.Errorf("unknown <path> command %s in %q", string(op), orig)
-			}
-			var coords []int
-			for {
-				cmds = strings.TrimLeft(cmds, " ,\t\n")
-				if len(cmds) == 0 {
-					break
-				}
-				n, x, ok := parseFloat(cmds)
-				if !ok {
-					break
-				}
-				cmds = cmds[n:]
-				coords = append(coords, mustInt(x))
-			}
-			rel := unicode.IsLower(op)
-			newPen := pen
-			switch unicode.ToLower(op) {
-			case 'h':
-				for _, x := range coords {
-					p := bezier.Pt(x, pen.Y)
-					if rel {
-						p.X += pen.X
-					} else {
-						p.X += offx
-					}
-					encode(SegmentOpLineTo, p)
-					newPen = p
-				}
-				pen = newPen
-				ctrl2 = newPen
-				continue
-			case 'v':
-				for _, y := range coords {
-					p := bezier.Pt(pen.X, y)
-					if rel {
-						p.Y += pen.Y
-					} else {
-						p.Y += offy
-					}
-					encode(SegmentOpLineTo, p)
-					newPen = p
-				}
-				pen = newPen
-				ctrl2 = newPen
-				continue
-			}
-			if len(coords)%2 != 0 {
-				return segs, fmt.Errorf("odd number of coordinates in <path> data: %q", orig)
-			}
-			var off bezier.Point
-			if rel {
-				// Relative command.
-				off = pen
-			} else {
-				off = bezier.Pt(offx, offy)
-			}
-			var points []bezier.Point
-			for i := 0; i < len(coords); i += 2 {
-				p := bezier.Pt(coords[i], coords[i+1])
-				p = p.Add(off)
-				points = append(points, p)
-			}
-			newCtrl2 := ctrl2
-			switch op := unicode.ToLower(op); op {
-			case 'm', 'l':
-				sop := SegmentOpMoveTo
-				if op == 'l' {
-					sop = SegmentOpLineTo
-				}
-				for _, p := range points {
-					encode(sop, p)
-					newPen = p
-				}
-				if op == 'm' {
-					initPoint = newPen
-				}
-			case 'c':
-				for i := 0; i < len(points); i += 3 {
-					p1, p2, p3 := points[i], points[i+1], points[i+2]
-					encode(SegmentOpCubeTo, p1, p2, p3)
-					newPen = p3
-					newCtrl2 = p2
-				}
-			case 's':
-				for i := 0; i < len(points); i += 2 {
-					p2, p3 := points[i], points[i+1]
-					// Compute p1 by reflecting p2 on to the line that contains pen and p2.
-					p1 := pen.Mul(2).Sub(ctrl2)
-					encode(SegmentOpCubeTo, p1, p2, p3)
-					newPen = p3
-					newCtrl2 = p2
-				}
-			}
-			pen = newPen
-			ctrl2 = newCtrl2
+		psegs, err := svgpath.ParseData(cmds, offx, offy, mustInt)
+		segs = append(segs, psegs...)
+		if err != nil {
+			return segs, err
 		}
 		return segs, d.Skip()
 	default:
 		return segs, fmt.Errorf("unsupported element: <%s>", n)
 	}
-}
-
-func parseFloat(s string) (int, float64, bool) {
-	n := 0
-	if len(s) > 0 && s[0] == '-' {
-		n++
-	}
-	for ; n < len(s); n++ {
-		if !(unicode.IsDigit(rune(s[n])) || s[n] == '.') {
-			break
-		}
-	}
-	f, err := strconv.ParseFloat(s[:n], 64)
-	return n, f, err == nil
 }
 
 func mapChar(id string) (rune, bool) {
@@ -769,13 +472,6 @@ func mapChar(id string) (rune, bool) {
 		}
 	}
 	return r, true
-}
-
-func mix(p1, p2 bezier.Point, a float64) bezier.Point {
-	return bezier.Point{
-		X: int(math.Round(float64(p1.X)*(1.-a) + float64(p2.X)*a)),
-		Y: int(math.Round(float64(p1.Y)*(1.-a) + float64(p2.Y)*a)),
-	}
 }
 
 func expandUniformBSpline(spline vector.UniformBSpline) []bspline.Knot {

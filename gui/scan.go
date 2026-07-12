@@ -9,9 +9,16 @@ import (
 
 	"seedhammer.com/bip39"
 	"seedhammer.com/codex32"
+	"seedhammer.com/curves"
 	"seedhammer.com/font/sh"
 	"seedhammer.com/nonstandard"
 )
+
+// recordTyper is implemented by NFC readers that surface the type of
+// the NDEF record they deliver, such as [poller.Poller].
+type recordTyper interface {
+	RecordType() []byte
+}
 
 type scanner struct {
 	buf      []byte
@@ -27,7 +34,7 @@ var (
 
 func (s *scanner) Scan(r io.Reader) (any, error) {
 	if cap(s.buf) == 0 {
-		s.buf = make([]byte, 8*1024)
+		s.buf = make([]byte, 32*1024)
 	}
 	nn, err := r.Read(s.buf[s.n:])
 	s.n += nn
@@ -35,9 +42,13 @@ func (s *scanner) Scan(r io.Reader) (any, error) {
 	if s.overflow {
 		// Discard the rest of the content.
 		s.n = 0
+		if err != nil {
+			// The oversized record's stream has ended (io.EOF) or the
+			// poller failed; either way the next record starts clean.
+			s.overflow = false
+		}
 		return nil, errScanOverflow
 	}
-	s.overflow = false
 	switch err {
 	case io.EOF:
 	case nil:
@@ -53,6 +64,13 @@ func (s *scanner) Scan(r io.Reader) (any, error) {
 	s.n = 0
 	if len(buf) == 0 {
 		return nil, nil
+	}
+	// Typed records dispatch on their NDEF record type; only untyped
+	// text goes through the content-sniffing cascade below.
+	if rt, ok := r.(recordTyper); ok {
+		if bytes.Equal(rt.RecordType(), []byte(curves.RecordType)) {
+			return curvesPayload(bytes.Clone(buf)), nil
+		}
 	}
 	const cmdPrefix = "command: "
 	if bytes.HasPrefix(buf, []byte(cmdPrefix)) {

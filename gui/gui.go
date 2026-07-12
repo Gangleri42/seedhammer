@@ -1810,6 +1810,8 @@ func engraveObjectFlow(ctx *Context, th *Colors, obj any) bool {
 		descriptorFlow(ctx, th, scan)
 	case plainText:
 		textFlow(ctx, th, scan)
+	case curvesPayload:
+		curvesFlow(ctx, th, scan)
 	default:
 		return false
 	}

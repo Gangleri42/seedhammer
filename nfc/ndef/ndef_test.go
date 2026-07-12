@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"io"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +58,76 @@ func TestRecords(t *testing.T) {
 		if !slices.Equal(records, test.records) {
 			t.Fatalf("%x decoded to %s, expected %s", data, records, test.records)
 		}
+	}
+}
+
+func TestExternalRecords(t *testing.T) {
+	type record struct {
+		typ     string
+		payload string
+	}
+	tests := []struct {
+		message string
+		records []record
+	}{
+		{
+			// External type record.
+			"d40d056578616d706c652e636f6d3a7468656c6c6f",
+			[]record{{"example.com:t", "hello"}},
+		},
+		{
+			// An external record with a too long type is skipped.
+			"942103" + strings.Repeat("61", 33) + "616263" +
+				"51010f5402656e48656c6c6f20776f726c6421",
+			[]record{{"", "Hello world!"}},
+		},
+		{
+			// External record followed by a text record.
+			"940d056578616d706c652e636f6d3a7468656c6c6f" +
+				"51010f5402656e48656c6c6f20776f726c6421",
+			[]record{{"example.com:t", "hello"}, {"", "Hello world!"}},
+		},
+		{
+			// A 1-byte external type is not treated as well-known.
+			"d401065402656e414243",
+			[]record{{"T", "\x02enABC"}},
+		},
+	}
+	for _, test := range tests {
+		data, err := hex.DecodeString(test.message)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := NewRecordReader(bytes.NewBuffer(data))
+		var records []record
+		for {
+			got, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatalf("%x failed to decode: %v", data, err)
+			}
+			if len(got) == 0 {
+				break
+			}
+			records = append(records, record{string(r.RecordType()), string(got)})
+		}
+		if !slices.Equal(records, test.records) {
+			t.Fatalf("%x decoded to %v, expected %v", data, records, test.records)
+		}
+	}
+}
+
+func TestOverlongRecordRejected(t *testing.T) {
+	// A non-short record declaring a 4-byte length near uint32 max
+	// must be rejected, not narrowed to a negative int that desyncs
+	// the parser onto the payload bytes.
+	// Flags MB|ME (0xc0), type len 1, payload len 0xffffffff, type 'T'.
+	data, err := hex.DecodeString("c001ffffffff54")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := NewRecordReader(bytes.NewBuffer(data))
+	if _, err := io.ReadAll(r); err == nil {
+		t.Fatal("oversized record accepted, want error")
 	}
 }
 

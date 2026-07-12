@@ -1,6 +1,7 @@
 package svgpath
 
 import (
+	"errors"
 	"math"
 	"testing"
 
@@ -76,6 +77,37 @@ func TestParseData(t *testing.T) {
 			},
 		},
 		{
+			d: "M 0 0 Q 6 0 6 6",
+			want: []Segment{
+				seg(MoveTo, bezier.Pt(0, 0)),
+				seg(QuadTo, bezier.Pt(6, 0), bezier.Pt(6, 6)),
+			},
+		},
+		{
+			d: "M 10 10 q 1 2 3 4",
+			want: []Segment{
+				seg(MoveTo, bezier.Pt(10, 10)),
+				seg(QuadTo, bezier.Pt(11, 12), bezier.Pt(13, 14)),
+			},
+		},
+		{
+			// Pairs following a moveto pair are implicit linetos.
+			d: "M 1 2 3 4 5 6",
+			want: []Segment{
+				seg(MoveTo, bezier.Pt(1, 2)),
+				seg(LineTo, bezier.Pt(3, 4)),
+				seg(LineTo, bezier.Pt(5, 6)),
+			},
+		},
+		{
+			d: "m 1 2 3 4 Z",
+			want: []Segment{
+				seg(MoveTo, bezier.Pt(1, 2)),
+				seg(LineTo, bezier.Pt(4, 6)),
+				seg(LineTo, bezier.Pt(1, 2)),
+			},
+		},
+		{
 			d:    "M 1 1 l 1 0",
 			offx: 10, offy: 20,
 			want: []Segment{
@@ -108,11 +140,15 @@ func TestParseData(t *testing.T) {
 		}
 	}
 	errTests := []string{
-		// Quadratic and arc commands are unsupported.
-		"M 0 0 Q 1 2 3 4",
+		// Arc commands are unsupported.
 		"M 0 0 A 1 1 0 0 0 2 2",
 		// Odd number of coordinates.
 		"M 1",
+		// Incomplete coordinate groups.
+		"M 0 0 C 1 2 3 4",
+		"M 0 0 Q 1 2 3",
+		// Coordinates before any command.
+		"1 2 M 0 0",
 	}
 	for _, d := range errTests {
 		if _, err := ParseData(d, 0, 0, identity); err == nil {
@@ -225,10 +261,127 @@ func TestToBSpline(t *testing.T) {
 	}
 }
 
-func seg(op SegmentOp, args ...bezier.Point) Segment {
-	s := Segment{Op: op}
-	copy(s.Args[:], args)
-	return s
+func TestBuilderControlFit(t *testing.T) {
+	// A cubic bows away from the chord; ControlFit keeps the samples
+	// as control points between the clamps.
+	segs := []Segment{
+		seg(MoveTo, bezier.Pt(0, 0)),
+		seg(CubeTo, bezier.Pt(0, 100), bezier.Pt(100, 100), bezier.Pt(100, 0)),
+	}
+	var spline []vector.Knot
+	b := NewBuilder(50, false, ControlFit(), func(k vector.Knot) bool {
+		spline = append(spline, k)
+		return true
+	})
+	for _, s := range segs {
+		if !b.Add(s) {
+			t.Fatal("Builder rejected segment")
+		}
+	}
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	n := len(spline)
+	if n < 7 {
+		t.Fatalf("Builder emitted %d knots, want at least 7", n)
+	}
+	start, end := spline[0], spline[n-1]
+	for i := 0; i < 3; i++ {
+		if spline[i] != start || spline[n-1-i] != end {
+			t.Errorf("boundary knots are not tripled: %v", spline)
+		}
+	}
+	if want := bezier.Pt(0, 0); start.Ctrl != want {
+		t.Errorf("spline starts at %v, want %v", start.Ctrl, want)
+	}
+	if want := bezier.Pt(100, 0); end.Ctrl != want {
+		t.Errorf("spline ends at %v, want %v", end.Ctrl, want)
+	}
+	for _, k := range spline[3 : n-3] {
+		if !k.Line {
+			t.Errorf("interior knot %v is not engraved", k)
+		}
+		if k.Ctrl.Y <= 0 {
+			t.Errorf("interior knot %v does not follow the curve", k)
+		}
+	}
+}
+
+func TestBuilderDegenerateRun(t *testing.T) {
+	// A cubic whose samples all collapse onto its start point must
+	// not reach the fitter (which slices samples[1:len-1]).
+	segs := []Segment{
+		seg(MoveTo, bezier.Pt(0, 0)),
+		seg(CubeTo, bezier.Pt(1, 0), bezier.Pt(0, 0), bezier.Pt(0, 0)),
+	}
+	var spline []vector.Knot
+	b := NewBuilder(120, true, ControlFit(), func(k vector.Knot) bool {
+		spline = append(spline, k)
+		return true
+	})
+	for _, s := range segs {
+		b.Add(s)
+	}
+	if err := b.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	// The collapsed run yields no engraved knots; only the move clamp.
+	for _, k := range spline {
+		if k.Line {
+			t.Errorf("degenerate run emitted an engraved knot: %v", spline)
+			break
+		}
+	}
+}
+
+func TestBuilderLimitRun(t *testing.T) {
+	limit := errors.New("too long")
+	var knots int
+	b := NewBuilder(1, false, ControlFit(), func(vector.Knot) bool {
+		knots++
+		return true
+	})
+	b.LimitRun(64, limit)
+	b.Add(seg(MoveTo, bezier.Pt(0, 0)))
+	// A long curve samples to far more than the cap.
+	b.Add(seg(CubeTo, bezier.Pt(0, 4000), bezier.Pt(8000, 4000), bezier.Pt(8000, 0)))
+	if err := b.Close(); err != limit {
+		t.Fatalf("Close = %v, want %v", err, limit)
+	}
+}
+
+func TestBuilderZeroLengthLineClamps(t *testing.T) {
+	// A zero-length line splits the stroke with a clamp, without
+	// lifting the needle.
+	segs := []Segment{
+		seg(MoveTo, bezier.Pt(0, 0)),
+		seg(CubeTo, bezier.Pt(0, 50), bezier.Pt(50, 100), bezier.Pt(100, 100)),
+		seg(LineTo, bezier.Pt(100, 100)),
+		seg(CubeTo, bezier.Pt(150, 100), bezier.Pt(200, 50), bezier.Pt(200, 0)),
+	}
+	var spline []vector.Knot
+	b := NewBuilder(50, true, ControlFit(), func(k vector.Knot) bool {
+		spline = append(spline, k)
+		return true
+	})
+	for _, s := range segs {
+		if !b.Add(s) {
+			t.Fatal("Builder rejected segment")
+		}
+	}
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	clamp := vector.Knot{Ctrl: bezier.Pt(100, 100), Line: true}
+	triples := 0
+	for i := 0; i+2 < len(spline); i++ {
+		if spline[i] == clamp && spline[i+1] == clamp && spline[i+2] == clamp {
+			triples++
+		}
+	}
+	if triples != 1 {
+		t.Errorf("found %d corner clamp triples, want 1: %v", triples, spline)
+	}
 }
 
 // segsEqual compares only the arguments significant to each

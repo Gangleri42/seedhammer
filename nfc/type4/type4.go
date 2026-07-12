@@ -20,6 +20,10 @@ type Tag struct {
 
 	buf       [maxFrameSize]byte
 	readBytes int
+	// respBuf backs lastResp, the most recent transmitted response,
+	// kept for retransmission when the writer misses it.
+	respBuf  [maxFrameSize]byte
+	lastResp []byte
 }
 
 type Device interface {
@@ -39,6 +43,7 @@ func (t *Tag) Reset() {
 	t.state = initState
 	t.readBytes = 0
 	t.nextWriteOff = 0
+	t.lastResp = nil
 }
 
 type protoState int
@@ -59,7 +64,7 @@ const (
 		0b1<<6 | // Include TC(1).
 		fsci
 	atsTA1 = 0x00   // Bit rate 106kb/s only.
-	atsTB1 = 8<<4 | // FWI = FWImax (~77ms)
+	atsTB1 = 8<<4 | // FWI = FWImax (~77ms).
 		0 // SFGT = 0 (no guard time)
 	atsTC1 = 0 // No support for NAD nor DID.
 
@@ -149,14 +154,13 @@ func (t *Tag) Read(b []byte) (int, error) {
 			}
 		}
 		var readData []byte
-		// Re-use the receive buffer for the response. This is
-		// ok because the request is read before being overwritten.
-		resp := t.buf[:0]
+		resp := t.respBuf[:0]
 		switch {
 		case t.state <= activeState && len(buf) == 2 && buf[0] == cmdSENS_REQ:
 			// Initialize I-block number to 1 (13.2.4.2).
 			t.blockNo = 0b1
 			t.state = activeState
+			t.lastResp = nil
 			resp = append(resp, ats...)
 		case t.state <= activeState && bytes.Equal(buf, cmdSLP_REQ):
 			// Go to sleep, waiting for WUPA.
@@ -178,7 +182,16 @@ func (t *Tag) Read(b []byte) (int, error) {
 			if rbno != t.blockNo {
 				// Respond with R(ACK) (13.2.5.10).
 				resp = append(resp, isodepR_ACK|t.blockNo)
+			} else if len(t.lastResp) > 0 {
+				// Retransmit the last response (13.2.5.9).
+				resp = t.lastResp
 			}
+		case t.state >= activeState && (buf[0]&^0b1) == isodepI_BLOCK &&
+			buf[0]&0b1 == t.blockNo && len(t.lastResp) > 0:
+			// The writer retransmitted its last I-block, so our
+			// response was lost (13.2.5.13). Repeat it without
+			// processing the payload again.
+			resp = t.lastResp
 		case t.state >= activeState && (buf[0]&^0b1) == isodepI_BLOCK:
 			buf = buf[1:]
 			t.blockNo = 1 - t.blockNo
@@ -223,6 +236,7 @@ func (t *Tag) Read(b []byte) (int, error) {
 			if _, err := t.d.Write(resp); err != nil {
 				return 0, fmt.Errorf("type4: %w", err)
 			}
+			t.lastResp = resp
 		}
 		// Re-use the receive buffer to hold written data (if any).
 		copy(t.buf[:], readData)

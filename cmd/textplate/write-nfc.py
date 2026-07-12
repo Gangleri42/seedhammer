@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 """
-write-nfc — write a text plate composition as an NDEF Text record
-using a USB NFC reader (e.g. ACR122U via nfcpy).
+write-nfc — write a text plate composition to the SeedHammer using a
+USB NFC reader (e.g. ACR122U via nfcpy).
 
-The SeedHammer firmware accepts plain Well-Known Text records: each
+By default the composition is written as an NDEF Text record: each
 line of the payload becomes a plate line, engraved at the largest
-text size whose grid holds the composition. Compose with the plate
-editor (docs/index.html) or any text editor.
+text size whose grid holds the composition. With --curves the
+composition is compiled to a seedhammer.com:curves vector record
+instead, engraving the same strokes through the firmware's curves
+pipeline. Compose with the plate editor (index.html) or any text
+editor.
 
-The supported charset and grid dimensions are read from the
-glyphs.js next to this script, generated from the firmware sources
-by "go run seedhammer.com/cmd/textplate".
+The supported charset, grid dimensions, glyph geometry and payload
+parameters are read from the glyphs.js next to this script,
+generated from the firmware sources by
+"go run seedhammer.com/cmd/textplate".
 
 Usage:
-    write-nfc.py plate.txt          # or - for stdin
+    write-nfc.py plate.txt            # or - for stdin
+    write-nfc.py --curves plate.txt
     echo "IN CASE OF FIRE" | write-nfc.py -
 
 Requires: pip install nfcpy ndeflib
@@ -21,6 +26,7 @@ Requires: pip install nfcpy ndeflib
 
 import json
 import pathlib
+import re
 import sys
 import time
 
@@ -49,7 +55,7 @@ def canonical(text: str) -> list[str]:
     return lines
 
 
-def validate(lines: list[str], sh: dict) -> float:
+def validate(lines: list[str], sh: dict) -> dict:
     charset = set(sh["glyphs"])
     bad = sorted({ch for line in lines for ch in line if ch not in charset})
     if bad:
@@ -61,7 +67,7 @@ def validate(lines: list[str], sh: dict) -> float:
     cols = max(len(line) for line in lines)
     for size in sh["sizes"]:
         if cols <= size["cols"] and len(lines) <= size["rows"]:
-            return size["mm"]
+            return size
     largest = sh["sizes"][-1]
     sys.exit(
         f"does not fit any plate size: {cols}x{len(lines)}, "
@@ -69,7 +75,46 @@ def validate(lines: list[str], sh: dict) -> float:
     )
 
 
-def write(text: str) -> None:
+def translate(d: str, dx: int, dy: int) -> str:
+    """Offset every coordinate of glyph path data."""
+    out = []
+    x = True
+    for tok in re.finditer(r"[MC]|-?\d+", d):
+        t = tok.group(0)
+        if t in ("M", "C"):
+            out.append(t)
+            x = True
+            continue
+        v = int(t) + (dx if x else dy)
+        if out and out[-1] not in ("M", "C"):
+            out.append(" ")
+        out.append(str(v))
+        x = not x
+    return "".join(out)
+
+
+def compile_curves(lines: list[str], size: dict, sh: dict) -> bytes:
+    """Compile a composition to a seedhammer.com:curves payload, with
+    glyphs laid out on the same grid the firmware engraves."""
+    units_per_mm = int(sh["height"] / size["mm"] + 0.5)
+    stroke_width = int(sh["strokeMM"] * units_per_mm + 0.5)
+    margin = sh["marginMM"] * units_per_mm
+    parts = [f"{sh['version']} {units_per_mm} {stroke_width}"]
+    for row, line in enumerate(lines):
+        for col, ch in enumerate(line):
+            d = sh["glyphs"].get(ch, "")
+            if not d:
+                continue
+            dx = margin + col * sh["advance"]
+            dy = margin + row * sh["height"]
+            parts.append(translate(d, dx, dy))
+    payload = "\n".join(parts).encode()
+    if len(payload) > sh["payloadCap"]:
+        sys.exit(f"payload is {len(payload)} bytes, over the {sh['payloadCap']} byte cap")
+    return payload
+
+
+def write(records: list) -> None:
     result = {}
 
     def on_connect(tag):
@@ -80,7 +125,7 @@ def write(text: str) -> None:
             result["error"] = "target is read-only"
             return True
         try:
-            tag.ndef.records = [ndef.TextRecord(text, language="en")]
+            tag.ndef.records = records
         except Exception as e:
             result["error"] = f"write failed: {e}"
             return True
@@ -102,18 +147,27 @@ def write(text: str) -> None:
 
 
 def main():
-    if len(sys.argv) != 2:
+    args = sys.argv[1:]
+    as_curves = "--curves" in args
+    args = [a for a in args if a != "--curves"]
+    if len(args) != 1:
         sys.exit(__doc__.strip())
-    src = sys.stdin if sys.argv[1] == "-" else open(sys.argv[1], encoding="utf-8")
+    src = sys.stdin if args[0] == "-" else open(args[0], encoding="utf-8")
     with src:
         lines = canonical(src.read())
-    mm = validate(lines, font_data())
+    sh = font_data()
+    size = validate(lines, sh)
     print(
         f"{max(len(l) for l in lines)}x{len(lines)} characters, "
-        f"engraves at {mm}mm",
+        f"engraves at {size['mm']}mm",
         file=sys.stderr,
     )
-    write("\n".join(lines))
+    if as_curves:
+        payload = compile_curves(lines, size, sh)
+        records = [ndef.Record("urn:nfc:ext:" + sh["recordType"], "", payload)]
+    else:
+        records = [ndef.TextRecord("\n".join(lines), language="en")]
+    write(records)
 
 
 if __name__ == "__main__":

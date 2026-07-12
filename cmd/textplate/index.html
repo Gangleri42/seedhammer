@@ -136,10 +136,12 @@
 	<p><b>How it engraves.</b> A line break starts a new line; long lines wrap. The firmware
 	engraves at the largest text size whose grid holds the composition:
 	<span id="sizeTable"></span>. The preview above always shows the size the firmware will pick.</p>
-	<p><b>Phone (NFC Tools):</b> copy, then in NFC Tools add a <i>Text</i> record, paste and write
-	while the SeedHammer start screen shows. <b>Android Chrome:</b> the Web NFC button writes
-	directly, no app needed. <b>USB NFC writer:</b>
-	<code>python3 cmd/textplate/write-nfc.py plate.txt</code> from the repository.</p>
+	<p><b>Android Chrome:</b> the Web NFC button compiles the composition to a
+	<code>seedhammer.com:curves</code> vector record and writes it directly, no app needed.
+	<b>Phone (NFC Tools):</b> copy, then in NFC Tools add a <i>Text</i> record, paste and write
+	while the SeedHammer start screen shows; the firmware lays the text out itself.
+	<b>USB NFC writer:</b> <code>python3 cmd/textplate/write-nfc.py [--curves] plate.txt</code>
+	from the repository.</p>
 	<p class="charset">Supported characters: <span id="charset"></span></p>
 </div>
 <script src="glyphs.js"></script>
@@ -227,11 +229,60 @@ function update() {
 		eng.textContent = "does not fit any size";
 		eng.className = "bad";
 	}
-	const valid = hasInk && !!size && !isCommand;
+	let valid = hasInk && !!size && !isCommand;
+	const cap = document.getElementById("capacity");
+	if (valid) {
+		const bytes = compile(lines, size).length;
+		const fits = bytes <= SH.payloadCap;
+		cap.textContent = `${bytes} / ${SH.payloadCap} B`;
+		cap.className = fits ? "" : "bad";
+		valid = valid && fits;
+	} else {
+		cap.textContent = "";
+	}
 	ta.classList.toggle("invalid", !!text && !valid && hasInk);
 	document.getElementById("copy").disabled = !valid;
 	document.getElementById("webnfc").disabled = !valid || !("NDEFReader" in window);
 	draw(lines, size);
+}
+
+// compile lays the composition out on the engraving grid and emits a
+// seedhammer.com:curves payload: a header line followed by each
+// glyph's path data translated to its cell.
+function compile(lines, size) {
+	const upmm = Math.round(SH.height / size.mm);
+	const stroke = Math.round(SH.strokeMM * upmm);
+	const margin = SH.marginMM * upmm;
+	const parts = [`${SH.version} ${upmm} ${stroke}`];
+	for (let row = 0; row < lines.length; row++) {
+		const line = lines[row];
+		for (let col = 0; col < line.length; col++) {
+			const d = SH.glyphs[line[col]];
+			if (!d) continue;
+			parts.push(translate(d, margin + col * SH.advance, margin + row * SH.height));
+		}
+	}
+	return parts.join("\n");
+}
+
+// translate offsets every coordinate of glyph path data.
+function translate(d, dx, dy) {
+	let out = "";
+	let isX = true;
+	for (const m of d.matchAll(/([MC])|(-?\d+)/g)) {
+		if (m[1]) {
+			out += m[1];
+			isX = true;
+			continue;
+		}
+		const v = parseInt(m[2], 10) + (isX ? dx : dy);
+		if (out !== "" && !out.endsWith("M") && !out.endsWith("C")) {
+			out += " ";
+		}
+		out += v;
+		isX = !isX;
+	}
+	return out;
 }
 
 function cursor() {
@@ -314,8 +365,12 @@ document.getElementById("webnfc").onclick = async () => {
 	try {
 		nfcStatus("hold the phone against the SeedHammer…");
 		const ndef = new NDEFReader();
-		const data = canonical(ta.value).join("\n");
-		await ndef.write({ records: [{ recordType: "text", lang: "en", data }] });
+		const lines = canonical(ta.value);
+		const payload = compile(lines, engraveSize(lines));
+		await ndef.write({ records: [{
+			recordType: SH.recordType,
+			data: new TextEncoder().encode(payload),
+		}] });
 		nfcStatus("written ✓");
 	} catch (e) {
 		nfcStatus("NFC: " + e.message);

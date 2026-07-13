@@ -221,12 +221,17 @@ func (d *Drawing) Engraving() engrave.Engraving {
 
 // run converts the path data to engraver commands: parse segments,
 // clamp sharp corners, sample and fit each smooth run to spline
-// knots.
+// knots. Closed smooth contours become periodic loops, paced by the
+// planner across their seam instead of against a clamp.
 func (d *Drawing) run(yield func(engrave.Command) bool) error {
 	b := svgpath.NewBuilder(d.prec, true, svgpath.ControlFit(), func(k vector.Knot) bool {
+		if k.Periodic {
+			return yield(engrave.PeriodicPoint(k.Ctrl))
+		}
 		return yield(engrave.ControlPoint(k.Line, k.Ctrl))
 	})
 	b.LimitRun(maxRun, errStrokeTooLong)
+	b.Periodic()
 	scale := func(v float64) int {
 		v = math.Round(v * d.scale)
 		return int(min(max(v, -maxCoord), maxCoord))

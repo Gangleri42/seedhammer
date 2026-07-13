@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"seedhammer.com/bezier"
-	"seedhammer.com/bspline"
 	"seedhammer.com/font/vector"
 )
 
@@ -341,6 +340,69 @@ func ControlFit() Fitter {
 	}
 }
 
+// InterpolateFit is a Fitter whose clamped uniform cubic B-spline
+// passes through the sample points. It solves the [1 4 1]
+// tridiagonal system for the interior control points, so the spline
+// value at each interior knot, (d[i-1]+4·d[i]+d[i+1])/6, equals the
+// corresponding sample; the clamped ends fix d[0] and d[n].
+//
+// Being a fixed linear solve it is symmetric: a symmetric run of
+// samples yields a symmetric spline. That is the difference from
+// [bspline.InterpolatePoints], which minimises a kinematic cost and
+// slides control points off their faithful positions asymmetrically,
+// and from ControlFit, which stays inside the sample hull and so
+// undershoots. It needs no solver dependency and runs in O(n) by the
+// Thomas algorithm.
+func InterpolateFit() Fitter {
+	return func(samples []bezier.Point) ([]bezier.Point, error) {
+		n := len(samples) - 1
+		first, last := samples[0], samples[n]
+		out := make([]bezier.Point, 0, n+5)
+		out = append(out, first, first, first)
+		if n < 3 {
+			// Too few intervals to interpolate; use the samples.
+			out = append(out, samples[1:n]...)
+			return append(out, last, last, last), nil
+		}
+		// Thomas forward sweep over interior points d[1..n-1]. The
+		// clamped endpoints move to the right-hand side of the first
+		// and last equations.
+		m := n - 1
+		c := make([]float64, m)
+		x := make([]float64, m)
+		y := make([]float64, m)
+		c[0] = 1.0 / 4
+		x[0] = (6*float64(samples[1].X) - float64(first.X)) / 4
+		y[0] = (6*float64(samples[1].Y) - float64(first.Y)) / 4
+		for i := 1; i < m; i++ {
+			rx := 6 * float64(samples[i+1].X)
+			ry := 6 * float64(samples[i+1].Y)
+			if i == m-1 {
+				rx -= float64(last.X)
+				ry -= float64(last.Y)
+			}
+			den := 4 - c[i-1]
+			c[i] = 1 / den
+			x[i] = (rx - x[i-1]) / den
+			y[i] = (ry - y[i-1]) / den
+		}
+		// Back substitution in place, rounding to machine units.
+		d := make([]bezier.Point, m)
+		d[m-1] = bezier.Pt(iround(x[m-1]), iround(y[m-1]))
+		for i := m - 2; i >= 0; i-- {
+			x[i] -= c[i] * x[i+1]
+			y[i] -= c[i] * y[i+1]
+			d[i] = bezier.Pt(iround(x[i]), iround(y[i]))
+		}
+		out = append(out, d...)
+		return append(out, last, last, last), nil
+	}
+}
+
+func iround(v float64) int {
+	return int(math.Round(v))
+}
+
 // Builder converts a stream of segments into uniform B-spline knots,
 // sampling curves with spacing prec and fitting each run of samples
 // with fit. Knots are passed to yield as they complete; a stroke is
@@ -544,7 +606,7 @@ func (b *Builder) emit3(k vector.Knot) {
 // with spacing prec. If splice is set, lines that are part of longer
 // shapes are appended as (straight) curve segments.
 func ToBSpline(segs []Segment, prec int, splice bool) (allSamples []bezier.Point, spline []vector.Knot, err error) {
-	b := NewBuilder(prec, splice, bspline.InterpolatePoints, func(k vector.Knot) bool {
+	b := NewBuilder(prec, splice, InterpolateFit(), func(k vector.Knot) bool {
 		spline = append(spline, k)
 		return true
 	})

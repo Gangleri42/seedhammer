@@ -239,14 +239,16 @@ func TestToBSpline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The interpolating fit makes the spline pass through the sampled
+	// points rather than approximate them, so its control points ride
+	// closer to the outline than the old kinematic fit's did.
 	want := []vector.Knot{
 		{Ctrl: bezier.Pt(0, 0)},
 		{Ctrl: bezier.Pt(0, 0)},
 		{Ctrl: bezier.Pt(0, 0)},
-		{Ctrl: bezier.Pt(3, 23), Line: true},
-		{Ctrl: bezier.Pt(22, 68), Line: true},
-		{Ctrl: bezier.Pt(78, 68), Line: true},
-		{Ctrl: bezier.Pt(97, 23), Line: true},
+		{Ctrl: bezier.Pt(4, 52), Line: true},
+		{Ctrl: bezier.Pt(51, 87), Line: true},
+		{Ctrl: bezier.Pt(97, 49), Line: true},
 		{Ctrl: bezier.Pt(100, 0), Line: true},
 		{Ctrl: bezier.Pt(100, 0), Line: true},
 		{Ctrl: bezier.Pt(100, 0), Line: true},
@@ -303,6 +305,38 @@ func TestBuilderControlFit(t *testing.T) {
 		}
 		if k.Ctrl.Y <= 0 {
 			t.Errorf("interior knot %v does not follow the curve", k)
+		}
+	}
+}
+
+func TestInterpolateFit(t *testing.T) {
+	fit := InterpolateFit()
+	// Samples symmetric about the Y axis. An interpolating fit must
+	// stay symmetric (no egg) and pass through every sample.
+	var samples []bezier.Point
+	for i := -4; i <= 4; i++ {
+		x := i * 25
+		samples = append(samples, bezier.Pt(x, 100-25*i*i))
+	}
+	ctrls, err := fit(samples)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := len(ctrls)
+	for i := 0; i < n; i++ {
+		m := ctrls[n-1-i]
+		if ctrls[i].X != -m.X || ctrls[i].Y != m.Y {
+			t.Errorf("control point %d %v is not the mirror of %v", i, ctrls[i], m)
+		}
+	}
+	// The clamp triples collapse to one control point per sample; the
+	// spline value at each interior knot must equal the sample.
+	d := ctrls[2 : n-2]
+	for i := 1; i < len(samples)-1; i++ {
+		gx := (float64(d[i-1].X) + 4*float64(d[i].X) + float64(d[i+1].X)) / 6
+		gy := (float64(d[i-1].Y) + 4*float64(d[i].Y) + float64(d[i+1].Y)) / 6
+		if math.Abs(gx-float64(samples[i].X)) > 1 || math.Abs(gy-float64(samples[i].Y)) > 1 {
+			t.Errorf("sample %d = %v not interpolated: got (%.1f, %.1f)", i, samples[i], gx, gy)
 		}
 	}
 }

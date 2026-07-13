@@ -23,7 +23,7 @@ func TestCurvesRoundTrip(t *testing.T) {
 		strokeWidth := int(math.Round(0.3 * float64(unitsPerMM)))
 		margin := 3 * unitsPerMM
 		var b strings.Builder
-		fmt.Fprintf(&b, "%d %d %d\n", curves.Version, unitsPerMM, strokeWidth)
+		fmt.Fprintf(&b, "%d %s %d %d\n", curves.Version, curves.ModePath, unitsPerMM, strokeWidth)
 		lines := []string{"IN CASE OF FIRE", "BREAK GLASS", "*@0Q9#8{}"}
 		for row, line := range lines {
 			for col, ch := range line {

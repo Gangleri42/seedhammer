@@ -38,6 +38,47 @@ const RecordType = "seedhammer.com:curves"
 // Version is the payload format version this package implements.
 const Version = 1
 
+// The two payload modes a curves record can carry, named in the
+// second header field. Text is a plate of engravable text the
+// firmware lays out and renders from its own font; path is SVG path
+// geometry the firmware engraves directly.
+const (
+	ModeText = "text"
+	ModePath = "path"
+)
+
+// Mode reports a payload's mode from its header line, which is
+// "version mode ..." for both kinds.
+func Mode(data []byte) (string, error) {
+	header, _, _ := strings.Cut(string(data), "\n")
+	fields := strings.Fields(header)
+	if len(fields) < 2 {
+		return "", fmt.Errorf("curves: malformed header %q", header)
+	}
+	if v, err := strconv.Atoi(fields[0]); err != nil || v != Version {
+		return "", fmt.Errorf("curves: unsupported version %q", fields[0])
+	}
+	switch m := fields[1]; m {
+	case ModeText, ModePath:
+		return m, nil
+	default:
+		return "", fmt.Errorf("curves: unknown mode %q", m)
+	}
+}
+
+// Text returns the plate text of a text-mode payload.
+func Text(data []byte) (string, error) {
+	mode, err := Mode(data)
+	if err != nil {
+		return "", err
+	}
+	if mode != ModeText {
+		return "", fmt.Errorf("curves: not a text payload")
+	}
+	_, body, _ := strings.Cut(string(data), "\n")
+	return body, nil
+}
+
 // maxCoord bounds a scaled coordinate, in machine units. It sits far
 // above the plate (~164mm at 6400 units/mm) but well inside the
 // fixed-point headroom of the bezier sampler, so a hostile payload
@@ -71,18 +112,21 @@ type Drawing struct {
 	prec  int
 }
 
-// Parse validates a curves payload against the engraver parameters.
+// Parse validates a path-mode curves payload against the engraver
+// parameters. Text-mode payloads are the caller's concern; see Mode
+// and Text.
 func Parse(data []byte, params engrave.Params) (*Drawing, error) {
 	header, path, ok := strings.Cut(string(data), "\n")
 	if !ok {
 		return nil, fmt.Errorf("curves: missing header")
 	}
+	// version path units-per-mm stroke-width
 	fields := strings.Fields(header)
-	if len(fields) != 3 {
-		return nil, fmt.Errorf("curves: malformed header %q", header)
+	if len(fields) != 4 || fields[1] != ModePath {
+		return nil, fmt.Errorf("curves: malformed path header %q", header)
 	}
 	var vals [3]int
-	for i, f := range fields {
+	for i, f := range []string{fields[0], fields[2], fields[3]} {
 		v, err := strconv.Atoi(f)
 		if err != nil || v <= 0 {
 			return nil, fmt.Errorf("curves: malformed header %q", header)

@@ -229,14 +229,14 @@ function update() {
 		eng.textContent = "does not fit any size";
 		eng.className = "bad";
 	}
-	let valid = hasInk && !!size && !isCommand;
+	const valid = hasInk && !!size && !isCommand;
 	const cap = document.getElementById("capacity");
 	if (valid) {
-		const bytes = compile(lines, size).length;
-		const fits = bytes <= SH.payloadCap;
-		cap.textContent = `${bytes} / ${SH.payloadCap} B`;
-		cap.className = fits ? "" : "bad";
-		valid = valid && fits;
+		// Text mode carries the text itself, so it always fits; show
+		// its size next to the (much larger) vectorized size.
+		const textBytes = `${SH.version} text\n`.length + lines.join("\n").length;
+		cap.textContent = `${textBytes} B text / ${compile(lines, size).length} B vector`;
+		cap.className = "";
 	} else {
 		cap.textContent = "";
 	}
@@ -253,7 +253,7 @@ function compile(lines, size) {
 	const upmm = Math.round(SH.height / size.mm);
 	const stroke = Math.round(SH.strokeMM * upmm);
 	const margin = SH.marginMM * upmm;
-	const parts = [`${SH.version} ${upmm} ${stroke}`];
+	const parts = [`${SH.version} path ${upmm} ${stroke}`];
 	for (let row = 0; row < lines.length; row++) {
 		const line = lines[row];
 		for (let col = 0; col < line.length; col++) {
@@ -365,11 +365,13 @@ document.getElementById("webnfc").onclick = async () => {
 	try {
 		nfcStatus("hold the phone against the SeedHammer…");
 		const ndef = new NDEFReader();
-		const lines = canonical(ta.value);
-		const payload = compile(lines, engraveSize(lines));
+		// Text rides the curves envelope in text mode: the firmware
+		// lays it out and renders it from its own font. Compact, and
+		// unlike vectorized path mode it always fits.
+		const body = `${SH.version} text\n` + canonical(ta.value).join("\n");
 		await ndef.write({ records: [{
 			recordType: SH.recordType,
-			data: new TextEncoder().encode(payload),
+			data: new TextEncoder().encode(body),
 		}] });
 		nfcStatus("written ✓");
 	} catch (e) {

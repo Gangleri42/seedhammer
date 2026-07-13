@@ -459,8 +459,18 @@ func Sample(points []Point, b Cubic, spacing int) []Point {
 	nsamples := (totalDist + spacing - 1) / spacing
 	// Sample short segments in the middle.
 	nsamples = max(nsamples, 2)
+	// Cap the samples per curve. The length-estimate Interpolator only
+	// advances samplingRate steps, so the walk below can visit at most
+	// that many distinct grid positions. Beyond it a curve degrades to a
+	// coarser polyline rather than growing the sample buffer without
+	// bound (matching maxSamplesPerCurve in SampleSym). Interpolating to
+	// the exact spacing, unlike the old grid snapping, would otherwise
+	// emit an unbounded run of sub-grid points for a very long stroke.
+	nsamples = min(nsamples, samplingRate)
 	adjSpacing := (totalDist + nsamples - 1) / nsamples
 	prev = first
+	from := first
+	seg := 0
 	var d int
 	// Sample inner points. Spacings finer than the estimate
 	// partition degenerate into repeated positions; skip them
@@ -468,14 +478,28 @@ func Sample(points []Point, b Cubic, spacing int) []Point {
 	in = new(Interpolator)
 	in.Segment(b, samplingRate)
 	for range nsamples - 1 {
-		s := prev
 		for d < adjSpacing && in.Step() {
-			s = in.Position()
-			d += dist(prev, s)
+			from = prev
+			s := in.Position()
+			seg = dist(prev, s)
+			d += seg
 			prev = s
 		}
-		if len(points) == 0 || points[len(points)-1] != s {
-			points = append(points, s)
+		// Place the sample at exactly adjSpacing along the last grid
+		// step [from, prev] instead of snapping to the grid point prev.
+		// The length-estimate Interpolator walks a coarse samplingRate
+		// grid, so when adjSpacing sits just above one grid step every
+		// chord snaps to 1x or 2x the step. That periodic doubling makes
+		// the worst chord pace the whole engrave (see the planner's
+		// uniform time scale). Interpolating removes the doubling with no
+		// extra steps and no float. int64 avoids overflow of the 32-bit
+		// device int when a grid step spans a large drawing.
+		emit := prev
+		if over := d - adjSpacing; over > 0 && seg > 0 {
+			emit = prev.Add(P64(from.Sub(prev)).Mul(over).Div(seg).Point())
+		}
+		if len(points) == 0 || points[len(points)-1] != emit {
+			points = append(points, emit)
 		}
 		d -= adjSpacing
 	}

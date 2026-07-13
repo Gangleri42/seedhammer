@@ -412,13 +412,14 @@ func iround(v float64) int {
 // If splice is set, lines that are part of longer shapes are
 // appended as (straight) curve segments.
 type Builder struct {
-	prec    int
-	splice  bool
-	fit     Fitter
-	sample  func([]bezier.Point, bezier.Cubic, int) []bezier.Point
-	yield   func(vector.Knot) bool
-	maxRun  int
-	tooLong error
+	prec     int
+	splice   bool
+	periodic bool
+	fit      Fitter
+	sample   func([]bezier.Point, bezier.Cubic, int) []bezier.Point
+	yield    func(vector.Knot) bool
+	maxRun   int
+	tooLong  error
 
 	// onSamples reports every fitted sample run, for debugging.
 	onSamples func([]bezier.Point)
@@ -432,6 +433,15 @@ type Builder struct {
 	p0      bezier.Point
 	stopped bool
 	err     error
+
+	// moveTo is the stroke-start clamp of the current contour,
+	// deferred until its flush so a periodic contour can retarget it
+	// to the loop's seam point.
+	moveTo  bezier.Point
+	hasMove bool
+	// split records that the contour flushed mid-way (a deliberate
+	// clamp or a lone line), so its final run is not a full loop.
+	split bool
 }
 
 func NewBuilder(prec int, splice bool, fit Fitter, yield func(vector.Knot) bool) *Builder {
@@ -452,6 +462,15 @@ func NewBuilder(prec int, splice bool, fit Fitter, yield func(vector.Knot) bool)
 func (b *Builder) LimitRun(max int, err error) {
 	b.maxRun = max
 	b.tooLong = err
+}
+
+// Periodic emits closed smooth strokes as periodic contours instead
+// of clamped runs: the stroke clamps once at the seam knot value and
+// its knots between the clamps carry the Periodic flag, so the
+// engraving planner can pace the loop cyclically instead of against a
+// phantom rest-to-cruise spike at the seam.
+func (b *Builder) Periodic() {
+	b.periodic = true
 }
 
 // Add processes the next segment. It reports whether the builder
@@ -490,8 +509,9 @@ func (b *Builder) process(s Segment, next SegmentOp, hasNext bool) {
 		p1 := s.Args[0]
 		b.flush(true)
 		b.pending.Line = false
-		k := vector.Knot{Ctrl: p1}
-		b.emit3(k)
+		b.moveTo = p1
+		b.hasMove = true
+		b.split = false
 		b.p0 = p1
 	case LineTo:
 		p1 := s.Args[0]
@@ -499,6 +519,7 @@ func (b *Builder) process(s Segment, next SegmentOp, hasNext bool) {
 			// A zero-length line clamps the stroke, forcing the
 			// spline through the point: the flushed run already
 			// ends with a clamp triple there.
+			b.split = true
 			b.flush(true)
 			b.pending.Line = true
 			break
@@ -516,6 +537,7 @@ func (b *Builder) process(s Segment, next SegmentOp, hasNext bool) {
 			b.appendBezier(c)
 			break
 		}
+		b.split = true
 		b.flush(true)
 		b.pending.Line = true
 		b.emit3(vector.Knot{Ctrl: p1, Line: true})
@@ -551,13 +573,23 @@ func (b *Builder) flush(line bool) {
 	if b.err != nil || b.stopped {
 		return
 	}
-	if len(b.samples) < 2 {
-		// A run that sampled to a single point is a curve smaller
-		// than the sampling resolution: it carries no geometry, and
-		// its start point was already emitted as a clamp. Drop it
-		// rather than hand a degenerate run to the fitter.
-		b.samples = b.samples[:0]
-		return
+	var loop []bezier.Point
+	if b.periodic && !b.split && b.hasMove {
+		loop = b.periodicPolygon()
+	}
+	if loop == nil {
+		if b.hasMove {
+			b.emit3(vector.Knot{Ctrl: b.moveTo})
+			b.hasMove = false
+		}
+		if len(b.samples) < 2 {
+			// A run that sampled to a single point is a curve smaller
+			// than the sampling resolution: it carries no geometry, and
+			// its start point was already emitted as a clamp. Drop it
+			// rather than hand a degenerate run to the fitter.
+			b.samples = b.samples[:0]
+			return
+		}
 	}
 	for i, s := range b.samples[:len(b.samples)-1] {
 		s2 := b.samples[i+1]
@@ -568,6 +600,10 @@ func (b *Builder) flush(line bool) {
 	}
 	if b.onSamples != nil {
 		b.onSamples(b.samples)
+	}
+	if loop != nil {
+		b.flushPeriodic(loop, line)
+		return
 	}
 	uspline, err := b.fit(b.samples)
 	b.samples = b.samples[:0]
@@ -581,6 +617,112 @@ func (b *Builder) flush(line bool) {
 			Line: line,
 		})
 	}
+}
+
+// minPeriodicSamples is the smallest closed run emitted as a periodic
+// contour; smaller loops keep the clamped representation.
+const minPeriodicSamples = 8
+
+// periodicPolygon returns the loop control polygon of a closed smooth
+// sample run, or nil when the run must keep the clamped
+// representation. The run must return exactly to its first sample;
+// the duplicate is dropped, and so is a runt closing leg left over
+// from sampling, so the seam legs do not dent the loop's cyclic
+// kinematics. The turn across the seam must stay within the
+// smoothing policy applied to interior corners (45°), judged on the
+// polygon adjacency that is actually emitted: a runt leg could
+// otherwise pass the check and hide a sharp corner behind its drop.
+func (b *Builder) periodicPolygon() []bezier.Point {
+	n := len(b.samples)
+	if n < minPeriodicSamples+1 {
+		return nil
+	}
+	if b.samples[0] != b.samples[n-1] {
+		return nil
+	}
+	d := b.samples[:n-1]
+	if m := len(d); iabs(d[m-1].X-d[0].X)+iabs(d[m-1].Y-d[0].Y) < b.prec/2 {
+		d = d[:m-1]
+	}
+	m := len(d)
+	if m < minPeriodicSamples {
+		return nil
+	}
+	out := d[0].Sub(d[m-1])
+	in := d[1].Sub(d[0])
+	if sharpTurn(out, in) {
+		return nil
+	}
+	return d
+}
+
+// sharpTurn reports whether the turn from tangent a to tangent b
+// exceeds 45°.
+func sharpTurn(a, b bezier.Point) bool {
+	for iabs(a.X) >= 1<<12 || iabs(a.Y) >= 1<<12 {
+		a.X >>= 1
+		a.Y >>= 1
+	}
+	for iabs(b.X) >= 1<<12 || iabs(b.Y) >= 1<<12 {
+		b.X >>= 1
+		b.Y >>= 1
+	}
+	dot := int64(a.X)*int64(b.X) + int64(a.Y)*int64(b.Y)
+	if dot <= 0 {
+		return true
+	}
+	a2 := int64(a.X)*int64(a.X) + int64(a.Y)*int64(a.Y)
+	b2 := int64(b.X)*int64(b.X) + int64(b.Y)*int64(b.Y)
+	return 2*dot*dot < a2*b2
+}
+
+func iabs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// flushPeriodic emits a closed smooth run as a periodic contour. The
+// loop's periodic control polygon d0..dn-1 comes from
+// periodicPolygon; inserting the seam knot to full multiplicity
+// (Böhm knot insertion) converts it exactly into the clamped stream
+//
+//	K, K, K, B2, d1, …, dn-1, B1, K, K, K
+//
+// with B1 = (dn-1+2·d0)/3, B2 = (2·d0+d1)/3 and the seam knot value
+// K = (dn-1+4·d0+d1)/6, so downstream Böhm consumers trace the closed
+// loop with no periodic awareness. The deferred stroke-start clamp
+// lands on K, and the knots between the clamps carry the Periodic
+// flag for the engraving planner.
+func (b *Builder) flushPeriodic(d []bezier.Point, line bool) {
+	n := len(d)
+	dl, d0, d1 := d[n-1], d[0], d[1]
+	b1 := insetThird(dl, d0)
+	b2 := insetThird(d1, d0)
+	k0 := bezier.Pt(divRound(dl.X+4*d0.X+d1.X, 6), divRound(dl.Y+4*d0.Y+d1.Y, 6))
+	b.hasMove = false
+	b.emit3(vector.Knot{Ctrl: k0})
+	b.emit(vector.Knot{Ctrl: b2, Line: line, Periodic: true})
+	for _, p := range d[1:] {
+		b.emit(vector.Knot{Ctrl: p, Line: line, Periodic: true})
+	}
+	b.emit(vector.Knot{Ctrl: b1, Line: line, Periodic: true})
+	b.emit3(vector.Knot{Ctrl: k0, Line: line})
+	b.samples = b.samples[:0]
+}
+
+// insetThird returns the point a third of the way from b to a.
+func insetThird(a, b bezier.Point) bezier.Point {
+	return bezier.Pt(divRound(a.X+2*b.X, 3), divRound(a.Y+2*b.Y, 3))
+}
+
+// divRound divides v by d > 0, rounding to nearest.
+func divRound(v, d int) int {
+	if v >= 0 {
+		return (v + d/2) / d
+	}
+	return -((-v + d/2) / d)
 }
 
 func (b *Builder) emit(k vector.Knot) {

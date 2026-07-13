@@ -15,6 +15,11 @@ type Face struct {
 type Knot struct {
 	Ctrl bezier.Point
 	Line bool
+	// Periodic marks a control point of a periodic contour: a closed
+	// smooth stroke whose control polygon wraps at the seam instead of
+	// clamping. The flag never persists to font data; only streaming
+	// producers such as the svgpath builder set it.
+	Periodic bool
 }
 
 func NewFace(data []byte) *Face {

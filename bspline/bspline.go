@@ -121,13 +121,25 @@ func (k *Kinematics) Max() (v, a, j uint) {
 
 func (k *Kinematics) derive(p0, p1 bezier.Point, degree int, scale uint) bezier.Point {
 	t := uint(0)
+	n := 0
 	knots := k.knots[:degree]
 	for _, k := range knots {
-		t += k
+		if k != 0 {
+			t += k
+			n++
+		}
 	}
 	if t == 0 {
 		return bezier.Point{}
 	}
+	// A zero interval is a clamp-knot artifact, not a real dwell. When
+	// the window straddles the clamped run boundary it deflates t and
+	// inflates the derivative up to 3x, and since the planner paces the
+	// whole run off the peak that phantom velocity/accel/jerk slows
+	// short curved runs (round glyphs, whose seam is a boundary). Fill
+	// the zero intervals with the mean non-zero interval so the boundary
+	// windows read the true kinematics.
+	t = t * uint(degree) / uint(n)
 	return bezier.P64(p1.Sub(p0)).Mul(degree * int(scale)).Div(int(t)).Point()
 }
 

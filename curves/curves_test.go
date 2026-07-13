@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"seedhammer.com/bezier"
+	"seedhammer.com/bspline"
 	"seedhammer.com/engrave"
 )
 
@@ -320,5 +321,65 @@ func TestParseRejectsTextMode(t *testing.T) {
 	// it and be read as geometry.
 	if _, err := Parse([]byte("1 text\nHELLO"), params); err == nil {
 		t.Error("Parse accepted a text-mode payload")
+	}
+}
+
+// TestPeriodicCircle runs the 70mm bench circle through the full
+// device pipeline at SH2-realistic parameters: a closed smooth
+// contour must engrave as one periodic loop near the velocity-limit
+// floor, well under its clamped-era pace.
+func TestPeriodicCircle(t *testing.T) {
+	const mm = 6400
+	sh2 := engrave.Params{
+		Millimeter:  mm,
+		StrokeWidth: 0.3 * mm,
+		StepperConfig: engrave.StepperConfig{
+			Speed:          30 * mm,
+			EngravingSpeed: 8 * mm,
+			Acceleration:   250 * mm,
+			Jerk:           3900 * mm,
+			TicksPerSecond: 30 * mm,
+		},
+	}
+	circle := []byte("1 path 100 30\n" +
+		"M4250 750 C6183 750 7750 2317 7750 4250 " +
+		"C7750 6183 6183 7750 4250 7750 " +
+		"C2317 7750 750 6183 750 4250 " +
+		"C750 2317 2317 750 4250 750")
+	d, err := Parse(circle, sh2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Strokes != 1 {
+		t.Errorf("circle parsed to %d strokes", d.Strokes)
+	}
+	periodic := false
+	for c := range d.Engraving() {
+		if k, ok := c.AsKnot(); ok && k.Periodic {
+			periodic = true
+			break
+		}
+	}
+	if !periodic {
+		t.Error("closed circle did not convert to a periodic contour")
+	}
+	var engraveDur, totalDur uint
+	var seg bspline.Segment
+	for k := range engrave.PlanEngraving(sh2.StepperConfig, d.Engraving()) {
+		_, dt, eng := seg.Knot(k)
+		totalDur += dt
+		if eng {
+			engraveDur += dt
+		}
+	}
+	// The 219.4mm circle floors at 27.4s against the 8mm/s limit; the
+	// clamped plan took 31.2s.
+	tps := sh2.TicksPerSecond
+	if lo, hi := 27*tps, 29*tps; engraveDur < lo || engraveDur > hi {
+		t.Errorf("periodic circle engraves in %.2fs, want %d-%ds",
+			float64(engraveDur)/float64(tps), lo/tps, hi/tps)
+	}
+	if totalDur < engraveDur {
+		t.Error("total duration below engrave duration")
 	}
 }

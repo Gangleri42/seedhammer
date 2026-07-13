@@ -467,6 +467,34 @@ func mapChar(id string) (rune, bool) {
 			r = '<'
 		case "gt":
 			r = '>'
+		case "exclamation":
+			r = '!'
+		case "quote":
+			r = '"'
+		case "dollar":
+			r = '$'
+		case "percent":
+			r = '%'
+		case "ampersand":
+			r = '&'
+		case "plus":
+			r = '+'
+		case "equals":
+			r = '='
+		case "question":
+			r = '?'
+		case "backslash":
+			r = '\\'
+		case "caret":
+			r = '^'
+		case "underscore":
+			r = '_'
+		case "grave":
+			r = '`'
+		case "bar":
+			r = '|'
+		case "tilde":
+			r = '~'
 		default:
 			return 0, false
 		}

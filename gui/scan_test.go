@@ -32,7 +32,7 @@ func TestScan(t *testing.T) {
 	}{
 		{
 			Name:    "Unknown Format",
-			Encoded: "unsupported rune: ?!",
+			Encoded: "unsupported rune: \u00e9",
 			Err:     errScanUnknownFormat,
 		},
 		{

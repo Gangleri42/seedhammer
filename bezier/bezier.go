@@ -486,9 +486,35 @@ func Sample(points []Point, b Cubic, spacing int) []Point {
 	return points
 }
 
+// dist is the Euclidean distance between a and b, rounded to the
+// nearest integer. It is computed in integer arithmetic: Sample calls
+// it a few hundred times per cubic, and the RP2350 has no double
+// hardware, so a float64 Hypot here is software-emulated on the device
+// curve-decode path.
 func dist(a, b Point) int {
 	d := b.Sub(a)
-	return int(math.Round(math.Hypot(float64(d.X), float64(d.Y))))
+	return isqrt(d.X*d.X + d.Y*d.Y)
+}
+
+// isqrt returns sqrt(n) rounded to the nearest integer, for n >= 0.
+func isqrt(n int) int {
+	if n < 2 {
+		return n
+	}
+	// Newton's method settles on floor(sqrt(n)).
+	x := n
+	for {
+		y := (x + n/x) / 2
+		if y >= x {
+			break
+		}
+		x = y
+	}
+	// Round up past the midpoint x*x + x.
+	if n-x*x > x {
+		x++
+	}
+	return x
 }
 
 // sampleRefine is the number of uniform-t subdivisions used to build

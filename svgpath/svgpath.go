@@ -415,6 +415,7 @@ type Builder struct {
 	prec    int
 	splice  bool
 	fit     Fitter
+	sample  func([]bezier.Point, bezier.Cubic, int) []bezier.Point
 	yield   func(vector.Knot) bool
 	maxRun  int
 	tooLong error
@@ -438,6 +439,7 @@ func NewBuilder(prec int, splice bool, fit Fitter, yield func(vector.Knot) bool)
 		prec:   prec,
 		splice: splice,
 		fit:    fit,
+		sample: bezier.Sample,
 		yield:  yield,
 		prevOp: MoveTo,
 	}
@@ -539,7 +541,7 @@ func (b *Builder) appendBezier(c bezier.Cubic) {
 	if len(b.samples) == 0 {
 		b.samples = append(b.samples, c.C0)
 	}
-	b.samples = bezier.Sample(b.samples, c, b.prec)
+	b.samples = b.sample(b.samples, c, b.prec)
 	if b.maxRun > 0 && len(b.samples) > b.maxRun {
 		b.err = b.tooLong
 	}
@@ -610,6 +612,11 @@ func ToBSpline(segs []Segment, prec int, splice bool) (allSamples []bezier.Point
 		spline = append(spline, k)
 		return true
 	})
+	// Font generation runs off-device, so it samples with the symmetric
+	// arc-length sampler: a symmetric outline then yields a symmetric
+	// spline, which the integer Sample's one-directional walk would
+	// break. The device curves path keeps the cheaper Sample.
+	b.sample = bezier.SampleSym
 	b.onSamples = func(s []bezier.Point) {
 		allSamples = append(allSamples, s...)
 	}

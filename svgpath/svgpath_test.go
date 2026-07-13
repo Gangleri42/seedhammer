@@ -241,14 +241,17 @@ func TestToBSpline(t *testing.T) {
 	}
 	// The interpolating fit makes the spline pass through the sampled
 	// points rather than approximate them, so its control points ride
-	// closer to the outline than the old kinematic fit's did.
+	// closer to the outline than the old kinematic fit's did. The input
+	// cubic is mirror-symmetric about x=50, and the symmetric arc-length
+	// sampler (bezier.SampleSym) preserves that: the interior knots
+	// mirror about x=50, (4,50)<->(96,50) with (50,87) on the axis.
 	want := []vector.Knot{
 		{Ctrl: bezier.Pt(0, 0)},
 		{Ctrl: bezier.Pt(0, 0)},
 		{Ctrl: bezier.Pt(0, 0)},
-		{Ctrl: bezier.Pt(4, 52), Line: true},
-		{Ctrl: bezier.Pt(51, 87), Line: true},
-		{Ctrl: bezier.Pt(97, 49), Line: true},
+		{Ctrl: bezier.Pt(4, 50), Line: true},
+		{Ctrl: bezier.Pt(50, 87), Line: true},
+		{Ctrl: bezier.Pt(96, 50), Line: true},
 		{Ctrl: bezier.Pt(100, 0), Line: true},
 		{Ctrl: bezier.Pt(100, 0), Line: true},
 		{Ctrl: bezier.Pt(100, 0), Line: true},

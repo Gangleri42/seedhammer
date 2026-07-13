@@ -15,7 +15,7 @@ import (
 // curvesTestPayload is a payload in 100 units per mm, engravable
 // with the test params (0.3mm stroke = 30 units).
 func curvesTestPayload(path string) []byte {
-	return []byte("1 100 30\n" + path)
+	return []byte("1 path 100 30\n" + path)
 }
 
 func TestScanCurvesRecord(t *testing.T) {
@@ -66,6 +66,47 @@ type typedReader struct {
 
 func (r *typedReader) RecordType() []byte {
 	return []byte(r.typ)
+}
+
+func TestCurvesTextModeMatchesTextRecord(t *testing.T) {
+	// A text-mode curves payload must produce the same plate as the
+	// text-record path: same canonicalization, same layout, same
+	// engraving. This is the invariant the A/B bench checks.
+	const body = "IN CASE OF FIRE  \n\nBREAK GLASS"
+	payload := []byte("1 text\n" + body)
+
+	mode, err := curves.Mode(payload)
+	if err != nil || mode != curves.ModeText {
+		t.Fatalf("Mode = %q, %v; want text", mode, err)
+	}
+	text, err := curves.Text(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	viaCurves, ok := parsePlainText([]byte(text))
+	if !ok {
+		t.Fatal("parsePlainText rejected the text-mode body")
+	}
+	viaRecord, ok := parsePlainText([]byte(body))
+	if !ok {
+		t.Fatal("parsePlainText rejected the record body")
+	}
+	if viaCurves != viaRecord {
+		t.Fatalf("text mode canonicalized to %q, record to %q", viaCurves, viaRecord)
+	}
+
+	pc, err := validateText(engraverParams, string(viaCurves))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, err := validateText(engraverParams, string(viaRecord))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pc.Duration != pr.Duration {
+		t.Errorf("plate duration differs: curves %d vs record %d", pc.Duration, pr.Duration)
+	}
 }
 
 func TestValidateCurves(t *testing.T) {

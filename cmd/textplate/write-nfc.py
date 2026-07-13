@@ -5,19 +5,25 @@ USB NFC reader (e.g. ACR122U via nfcpy).
 
 By default the composition is written as an NDEF Text record: each
 line of the payload becomes a plate line, engraved at the largest
-text size whose grid holds the composition. With --curves the
-composition is compiled to a seedhammer.com:curves vector record
-instead, engraving the same strokes through the firmware's curves
-pipeline. Compose with the plate editor (index.html) or any text
-editor.
+text size whose grid holds the composition.
 
-The supported charset, grid dimensions, glyph geometry and payload
+The alternatives write a seedhammer.com:curves record instead, which
+the firmware dispatches on a mode field. With --curves-text the plate
+text rides the curves envelope and the firmware renders it from its
+own font, same engraving as a Text record but one input format. With
+--curves the composition is vectorized into path geometry, engraving
+the strokes directly; use this for graphics, not dense text (path
+geometry is far larger than the text).
+
+Compose with the plate editor (index.html) or any text editor. The
+supported charset, grid dimensions, glyph geometry and payload
 parameters are read from the glyphs.js next to this script,
 generated from the firmware sources by
 "go run seedhammer.com/cmd/textplate".
 
 Usage:
     write-nfc.py plate.txt            # or - for stdin
+    write-nfc.py --curves-text plate.txt
     write-nfc.py --curves plate.txt
     echo "IN CASE OF FIRE" | write-nfc.py -
 
@@ -99,7 +105,7 @@ def compile_curves(lines: list[str], size: dict, sh: dict) -> bytes:
     units_per_mm = int(sh["height"] / size["mm"] + 0.5)
     stroke_width = int(sh["strokeMM"] * units_per_mm + 0.5)
     margin = sh["marginMM"] * units_per_mm
-    parts = [f"{sh['version']} {units_per_mm} {stroke_width}"]
+    parts = [f"{sh['version']} path {units_per_mm} {stroke_width}"]
     for row, line in enumerate(lines):
         for col, ch in enumerate(line):
             d = sh["glyphs"].get(ch, "")
@@ -149,8 +155,9 @@ def write(records: list) -> None:
 def main():
     args = sys.argv[1:]
     as_curves = "--curves" in args
-    args = [a for a in args if a != "--curves"]
-    if len(args) != 1:
+    as_curves_text = "--curves-text" in args
+    args = [a for a in args if a not in ("--curves", "--curves-text")]
+    if len(args) != 1 or (as_curves and as_curves_text):
         sys.exit(__doc__.strip())
     src = sys.stdin if args[0] == "-" else open(args[0], encoding="utf-8")
     with src:
@@ -162,9 +169,15 @@ def main():
         f"engraves at {size['mm']}mm",
         file=sys.stderr,
     )
+    ext = "urn:nfc:ext:" + sh["recordType"]
     if as_curves:
         payload = compile_curves(lines, size, sh)
-        records = [ndef.Record("urn:nfc:ext:" + sh["recordType"], "", payload)]
+        records = [ndef.Record(ext, "", payload)]
+    elif as_curves_text:
+        # Text through the curves envelope: the firmware lays it out
+        # and renders it from its own font, same as a Text record.
+        body = f"{sh['version']} text\n" + "\n".join(lines)
+        records = [ndef.Record(ext, "", body.encode())]
     else:
         records = [ndef.TextRecord("\n".join(lines), language="en")]
     write(records)

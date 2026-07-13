@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -14,8 +15,10 @@ import (
 )
 
 // curvesPayload is the body of a scanned seedhammer.com:curves
-// record, validated by curvesFlow.
+// record, dispatched by curvesFlow on its mode.
 type curvesPayload []byte
+
+var errCurvesText = errors.New("The text cannot be engraved.")
 
 // Limits on curves payloads. The knot caps bound the planner's
 // per-stroke buffering and the time limit bounds unattended machine
@@ -27,7 +30,34 @@ const (
 	curvesMaxMinutes     = 45
 )
 
+// curvesFlow dispatches a seedhammer.com:curves record on its mode:
+// text is laid out and rendered from the firmware font like a text
+// plate, path is engraved as geometry. Both share the engrave path.
 func curvesFlow(ctx *Context, th *Colors, payload curvesPayload) {
+	mode, err := curves.Mode(payload)
+	if err != nil {
+		showError(ctx, th, err, blankScreen)
+		return
+	}
+	switch mode {
+	case curves.ModeText:
+		text, _ := curves.Text(payload)
+		t, ok := parsePlainText([]byte(text))
+		if !ok {
+			showError(ctx, th, errCurvesText, blankScreen)
+			return
+		}
+		textFlow(ctx, th, t)
+	case curves.ModePath:
+		curvesPathFlow(ctx, th, payload)
+	}
+}
+
+func blankScreen(ctx *Context, th *Colors, dims image.Point) op.Op {
+	return op.Color(&ctx.B, th.Background)
+}
+
+func curvesPathFlow(ctx *Context, th *Colors, payload curvesPayload) {
 	params := ctx.Platform.EngraverParams()
 	cs := &CurvesScreen{}
 	plate, err := validateCurves(cs, payload, params, ctx.Platform.DisplaySize())

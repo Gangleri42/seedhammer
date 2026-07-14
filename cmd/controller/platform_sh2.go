@@ -193,7 +193,7 @@ const (
 	// acceleration in steps/s².
 	acceleration = 250 * mm
 	// jerk in steps/s³.
-	jerk    = 3900 * mm
+	jerk    = 2600 * mm
 	invertX = true
 	invertY = false
 )

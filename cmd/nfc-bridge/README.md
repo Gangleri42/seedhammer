@@ -48,7 +48,19 @@ Logs: `journalctl --user -u seedhammer-nfc-bridge -f` and
 ## Security
 
 - Binds `127.0.0.1` only.
-- Refuses browser requests from origins not on the allow-list.
+- Validates the `Host` header against the loopback, so DNS rebinding
+  (a public site re-pointing its hostname to 127.0.0.1) cannot reach
+  any endpoint.
+- Refuses `/bridge/send` from origins not on the allow-list. The
+  allow-list is `SH_BRIDGE_ORIGINS`-overridable: point it at a
+  project-controlled origin, or drop the cross-origin entry to serve
+  Studio loopback-only.
+- Caps the request body, so an oversized payload can't exhaust memory.
 - The strong backstop is physical: nothing is written until you tap
   the reader, and the device shows a confirm screen before engraving.
   The bridge only *writes* engraving payloads; it never reads secrets.
+
+An adversarial audit (2026-07-14) found no serious vulnerability: only
+low-severity items (DNS-rebinding fingerprinting, trust in the
+allow-listed origin, a bounded local DoS), all addressed above or
+bounded by the physical confirm gate.

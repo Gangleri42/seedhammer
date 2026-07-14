@@ -279,6 +279,13 @@ func stringColumn(t engrave.Transform, constant *engrave.ConstantStringer, font 
 	}
 }
 
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 	return func(yield func(engrave.Command) bool) {
 		t := engrave.NewTransform(yield)
@@ -298,6 +305,11 @@ func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 		width := plateDims.X - 2*margin
 		charPerLine := CharsPerLine(params, fnt, fontMM)
 		offy := params.I(outerMargin)
+		// Serpentine rows: a row engraves right to left when its right
+		// end is nearer the previous row's exit, so the head enters
+		// each row where the last one ended instead of returning
+		// across the plate.
+		exitX := margin
 		for i, p := range plate.Paragraphs {
 			qrLines := 0
 			charPerQRLine := 0
@@ -340,7 +352,15 @@ func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 					s := seg[:n]
 					seg = seg[n:]
 					t.Offset(margin, offy+lineno*fontSize)
-					engrave.String(fnt, fontSize, s).Engrave(t.Yield)
+					str := engrave.String(fnt, fontSize, s)
+					rightX := margin + len(s)*charWidth
+					if s != "" && abs(exitX-rightX) < abs(exitX-margin) {
+						str.Reversed()
+						exitX = margin
+					} else if s != "" {
+						exitX = rightX
+					}
+					str.Engrave(t.Yield)
 					lineno++
 					if len(seg) == 0 {
 						break

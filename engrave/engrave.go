@@ -9,6 +9,7 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -1827,6 +1828,9 @@ type StringCmd struct {
 	spans     []glyphSpan
 	scratch   []glyphKnot
 	keepOrder bool
+	reversed  bool
+	rbuf      []rune
+	xbuf      []int
 }
 
 // SourceOrder disables stroke reordering and flying transitions for
@@ -1836,9 +1840,60 @@ func (s *StringCmd) SourceOrder() *StringCmd {
 	return s
 }
 
+// Reversed keeps the layout unchanged but engraves the glyphs of each
+// line right to left: a serpentine text block enters every row where
+// the previous row ended instead of paying a full-width return
+// travel.
+func (s *StringCmd) Reversed() *StringCmd {
+	s.reversed = true
+	return s
+}
+
 func (s *StringCmd) Engrave(yield func(Command) bool) bool {
+	if s.reversed {
+		return s.engraveReversed(yield)
+	}
 	_, ok := s.engrave(yield)
 	return ok
+}
+
+// engraveReversed emits each line's glyphs at their forward layout
+// positions, in reverse order.
+func (s *StringCmd) engraveReversed(yield func(Command) bool) bool {
+	m := s.face.Metrics()
+	mh := m.Height
+	y := (m.Ascent*s.em + mh - 1) / mh
+	lheight := s.em * s.LineHeight
+	txt := s.txt
+	for {
+		seg := txt
+		if i := strings.IndexByte(txt, '\n'); i >= 0 {
+			seg, txt = txt[:i], txt[i+1:]
+		} else {
+			txt = ""
+		}
+		s.rbuf, s.xbuf = s.rbuf[:0], s.xbuf[:0]
+		x := 0
+		for _, r := range seg {
+			adv, _, found := s.face.Decode(r)
+			if !found {
+				panic(fmt.Errorf("unsupported rune: %s", string(r)))
+			}
+			s.rbuf = append(s.rbuf, r)
+			s.xbuf = append(s.xbuf, x)
+			x += adv * s.em / mh
+		}
+		for i := len(s.rbuf) - 1; i >= 0; i-- {
+			_, spline, _ := s.face.Decode(s.rbuf[i])
+			if !s.engraveGlyph(yield, bezier.Pt(s.xbuf[i], y), mh, spline) {
+				return false
+			}
+		}
+		if txt == "" {
+			return true
+		}
+		y += lheight
+	}
 }
 
 func (s *StringCmd) Measure() (int, int) {

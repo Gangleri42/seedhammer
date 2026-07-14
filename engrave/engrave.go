@@ -1404,16 +1404,22 @@ func planConstantRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bo
 		}
 	}
 	ease()
+	mixed := false
+	for k := lo; k <= hi; k++ {
+		mixed = mixed || !spline[k].Engrave
+	}
 	// Needle-up spans are held to the absolute limits, and the
 	// blended polygon of a teardrop traces harder than the arc it
-	// samples. Slow the bridges by the measured excess — free of dot
-	// pitch — and re-ease; the final gate re-judges the result.
-	if _, _, _, vup, aup, jup := tracedFlagMaxima(spline, tps, false); jup > 0 {
+	// samples. Slow the bridges by the measured excess (free of dot
+	// pitch) and re-ease; the final gate re-judges the result. Pure
+	// ink runs skip the measurement entirely.
+	if mixed {
+		_, _, _, vup, aup, jup := tracedFlagMaxima(spline, tps, false)
 		const uslack = 63. / 64
 		f := max(1,
-			vup/(float64(conf.Speed)*uslack),
-			math.Sqrt(aup/(float64(conf.Acceleration)*uslack)),
-			math.Cbrt(jup/(float64(conf.Jerk)*uslack)))
+			float64(vup)/(float64(conf.Speed)*uslack),
+			math.Sqrt(float64(aup)/(float64(conf.Acceleration)*uslack)),
+			math.Cbrt(float64(jup)/(float64(conf.Jerk)*uslack)))
 		if f > 1 {
 			for k := lo; k <= hi; k++ {
 				if !spline[k].Engrave {
@@ -1428,10 +1434,6 @@ func planConstantRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bo
 	// bridge windows the model over-reads, and the emitter already
 	// priced the flight against its stop-and-go alternative, so only
 	// the gate judges them.
-	mixed := false
-	for k := lo; k <= hi; k++ {
-		mixed = mixed || !spline[k].Engrave
-	}
 	if !mixed {
 		var dur uint
 		for k := lo; k <= hi; k++ {
@@ -1451,20 +1453,47 @@ func planConstantRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bo
 	// must trace no worse than the uniform plan of the same run, with
 	// the nominal limits as the floor. Needle-up bridges are new
 	// geometry with no such precedent and stay absolutely limited.
-	vi, ai, ji, vu, au, ju := tracedFlagMaxima(spline, conf.TicksPerSecond, false)
-	v1, a1, j1, _, _, _ := tracedFlagMaxima(spline, conf.TicksPerSecond, true)
-	s := float64(conf.TicksPerSecond) / float64(tscaleU)
-	limv := float64(conf.Speed)
+	limv := float32(conf.Speed)
 	if engrave {
-		limv = float64(conf.EngravingSpeed)
+		limv = float32(conf.EngravingSpeed)
 	}
-	lima, limj := float64(conf.Acceleration), float64(conf.Jerk)
+	lima, limj := float32(conf.Acceleration), float32(conf.Jerk)
 	// The blend between unequal spans overshoots the per-span rates
 	// by a fraction of a percent; a 65/64 floor is noise against the
 	// boundary envelope the uniform baseline already carries.
 	const slack = 65. / 64
-	return vi <= max(limv*slack, v1*s) && ai <= max(lima*slack, a1*s*s) && ji <= max(limj*slack, j1*s*s*s) &&
-		vu <= float64(conf.Speed)*slack && au <= lima*slack && ju <= limj*slack
+	for range 3 {
+		vi, ai, ji, vu, au, ju := tracedFlagMaxima(spline, conf.TicksPerSecond, false)
+		v1, a1, j1, _, _, _ := tracedFlagMaxima(spline, conf.TicksPerSecond, true)
+		sc := float32(conf.TicksPerSecond) / float32(tscaleU)
+		f := max(
+			vi/max(limv*slack, v1*sc),
+			float32(math.Sqrt(float64(ai/max(lima*slack, a1*sc*sc)))),
+			float32(math.Cbrt(float64(ji/max(limj*slack, j1*sc*sc*sc)))),
+			vu/(float32(conf.Speed)*slack),
+			float32(math.Sqrt(float64(au/(lima*slack)))),
+			float32(math.Cbrt(float64(ju/(limj*slack)))))
+		if f <= 1 {
+			return true
+		}
+		if !mixed {
+			return false
+		}
+		// A mixed run has no safe fallback: the windowed model cannot
+		// see its bridges, so uniform re-pacing may command teardrops
+		// far past the limits. Scale the whole run by the measured
+		// excess instead; a uniform time scale shrinks the traced
+		// curve exactly, so one pass converges.
+		for k := lo; k <= hi; k++ {
+			spline[k].T = uint(float32(spline[k].T)*f + 1)
+		}
+	}
+	// Unreachable while the scaling law holds; take the safe
+	// direction regardless.
+	for k := lo; k <= hi; k++ {
+		spline[k].T *= 2
+	}
+	return true
 }
 
 // tracedFlagMaxima measures a timed run's traced per-axis kinematic
@@ -1473,7 +1502,15 @@ func planConstantRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bo
 // measured at one tick per span instead of its pacing: scaling those
 // maxima by (tps/tscale)^k gives the exact traced kinematics of the
 // uniform fallback, since every knot interval scales together.
-func tracedFlagMaxima(spline []bspline.Knot, tps uint, unit bool) (vi, ai, ji, vu, au, ju float64) {
+// Single precision throughout: the device has no double-precision
+// FPU, and the gates carry percent-scale slack.
+func tracedFlagMaxima(spline []bspline.Knot, tps uint, unit bool) (vi, ai, ji, vu, au, ju float32) {
+	abs := func(x float32) float32 {
+		if x < 0 {
+			return -x
+		}
+		return x
+	}
 	var seg bspline.Segment
 	for _, k := range spline {
 		if unit && k.T > 0 {
@@ -1483,29 +1520,40 @@ func tracedFlagMaxima(spline []bspline.Knot, tps uint, unit bool) (vi, ai, ji, v
 		if dt == 0 {
 			continue
 		}
-		T := float64(dt)
+		T := float32(dt)
 		if !unit {
-			T /= float64(tps)
+			T /= float32(tps)
 		}
 		d1 := [3]bezier.Point{
 			c.C1.Sub(c.C0).Mul(3),
 			c.C2.Sub(c.C1).Mul(3),
 			c.C3.Sub(c.C2).Mul(3),
 		}
-		var v, a float64
-		for i := 0; i <= 8; i++ {
-			u := float64(i) / 8
-			mu := 1 - u
-			vx := (float64(d1[0].X)*mu*mu + 2*float64(d1[1].X)*mu*u + float64(d1[2].X)*u*u) / T
-			vy := (float64(d1[0].Y)*mu*mu + 2*float64(d1[1].Y)*mu*u + float64(d1[2].Y)*u*u) / T
-			v = max(v, math.Abs(vx), math.Abs(vy))
-			ax := 2 * (float64(d1[1].X-d1[0].X)*mu + float64(d1[2].X-d1[1].X)*u) / (T * T)
-			ay := 2 * (float64(d1[1].Y-d1[0].Y)*mu + float64(d1[2].Y-d1[1].Y)*u) / (T * T)
-			a = max(a, math.Abs(ax), math.Abs(ay))
+		// Per axis, velocity is quadratic in u (exact extremum in
+		// closed form) and acceleration is linear (extremes at the
+		// endpoints); no sampling needed.
+		var v, a float32
+		for axis := 0; axis < 2; axis++ {
+			A := float32(d1[0].X)
+			B := float32(d1[1].X)
+			C := float32(d1[2].X)
+			if axis == 1 {
+				A, B, C = float32(d1[0].Y), float32(d1[1].Y), float32(d1[2].Y)
+			}
+			v = max(v, abs(A), abs(C))
+			if den := A - 2*B + C; den != 0 {
+				if u := (A - B) / den; u > 0 && u < 1 {
+					mu := 1 - u
+					v = max(v, abs(A*mu*mu+2*B*mu*u+C*u*u))
+				}
+			}
+			a = max(a, 2*abs(B-A), 2*abs(C-B))
 		}
+		v /= T
+		a /= T * T
 		j := max(
-			math.Abs(6*float64(c.C3.X-3*c.C2.X+3*c.C1.X-c.C0.X)/(T*T*T)),
-			math.Abs(6*float64(c.C3.Y-3*c.C2.Y+3*c.C1.Y-c.C0.Y)/(T*T*T)))
+			abs(6*float32(c.C3.X-3*c.C2.X+3*c.C1.X-c.C0.X)/(T*T*T)),
+			abs(6*float32(c.C3.Y-3*c.C2.Y+3*c.C1.Y-c.C0.Y)/(T*T*T)))
 		if engrave {
 			vi, ai, ji = max(vi, v), max(ai, a), max(ji, j)
 		} else {
@@ -1927,8 +1975,9 @@ func (s *StringCmd) engrave(yield func(Command) bool) (bezier.Point, bool) {
 
 // glyphKnot is a decoded, machine-scaled glyph control point.
 type glyphKnot struct {
-	p    bezier.Point
-	line bool
+	p        bezier.Point
+	line     bool
+	periodic bool
 }
 
 // glyphNode is a maximal group of coincident glyph knots: baked
@@ -1996,11 +2045,15 @@ func (s *StringCmd) engraveGlyph(yield func(Command) bool, pos bezier.Point, hei
 			break
 		}
 		periodic = periodic || k.Periodic
-		s.raw = append(s.raw, glyphKnot{addScale(pos, k.Ctrl, s.em, height), k.Line})
+		s.raw = append(s.raw, glyphKnot{addScale(pos, k.Ctrl, s.em, height), k.Line, k.Periodic})
 	}
 	replay := func(from, to int) bool {
 		for _, k := range s.raw[from:to] {
-			if !yield(ControlPoint(k.line, k.p)) {
+			cmd := ControlPoint(k.line, k.p)
+			if k.periodic {
+				cmd = PeriodicPoint(k.p)
+			}
+			if !yield(cmd) {
 				return false
 			}
 		}
@@ -2046,6 +2099,17 @@ func (s *StringCmd) engraveGlyph(yield func(Command) bool, pos bezier.Point, hei
 		// Adjacent anchors also encode straight strokes ([P×3][Q×3]
 		// with the line drawn between them); only a move run may fly.
 		if s.raw[a.i0+a.n-1].line || s.raw[b.i0].line {
+			continue
+		}
+		// Both anchors must belong to real ink: an all-move phantom
+		// anchor (a rest point inside a travel) has no stroke to fly
+		// from, and flying both of its junctions would mislabel the
+		// hop as ink. Real anchors touch ink on their stroke side
+		// (smooth entries are baked all-move but ink follows); one
+		// flight per anchor.
+		aInk := s.raw[a.i0].line || (a.i0 > 0 && s.raw[a.i0-1].line)
+		bInk := s.raw[b.i0+b.n-1].line || (b.i0+b.n < len(s.raw) && s.raw[b.i0+b.n].line)
+		if !aInk || !bInk || fly[i-1] {
 			continue
 		}
 		// Both neighboring strokes must be long enough to absorb the
@@ -2249,7 +2313,7 @@ func (s *StringCmd) orderStrokes() {
 			if i+1 <= st.i1 {
 				line = s.raw[i+1].line
 			}
-			s.scratch = append(s.scratch, glyphKnot{s.raw[i].p, line})
+			s.scratch = append(s.scratch, glyphKnot{s.raw[i].p, line, false})
 		}
 	}
 	s.raw = append(s.raw[:0], s.scratch...)
@@ -2303,7 +2367,7 @@ func flyBridge(dst []bezier.Point, prev, exit, entry, next bezier.Point, cref in
 		C3: b2,
 	}
 	dst = append(dst, b1)
-	dst = bezier.Sample(dst, cubic, cref)
+	dst = bezier.Sample(dst, cubic, min(cref, rminFly/2))
 	// The full flown polygon must respect the curvature envelope.
 	if minCircumradius(prev, exit, dst, entry, next) >= rminFly {
 		return dst
@@ -2312,7 +2376,7 @@ func flyBridge(dst []bezier.Point, prev, exit, entry, next bezier.Point, cref in
 	// with a touch of margin over the envelope floor.
 	dst = dubinsBridge(dst[:0], exit, math.Atan2(float64(dout.Y), float64(dout.X)),
 		entry, math.Atan2(float64(din.Y), float64(din.X)),
-		float64(rminFly)*10/9, float64(cref))
+		float64(rminFly)*10/9, float64(min(cref, rminFly/2)))
 	if dst == nil {
 		return nil
 	}

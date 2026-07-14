@@ -37,11 +37,28 @@ LOG_PATH = os.path.expanduser("~/bench/nfc-bridge.log")
 RECORD_TYPE = "urn:nfc:ext:seedhammer.com:curves"
 TAP_TIMEOUT_S = 30
 
-ALLOWED_ORIGINS = {
-    "https://gangleri42.github.io",
-    f"http://127.0.0.1:{PORT}",
-    f"http://localhost:{PORT}",
-}
+# The web origins allowed to reach /bridge/send. Override with a
+# comma-separated SH_BRIDGE_ORIGINS to point at a project-controlled
+# host or to drop the cross-origin entry entirely (loopback-only).
+_origins = os.environ.get("SH_BRIDGE_ORIGINS")
+ALLOWED_ORIGINS = (
+    {o.strip() for o in _origins.split(",") if o.strip()}
+    if _origins
+    else {
+        "https://gangleri42.github.io",
+        f"http://127.0.0.1:{PORT}",
+        f"http://localhost:{PORT}",
+    }
+)
+
+# Only requests whose Host is the loopback are served; this closes DNS
+# rebinding, where a public site re-points its hostname to 127.0.0.1 to
+# reach this daemon from the victim's browser.
+ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
+
+# Curves payloads top out near 32 KB; cap the body well above that but
+# far below anything that could exhaust memory.
+MAX_BODY = 256 * 1024
 
 # One NFC write at a time: the reader is a single shared device.
 _write_lock = threading.Lock()
@@ -118,18 +135,32 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _host_ok(self):
+        return self.headers.get("Host", "") in ALLOWED_HOSTS
+
+    def _deny(self, code=403):
+        self.send_response(code)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_OPTIONS(self):
+        if not self._host_ok():
+            return self._deny()
         self.send_response(204)
         self._cors()
         self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_GET(self):
+        if not self._host_ok():
+            return self._deny()
         if self.path.split("?")[0].rstrip("/") == "/bridge/health":
             return self._json(200, {"ok": True, "name": "seedhammer-nfc-bridge", "version": 1})
         return super().do_GET()
 
     def do_POST(self):
+        if not self._host_ok():
+            return self._deny()
         if self.path.split("?")[0].rstrip("/") != "/bridge/send":
             return self._json(404, {"error": "not found"})
         # CORS only guards browsers; a present-but-unlisted Origin is a
@@ -140,6 +171,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._json(403, {"error": "origin not allowed"})
         try:
             n = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return self._json(400, {"error": "bad content-length"})
+        if n > MAX_BODY:
+            return self._json(413, {"error": "payload too large"})
+        try:
             data = json.loads(self.rfile.read(n) or b"{}")
             payload = data["payload"]
             if not isinstance(payload, str) or not payload:

@@ -169,6 +169,16 @@ func (s Script) DerivationPath() bip32.Path {
 
 // Encode the descriptor into bip380 format.
 func (d *Descriptor) Encode() string {
+	s := d.encode(false)
+	c, ok := checksum(s)
+	if !ok {
+		panic("impossible by construction")
+	}
+	return s + "#" + c
+}
+
+// Encode the descriptor into bip380 format, without the checksum.
+func (d *Descriptor) EncodeNoChecksum() string {
 	return d.encode(false)
 }
 
@@ -178,8 +188,8 @@ func (d *Descriptor) EncodeCompact() string {
 	return d.encode(true)
 }
 
-// encode the descriptor into bip380 format. Key origins
-// and the checksum are omitted if compact is true.
+// encode the descriptor into bip380 format without the checksum.
+// Key origins and the checksum are omitted if compact is true.
 func (d *Descriptor) encode(compact bool) string {
 	res := new(strings.Builder)
 	parens := 1
@@ -230,15 +240,7 @@ func (d *Descriptor) encode(compact bool) string {
 	for range parens {
 		res.WriteByte(')')
 	}
-	s := res.String()
-	if !compact {
-		sum, ok := checksum(s)
-		if !ok {
-			panic("impossible by construction")
-		}
-		s = s + "#" + sum
-	}
-	return s
+	return res.String()
 }
 
 func (d Derivation) Encode() string {

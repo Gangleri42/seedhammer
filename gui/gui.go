@@ -398,7 +398,7 @@ func NewErrorScreen(err error) *ErrorScreen {
 
 func validateDescriptor(params engrave.Params, desc *bip380.Descriptor) ([]string, []Plate, error) {
 	enc := desc.Encode()
-	qrc, err := qr.Encode(desc.EncodeCompact(), qr.L)
+	qrc, err := qr.Encode(desc.EncodeNoChecksum(), qr.L)
 	if err != nil {
 		return nil, nil, err
 	}

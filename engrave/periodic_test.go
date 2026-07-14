@@ -6,6 +6,7 @@ import (
 
 	"seedhammer.com/bezier"
 	"seedhammer.com/bspline"
+	"seedhammer.com/font/sh"
 	"seedhammer.com/font/vector"
 	"seedhammer.com/svgpath"
 )
@@ -199,6 +200,32 @@ func TestPeriodicOpenRunUnchanged(t *testing.T) {
 		if want[i] != got[i] {
 			t.Fatalf("open run knot %d changed: %v vs %v", i, got[i], want[i])
 		}
+	}
+}
+
+// TestPeriodicRampPricing checks that a loop never plans slower than
+// its clamped fallback beyond the ramp-pricing margin: text-size
+// glyph bowls pay more for rest-to-rest ramps than their seam costs,
+// and must fall back to the byte-identical clamped plan.
+func TestPeriodicRampPricing(t *testing.T) {
+	plan := func(strip bool) uint {
+		e := func(yield func(Command) bool) {
+			String(sh.Font, 3*mm, "QO0o8%Q").Engrave(func(c Command) bool {
+				if k, ok := c.AsKnot(); ok && k.Periodic && strip {
+					c = ControlPoint(true, k.Knot)
+				}
+				return yield(c)
+			})
+		}
+		var dur uint
+		for k := range PlanEngraving(conf, e) {
+			dur += k.T
+		}
+		return dur
+	}
+	flagged, stripped := plan(false), plan(true)
+	if flagged > stripped+stripped/32 {
+		t.Errorf("periodic glyphs plan slower than clamped: %d vs %d ticks", flagged, stripped)
 	}
 }
 

@@ -247,3 +247,40 @@ func TestPeriodicKillsSeamSpike(t *testing.T) {
 		t.Errorf("clamped expected to spike, got peak/mean=%.1f", cp/cm)
 	}
 }
+
+// TestInterpolateFitPeriodic checks the cyclic fit interpolates its
+// samples and preserves mirror symmetry: the failure mode that egged
+// round glyphs in asymmetric fitters.
+func TestInterpolateFitPeriodic(t *testing.T) {
+	const n = 24
+	var s []bezier.Point
+	for i := 0; i < n; i++ {
+		a := 2 * math.Pi * float64(i) / n
+		s = append(s, bezier.Pt(
+			int(math.Round(10000*math.Cos(a))),
+			int(math.Round(6000*math.Sin(a))),
+		))
+	}
+	d, err := InterpolateFitPeriodic()(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d) != n {
+		t.Fatalf("fit returned %d controls for %d samples", len(d), n)
+	}
+	for i := range s {
+		prev, next := d[(i+n-1)%n], d[(i+1)%n]
+		kx := math.Round(float64(prev.X+4*d[i].X+next.X) / 6)
+		ky := math.Round(float64(prev.Y+4*d[i].Y+next.Y) / 6)
+		if dx, dy := kx-float64(s[i].X), ky-float64(s[i].Y); math.Abs(dx) > 1 || math.Abs(dy) > 1 {
+			t.Errorf("knot %d misses its sample by (%g, %g)", i, dx, dy)
+		}
+	}
+	// Mirror symmetry about the X axis: sample i mirrors sample n-i.
+	for i := 1; i < n; i++ {
+		m := d[n-i]
+		if d[i].X != m.X || d[i].Y != -m.Y {
+			t.Errorf("controls %d/%d not mirrored: %v vs %v", i, n-i, d[i], m)
+		}
+	}
+}

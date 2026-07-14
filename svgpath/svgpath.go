@@ -403,6 +403,77 @@ func iround(v float64) int {
 	return int(math.Round(v))
 }
 
+// InterpolateFitPeriodic fits a closed sample cycle s0..sn-1 to the
+// periodic control polygon d0..dn-1 of a uniform cubic B-spline whose
+// value at each knot, (d[i-1]+4·d[i]+d[i+1])/6 with cyclic indices,
+// equals the corresponding sample. The cyclic tridiagonal system is
+// the periodic counterpart of [InterpolateFit]'s clamped one, solved
+// by the Thomas algorithm plus a Sherman-Morrison corner correction,
+// O(n) and symmetric like its clamped sibling.
+func InterpolateFitPeriodic() func([]bezier.Point) ([]bezier.Point, error) {
+	return func(samples []bezier.Point) ([]bezier.Point, error) {
+		n := len(samples)
+		if n < 3 {
+			return samples, nil
+		}
+		// A = cyclic tri(1,4,1) = A' + u·vᵀ with γ = -4:
+		// A'[0][0] = 8, A'[n-1][n-1] = 4.25, corners dropped.
+		const gamma = -4.0
+		diag := make([]float64, n)
+		for i := range diag {
+			diag[i] = 4
+		}
+		diag[0] = 4 - gamma
+		diag[n-1] = 4 - 1/gamma
+		// Thomas forward sweep shared by all right-hand sides.
+		c := make([]float64, n)
+		c[0] = 1 / diag[0]
+		for i := 1; i < n-1; i++ {
+			c[i] = 1 / (diag[i] - c[i-1])
+		}
+		solve := func(rhs []float64) {
+			rhs[0] /= diag[0]
+			for i := 1; i < n; i++ {
+				rhs[i] = (rhs[i] - rhs[i-1]) / (diag[i] - c[i-1])
+			}
+			for i := n - 2; i >= 0; i-- {
+				rhs[i] -= c[i] * rhs[i+1]
+			}
+		}
+		// z solves A'z = u with u = (γ, 0, …, 0, 1).
+		z := make([]float64, n)
+		z[0], z[n-1] = gamma, 1
+		solve(z)
+		// v = (1, 0, …, 0, 1/γ).
+		vz := 1 + z[0] + z[n-1]/gamma
+		x := make([]float64, n)
+		y := make([]float64, n)
+		out := make([]bezier.Point, n)
+		for axis := 0; axis < 2; axis++ {
+			for i, s := range samples {
+				v := s.X
+				if axis == 1 {
+					v = s.Y
+				}
+				x[i] = 6 * float64(v)
+			}
+			solve(x)
+			vy := (x[0] + x[n-1]/gamma) / vz
+			for i := range x {
+				y[i] = x[i] - z[i]*vy
+			}
+			for i := range out {
+				if axis == 0 {
+					out[i].X = iround(y[i])
+				} else {
+					out[i].Y = iround(y[i])
+				}
+			}
+		}
+		return out, nil
+	}
+}
+
 // Builder converts a stream of segments into uniform B-spline knots,
 // sampling curves with spacing prec and fitting each run of samples
 // with fit. Knots are passed to yield as they complete; a stroke is
@@ -412,14 +483,15 @@ func iround(v float64) int {
 // If splice is set, lines that are part of longer shapes are
 // appended as (straight) curve segments.
 type Builder struct {
-	prec     int
-	splice   bool
-	periodic bool
-	fit      Fitter
-	sample   func([]bezier.Point, bezier.Cubic, int) []bezier.Point
-	yield    func(vector.Knot) bool
-	maxRun   int
-	tooLong  error
+	prec        int
+	splice      bool
+	periodic    bool
+	periodicFit func([]bezier.Point) ([]bezier.Point, error)
+	fit         Fitter
+	sample      func([]bezier.Point, bezier.Cubic, int) []bezier.Point
+	yield       func(vector.Knot) bool
+	maxRun      int
+	tooLong     error
 
 	// onSamples reports every fitted sample run, for debugging.
 	onSamples func([]bezier.Point)
@@ -471,6 +543,15 @@ func (b *Builder) LimitRun(max int, err error) {
 // phantom rest-to-cruise spike at the seam.
 func (b *Builder) Periodic() {
 	b.periodic = true
+}
+
+// PeriodicFit is like Periodic, but fits the closed sample cycle to a
+// periodic control polygon with fit instead of using the samples
+// directly. Font generation uses it with [InterpolateFitPeriodic] so
+// closed outlines interpolate their samples like clamped strokes do.
+func (b *Builder) PeriodicFit(fit func([]bezier.Point) ([]bezier.Point, error)) {
+	b.periodic = true
+	b.periodicFit = fit
 }
 
 // Add processes the next segment. It reports whether the builder
@@ -696,6 +777,14 @@ func iabs(v int) int {
 // lands on K, and the knots between the clamps carry the Periodic
 // flag for the engraving planner.
 func (b *Builder) flushPeriodic(d []bezier.Point, line bool) {
+	if b.periodicFit != nil {
+		fitted, err := b.periodicFit(d)
+		if err != nil {
+			b.err = err
+			return
+		}
+		d = fitted
+	}
 	n := len(d)
 	dl, d0, d1 := d[n-1], d[0], d[1]
 	b1 := insetThird(dl, d0)
@@ -754,6 +843,7 @@ func ToBSpline(segs []Segment, prec int, splice bool) (allSamples []bezier.Point
 		spline = append(spline, k)
 		return true
 	})
+	b.PeriodicFit(InterpolateFitPeriodic())
 	// Font generation runs off-device, so it samples with the symmetric
 	// arc-length sampler: a symmetric outline then yields a symmetric
 	// spline, which the integer Sample's one-directional walk would

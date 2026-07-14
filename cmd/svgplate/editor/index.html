@@ -506,7 +506,7 @@ function gauges(m,segs,err,tCols,tRows,tSize){
   else if(m==='text'){v.className='verdict';vt.textContent='Fits — sent as firmware text';}
   else if(!ok){v.className='verdict bad';vt.textContent=overB?'Too large for the tag':overS?'Too many strokes':'Runs outside the plate';}
   else{v.className='verdict';vt.textContent='Fits the plate and the tag';}
-  document.getElementById('send').disabled=!ok||!('NDEFReader'in window);
+  document.getElementById('send').disabled=!ok||!(bridgeUp||'NDEFReader'in window);
   document.getElementById('copy').disabled=!payload;
   document.getElementById('download').disabled=!payload;
   document.getElementById('payload').textContent=payload;
@@ -532,11 +532,29 @@ drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)f.text().t
 document.getElementById('copy').onclick=async()=>{await navigator.clipboard.writeText(payload);status('Copied ✓');};
 document.getElementById('download').onclick=()=>{const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([payload],{type:'text/plain'}));a.download=(sendKind==='text'?'plate.txt':'plate.curves');a.click();};
-document.getElementById('send').onclick=async()=>{try{status('Hold the phone against the SeedHammer…');
-  const ndef=new NDEFReader();await ndef.write({records:[{recordType:SH.recordType,data:new TextEncoder().encode(payload)}]});
-  status('Written ✓ — check the device screen');}catch(e){status('NFC: '+e.message);}};
+// ==== NFC send: local bridge on desktop, Web NFC on Android ====
+// When the bridge serves this page it is same-origin; otherwise reach
+// the loopback daemon cross-origin (it allow-lists this site + PNA).
+const BRIDGE=(location.port==='8787'&&(location.hostname==='127.0.0.1'||location.hostname==='localhost'))?'':'http://127.0.0.1:8787';
+let bridgeUp=false;
+fetch(BRIDGE+'/bridge/health').then(r=>r.ok?r.json():null).then(j=>{bridgeUp=!!(j&&j.ok);recompute();}).catch(()=>{});
+function bridgeMsg(j){switch(j.status){
+  case 'written':return `Written ✓ ${j.bytes||''} bytes`;
+  case 'delivered_unconfirmed':return 'Delivered — check the device screen';
+  case 'no_target':return 'No tap detected — try again';
+  case 'no_reader':return 'No NFC reader connected';
+  case 'busy':return 'Reader busy — try again';
+  default:return 'Send failed: '+(j.detail||j.error||'unknown');}}
+document.getElementById('send').onclick=async()=>{
+  if(bridgeUp){status('Tap the SeedHammer on the reader…');
+    try{const r=await fetch(BRIDGE+'/bridge/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({payload})});
+      status(bridgeMsg(await r.json()));}catch(e){status('Bridge: '+e.message);}
+    return;}
+  try{status('Hold the phone against the SeedHammer…');
+    const ndef=new NDEFReader();await ndef.write({records:[{recordType:SH.recordType,data:new TextEncoder().encode(payload)}]});
+    status('Written ✓ — check the device screen');}catch(e){status('NFC: '+e.message);}};
 function status(m){document.getElementById('status').textContent=m;}
-if(!('NDEFReader'in window))document.getElementById('send').title='Web NFC needs Android Chrome';
+if(!('NDEFReader'in window)&&!bridgeUp)document.getElementById('send').title='Needs the NFC bridge (desktop) or Android Chrome (Web NFC)';
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',recompute);
 
 // PWA: install prompt + service worker

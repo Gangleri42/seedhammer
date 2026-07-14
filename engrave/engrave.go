@@ -1162,6 +1162,15 @@ func appendLine(spline []bspline.Knot, conf StepperConfig, engrave bool, s, e be
 // interior stays uniform, keeping the windowed kinematics model
 // valid; a final gate re-measures the timed run and rejects it,
 // falling back to clamped pacing, if it exceeds the limits.
+//
+// The ramps are also priced against the clamped fallback: a loop
+// enters and leaves at rest either way, and on short tight loops
+// (text-size glyph bowls) the rest-to-rest ramps cost more time than
+// the seam they remove, while the smooth insertion polygon already
+// de-spikes the clamped measurement. Cyclic pacing applies only when
+// its cost over the clamped plan is noise; past ~3% the clamped
+// plan, whose seam behaves like every clamped stroke the machine has
+// always engraved, wins.
 func planPeriodicRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bool {
 	// Below minSpans the ramps cannot spread and cyclic pacing gains
 	// nothing over the clamped run.
@@ -1171,6 +1180,12 @@ func planPeriodicRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bo
 	if nspans < minSpans {
 		return false
 	}
+	// The clamped fallback's duration, for pricing the ramps.
+	for i := range spline[2 : len(spline)-2] {
+		spline[i+2].T = 1
+	}
+	cv, ca, cj := bspline.ComputeKinematics(spline, 1)
+	clamped := uint(nspans) * timeScale(conf, engrave, cv, ca, cj)
 	maxv, maxa, maxj := cyclicKinematics(spline[2 : len(spline)-3])
 	tc := timeScale(conf, engrave, maxv, maxa, maxj)
 	if tc == 0 {
@@ -1225,6 +1240,14 @@ func planPeriodicRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bo
 	}
 	for k := first; k <= last; k++ {
 		spline[k].T = tc
+	}
+	// Price the ramps against the clamped fallback.
+	var dur uint
+	for k := lo; k <= hi; k++ {
+		dur += spline[k].T
+	}
+	if dur > clamped+clamped/32 {
+		return false
 	}
 	// Gate: the construction keeps every span at or below its cruise
 	// pace, so exceeding a limit means degenerate geometry.
@@ -1589,7 +1612,11 @@ func engraveSpline(yield func(Command) bool, pos bezier.Point, em, height int, s
 			break
 		}
 		c := addScale(pos, k.Ctrl, em, height)
-		if !yield(ControlPoint(k.Line, c)) {
+		cmd := ControlPoint(k.Line, c)
+		if k.Periodic {
+			cmd = PeriodicPoint(c)
+		}
+		if !yield(cmd) {
 			return false
 		}
 	}

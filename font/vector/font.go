@@ -41,7 +41,8 @@ func (s *UniformBSpline) Next() (Knot, bool) {
 		return Knot{}, false
 	}
 	k := Knot{
-		Line: s.spline[0] != 0,
+		Line:     s.spline[0]&1 != 0,
+		Periodic: s.spline[0]&2 != 0,
 		Ctrl: bezier.Point{
 			X: int(int16(bo.Uint16(s.spline[1:]))),
 			Y: int(int16(bo.Uint16(s.spline[3:]))),

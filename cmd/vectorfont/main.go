@@ -143,6 +143,9 @@ func encodeBSpline(spline []vector.Knot) []byte {
 		if k.Line {
 			l = 1
 		}
+		if k.Periodic {
+			l |= 2
+		}
 		x, y := int16(k.Ctrl.X), int16(k.Ctrl.Y)
 		if int(x) != k.Ctrl.X || int(y) != k.Ctrl.Y {
 			panic(fmt.Errorf("spline knot coordinates out of range: %v", k.Ctrl))

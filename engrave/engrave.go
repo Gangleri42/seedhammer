@@ -1020,7 +1020,8 @@ func planEngraving(knotBuf []bspline.Knot, conf StepperConfig, e Engraving) bspl
 					if len(spline) == 5 {
 						s, e := spline[1].Ctrl, spline[3].Ctrl
 						spline = appendLine(spline[:0], conf, engrave, s, e)
-					} else if !(periodic && planPeriodicRun(spline, conf, engrave)) {
+					} else if !(periodic && planPeriodicRun(spline, conf, engrave)) &&
+						!planConstantRun(spline, conf, engrave) {
 						for i := range spline[2 : len(spline)-2] {
 							spline[i+2].T = 1
 						}
@@ -1250,6 +1251,144 @@ func planPeriodicRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bo
 		return false
 	}
 	// Gate: the construction keeps every span at or below its cruise
+	// pace, so exceeding a limit means degenerate geometry.
+	v, a, j := bspline.ComputeKinematics(spline, tps)
+	limv := conf.Speed
+	if engrave {
+		limv = conf.EngravingSpeed
+	}
+	return v <= limv && a <= conf.Acceleration && j <= conf.Jerk
+}
+
+// planConstantRun times a buffered smooth stroke at a constant cruise
+// pace, reporting whether it applied. The buffer holds an open
+// rest-to-rest run,
+//
+//	K, K, d1, …, dn, K, K, K
+//
+// which today is paced uniformly by its worst derivative window: the
+// rest clamps' boundary spike reads as if it applied to the whole
+// stroke, so every smooth stroke crawls and dot pitch wanders with
+// the geometry. Instead, the cruise pace comes from the interior
+// windows alone — on the sampler's uniform chords, the engraving
+// speed limit unless curvature demands less — and the head and tail
+// spans stretch along the same jerk-limited ramp profile the periodic
+// loops use, so the boundary velocities ramp within the machine
+// limits instead of pacing the interior.
+//
+// Every stretched span is slower than the cruise pace and the
+// interior stays uniform, keeping the windowed kinematics model valid
+// (the planPeriodicRun argument); a final gate re-measures the timed
+// run and yields to the uniform fallback when it exceeds the limits.
+// The ramps are also priced against that fallback: on short strokes
+// they cost more than the boundary spike they remove, and past ~3%
+// the fallback wins.
+func planConstantRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bool {
+	// Below minSpans there is no interior to measure and the ramps
+	// cannot spread.
+	const minSpans = 8
+	lo, hi := 2, len(spline)-3
+	nspans := hi - lo + 1
+	if nspans < minSpans {
+		return false
+	}
+	n := len(spline)
+	// The uniform fallback's duration, for pricing.
+	for i := range spline[2 : n-2] {
+		spline[i+2].T = 1
+	}
+	uv, ua, uj := bspline.ComputeKinematics(spline, 1)
+	uniform := uint(nspans) * timeScale(conf, engrave, uv, ua, uj)
+
+	// Measure the interior windows at unit pace. The boundary windows
+	// (the first 5, straddling the start clamps and warmup, and the
+	// last 2) read the rest-clamp spike; the ramps govern those spans
+	// instead.
+	var kin bspline.Kinematics
+	var iv, ia, ij uint
+	widx := 0
+	for _, k := range spline {
+		kin.Knot(k.T, k.Ctrl, 1)
+		kv, ka, kj := kin.Max()
+		widx++
+		if widx > 5 && widx <= n-2 {
+			iv, ia, ij = max(iv, kv), max(ia, ka), max(ij, kj)
+		}
+	}
+	tc := timeScale(conf, engrave, iv, ia, ij)
+	if tc == 0 {
+		return false
+	}
+	chord := func(k int) uint {
+		return uint(ManhattanDist(spline[k].Ctrl, spline[k-1].Ctrl))
+	}
+	var length uint
+	for k := lo; k <= hi; k++ {
+		length += chord(k)
+	}
+	if length == 0 {
+		return false
+	}
+	tps := conf.TicksPerSecond
+	// The coasting speed implied by the cruise pace, in steps/s.
+	vc := float32(length) / float32(nspans) * float32(tps) / float32(tc)
+	prof, ok := newRampProfile(float32(length), vc, float32(conf.Acceleration), float32(conf.Jerk))
+	if !ok {
+		return false
+	}
+	// Stretch the head and tail spans along the ramp profile; the
+	// profile is symmetric, so distances from the stroke end map to
+	// the same times. No span runs shorter than the cruise duration
+	// (the planPeriodicRun argument).
+	ramp := func(from, to, dir int) int {
+		var cum uint
+		var prev float32
+		k := from
+		for ; k != to+dir; k += dir {
+			cum += chord(k)
+			t := prof.timeAt(float32(cum))
+			dt := max(t-prev, 0)
+			spline[k].T = max(uint(float64(dt)*float64(tps)+0.5), tc)
+			prev = t
+			if float32(cum) >= prof.sAcc {
+				break
+			}
+		}
+		return k
+	}
+	first := ramp(lo, hi, +1) + 1
+	last := hi
+	if first <= hi {
+		last = ramp(hi, first, -1) - 1
+	}
+	for k := first; k <= last; k++ {
+		spline[k].T = tc
+	}
+	// The profile maps to whole spans, and at glyph scale the ramp
+	// distance is shorter than a chord or two: the mapped ramp ends in
+	// a cliff from a slow span straight to cruise, a real jerk
+	// violation in the blended spline. Taper the cliff by bounding
+	// adjacent span-time ratios, spreading the ramp inward; the taper
+	// only ever slows spans down.
+	for k := lo + 1; k <= hi; k++ {
+		if spline[k].T*5 < spline[k-1].T*4 {
+			spline[k].T = spline[k-1].T * 4 / 5
+		}
+	}
+	for k := hi - 1; k >= lo; k-- {
+		if spline[k].T*5 < spline[k+1].T*4 {
+			spline[k].T = spline[k+1].T * 4 / 5
+		}
+	}
+	// Price against the uniform fallback.
+	var dur uint
+	for k := lo; k <= hi; k++ {
+		dur += spline[k].T
+	}
+	if dur > uniform+uniform/32 {
+		return false
+	}
+	// Gate: the construction keeps every span at or below the cruise
 	// pace, so exceeding a limit means degenerate geometry.
 	v, a, j := bspline.ComputeKinematics(spline, tps)
 	limv := conf.Speed

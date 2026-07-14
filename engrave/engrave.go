@@ -1298,20 +1298,28 @@ func planConstantRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bo
 		spline[i+2].T = 1
 	}
 	uv, ua, uj := bspline.ComputeKinematics(spline, 1)
-	uniform := uint(nspans) * timeScale(conf, engrave, uv, ua, uj)
+	tscaleU := timeScale(conf, engrave, uv, ua, uj)
+	uniform := uint(nspans) * tscaleU
 
 	// Measure the interior windows at unit pace. The boundary windows
 	// (the first 5, straddling the start clamps and warmup, and the
 	// last 2) read the rest-clamp spike; the ramps govern those spans
-	// instead.
+	// instead. Only ink windows set the cruise: windows touching
+	// needle-up knots trace the teardrop bridges of flying
+	// transitions, which the windowed model over-reads; their safety
+	// is the emitter's curvature-envelope construction (rminFly), not
+	// this measurement.
 	var kin bspline.Kinematics
 	var iv, ia, ij uint
+	var up [4]bool
 	widx := 0
 	for _, k := range spline {
 		kin.Knot(k.T, k.Ctrl, 1)
 		kv, ka, kj := kin.Max()
+		copy(up[:3], up[1:])
+		up[3] = !k.Engrave
 		widx++
-		if widx > 5 && widx <= n-2 {
+		if widx > 5 && widx <= n-2 && !(up[0] || up[1] || up[2] || up[3]) {
 			iv, ia, ij = max(iv, kv), max(ia, ka), max(ij, kj)
 		}
 	}
@@ -1339,7 +1347,8 @@ func planConstantRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bo
 	// Stretch the head and tail spans along the ramp profile; the
 	// profile is symmetric, so distances from the stroke end map to
 	// the same times. No span runs shorter than the cruise duration
-	// (the planPeriodicRun argument).
+	// (the planPeriodicRun argument), and needle-up dips keep their
+	// slower local pace.
 	ramp := func(from, to, dir int) int {
 		var cum uint
 		var prev float32
@@ -1348,7 +1357,7 @@ func planConstantRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bo
 			cum += chord(k)
 			t := prof.timeAt(float32(cum))
 			dt := max(t-prev, 0)
-			spline[k].T = max(uint(float64(dt)*float64(tps)+0.5), tc)
+			spline[k].T = max(uint(float64(dt)*float64(tps)+0.5), spline[k].T, tc)
 			prev = t
 			if float32(cum) >= prof.sAcc {
 				break
@@ -1362,7 +1371,7 @@ func planConstantRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bo
 		last = ramp(hi, first, -1) - 1
 	}
 	for k := first; k <= last; k++ {
-		spline[k].T = tc
+		spline[k].T = max(spline[k].T, tc)
 	}
 	// The profile maps to whole spans, and at glyph scale the ramp
 	// distance is shorter than a chord or two: the mapped ramp ends in
@@ -1380,22 +1389,129 @@ func planConstantRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bo
 			spline[k].T = spline[k+1].T * 4 / 5
 		}
 	}
-	// Price against the uniform fallback.
-	var dur uint
+	// The blend at a needle flip crosses between stroke and bridge
+	// geometry over a full window of knots; ease the spans around
+	// each flip so the junction trace stays within the stroke's own
+	// envelope.
+	ease := func() {
+		for k := lo + 1; k <= hi; k++ {
+			if spline[k].Engrave != spline[k-1].Engrave {
+				for e := max(k-2, lo); e <= min(k+1, hi); e++ {
+					spline[e].T = max(spline[e].T, tc+tc/8)
+				}
+			}
+		}
+	}
+	ease()
+	// Needle-up spans are held to the absolute limits, and the
+	// blended polygon of a teardrop traces harder than the arc it
+	// samples. Slow the bridges by the measured excess — free of dot
+	// pitch — and re-ease; the final gate re-judges the result.
+	if _, _, _, vup, aup, jup := tracedFlagMaxima(spline, tps, false); jup > 0 {
+		const uslack = 63. / 64
+		f := max(1,
+			vup/(float64(conf.Speed)*uslack),
+			math.Sqrt(aup/(float64(conf.Acceleration)*uslack)),
+			math.Cbrt(jup/(float64(conf.Jerk)*uslack)))
+		if f > 1 {
+			for k := lo; k <= hi; k++ {
+				if !spline[k].Engrave {
+					spline[k].T = uint(float64(spline[k].T)*f + 1)
+				}
+			}
+			ease()
+		}
+	}
+	// Price against the uniform fallback. Mixed runs have no
+	// meaningful uniform price: their baseline paces the whole run by
+	// bridge windows the model over-reads, and the emitter already
+	// priced the flight against its stop-and-go alternative, so only
+	// the gate judges them.
+	mixed := false
 	for k := lo; k <= hi; k++ {
-		dur += spline[k].T
+		mixed = mixed || !spline[k].Engrave
 	}
-	if dur > uniform+uniform/32 {
-		return false
+	if !mixed {
+		var dur uint
+		for k := lo; k <= hi; k++ {
+			dur += spline[k].T
+		}
+		if dur > uniform+uniform/32 {
+			return false
+		}
 	}
-	// Gate: the construction keeps every span at or below the cruise
-	// pace, so exceeding a limit means degenerate geometry.
-	v, a, j := bspline.ComputeKinematics(spline, tps)
-	limv := conf.Speed
+	// Gate: the windowed model chose the paces, the traced curve
+	// decides them. Non-uniform spans (ramps, tapers, bridges) blend
+	// into real polynomials the windowed divided differences can
+	// under-read. The bar is the uniform fallback: the machine has
+	// always engraved uniform-paced runs whose boundary windows trace
+	// past the nominal limits (the windowed model's deliberate
+	// clamp-artifact deflation, bench-validated), so an applied plan
+	// must trace no worse than the uniform plan of the same run, with
+	// the nominal limits as the floor. Needle-up bridges are new
+	// geometry with no such precedent and stay absolutely limited.
+	vi, ai, ji, vu, au, ju := tracedFlagMaxima(spline, conf.TicksPerSecond, false)
+	v1, a1, j1, _, _, _ := tracedFlagMaxima(spline, conf.TicksPerSecond, true)
+	s := float64(conf.TicksPerSecond) / float64(tscaleU)
+	limv := float64(conf.Speed)
 	if engrave {
-		limv = conf.EngravingSpeed
+		limv = float64(conf.EngravingSpeed)
 	}
-	return v <= limv && a <= conf.Acceleration && j <= conf.Jerk
+	lima, limj := float64(conf.Acceleration), float64(conf.Jerk)
+	// The blend between unequal spans overshoots the per-span rates
+	// by a fraction of a percent; a 65/64 floor is noise against the
+	// boundary envelope the uniform baseline already carries.
+	const slack = 65. / 64
+	return vi <= max(limv*slack, v1*s) && ai <= max(lima*slack, a1*s*s) && ji <= max(limj*slack, j1*s*s*s) &&
+		vu <= float64(conf.Speed)*slack && au <= lima*slack && ju <= limj*slack
+}
+
+// tracedFlagMaxima measures a timed run's traced per-axis kinematic
+// maxima on the polynomials the stepper interpolates, ink and
+// needle-up segments separately. With unit set, the run's geometry is
+// measured at one tick per span instead of its pacing: scaling those
+// maxima by (tps/tscale)^k gives the exact traced kinematics of the
+// uniform fallback, since every knot interval scales together.
+func tracedFlagMaxima(spline []bspline.Knot, tps uint, unit bool) (vi, ai, ji, vu, au, ju float64) {
+	var seg bspline.Segment
+	for _, k := range spline {
+		if unit && k.T > 0 {
+			k.T = 1
+		}
+		c, dt, engrave := seg.Knot(k)
+		if dt == 0 {
+			continue
+		}
+		T := float64(dt)
+		if !unit {
+			T /= float64(tps)
+		}
+		d1 := [3]bezier.Point{
+			c.C1.Sub(c.C0).Mul(3),
+			c.C2.Sub(c.C1).Mul(3),
+			c.C3.Sub(c.C2).Mul(3),
+		}
+		var v, a float64
+		for i := 0; i <= 8; i++ {
+			u := float64(i) / 8
+			mu := 1 - u
+			vx := (float64(d1[0].X)*mu*mu + 2*float64(d1[1].X)*mu*u + float64(d1[2].X)*u*u) / T
+			vy := (float64(d1[0].Y)*mu*mu + 2*float64(d1[1].Y)*mu*u + float64(d1[2].Y)*u*u) / T
+			v = max(v, math.Abs(vx), math.Abs(vy))
+			ax := 2 * (float64(d1[1].X-d1[0].X)*mu + float64(d1[2].X-d1[1].X)*u) / (T * T)
+			ay := 2 * (float64(d1[1].Y-d1[0].Y)*mu + float64(d1[2].Y-d1[1].Y)*u) / (T * T)
+			a = max(a, math.Abs(ax), math.Abs(ay))
+		}
+		j := max(
+			math.Abs(6*float64(c.C3.X-3*c.C2.X+3*c.C1.X-c.C0.X)/(T*T*T)),
+			math.Abs(6*float64(c.C3.Y-3*c.C2.Y+3*c.C1.Y-c.C0.Y)/(T*T*T)))
+		if engrave {
+			vi, ai, ji = max(vi, v), max(ai, a), max(ji, j)
+		} else {
+			vu, au, ju = max(vu, v), max(au, a), max(ju, j)
+		}
+	}
+	return
 }
 
 // cyclicKinematics measures the uniform-pace kinematic maxima of a
@@ -1704,6 +1820,10 @@ type StringCmd struct {
 	face *vector.Face
 	em   int
 	txt  string
+	// Reused glyph decode buffers for the flying re-emission.
+	raw   []glyphKnot
+	nodes []glyphNode
+	fly   []bool
 }
 
 func (s *StringCmd) Engrave(yield func(Command) bool) bool {
@@ -1733,11 +1853,347 @@ func (s *StringCmd) engrave(yield func(Command) bool) (bezier.Point, bool) {
 			panic(fmt.Errorf("unsupported rune: %s", string(r)))
 		}
 		if yield != nil {
-			cont = cont && engraveSpline(yield, dot, s.em, mh, spline)
+			cont = cont && s.engraveGlyph(yield, dot, mh, spline)
 		}
 		dot.X += adv * s.em / mh
 	}
 	return bezier.Point{X: dot.X, Y: lheight}, cont
+}
+
+// glyphKnot is a decoded, machine-scaled glyph control point.
+type glyphKnot struct {
+	p    bezier.Point
+	line bool
+}
+
+// glyphNode is a maximal group of coincident glyph knots: baked
+// clamp anchors have count 3, polyline points count 1.
+type glyphNode struct {
+	p      bezier.Point
+	i0, n  int
+	anchor bool
+}
+
+// Flying-transition envelope, in machine units of the SH2 (6400
+// steps/mm). A needle-up bridge whose curvature radius stays above
+// rminFly sustains the 8mm/s engraving speed within the 250mm/s²
+// acceleration and 2600mm/s³ jerk limits (sqrt(v³/j) = 0.44mm,
+// v²/a = 0.26mm), so a fused glyph run keeps one uniform cruise pace
+// through its junctions.
+const (
+	rminFly = 3600
+	// Pricing constants for a junction: the bridge crosses at the
+	// engraving speed; the stop-and-go alternative pays two
+	// stroke-end ramp pairs plus a rest-to-rest travel. A junction
+	// flies only when it does not lose time, so teardrop reversals
+	// (whose curvature-capped crossing is slower than stopping) keep
+	// the rest stop and its resume anchor.
+	flyEngraveSpeed = 8 * 6400
+	flyTravelSpeed  = 30 * 6400
+	// Two jerk-limited rest<->v_e stroke ramps (2·2·sqrt(v/j)) plus
+	// the travel s-curve's own ramp phases, in seconds.
+	flyStopOverhead = 0.42
+)
+
+// FlyingTransitions enables the experimental needle-up bridges across
+// glyph-internal travels. The construction and its safety gates are
+// in place, but the fly/stop decision currently lives in the emitter,
+// which cannot see the planner's pricing: a fused run that fails the
+// kinematics gate falls back to worst-window uniform pacing and
+// engraves far slower than its stop-and-go equivalent. Off until the
+// decision moves into the planner, where fused and stop-and-go plans
+// can be priced against each other directly.
+var FlyingTransitions = false
+
+// engraveGlyph re-emits a glyph with needle-up bridges across its
+// internal travels: instead of ramping to rest at a stroke end,
+// traveling and ramping up again, the head leaves the stroke along
+// its exit tangent, crosses needle-up, and arrives on the next
+// stroke's start along its entry tangent at speed, the planner
+// pacing the fused run as one stroke. Junctions whose bridge would
+// bend below rminFly (sharp turns, reversals) and periodic glyphs
+// keep the baked rest-to-rest emission; a glyph with no flyable
+// junction replays its baked knots exactly.
+func (s *StringCmd) engraveGlyph(yield func(Command) bool, pos bezier.Point, height int, spline vector.UniformBSpline) bool {
+	s.raw = s.raw[:0]
+	periodic := false
+	for {
+		k, ok := spline.Next()
+		if !ok {
+			break
+		}
+		periodic = periodic || k.Periodic
+		s.raw = append(s.raw, glyphKnot{addScale(pos, k.Ctrl, s.em, height), k.Line})
+	}
+	replay := func(from, to int) bool {
+		for _, k := range s.raw[from:to] {
+			if !yield(ControlPoint(k.line, k.p)) {
+				return false
+			}
+		}
+		return true
+	}
+	if periodic || !FlyingTransitions {
+		// Periodic contours pace cyclically; leave them untouched.
+		return replay(0, len(s.raw))
+	}
+	// Collapse coincident knots into nodes.
+	s.nodes = s.nodes[:0]
+	for i := 0; i < len(s.raw); {
+		j := i
+		for j < len(s.raw) && s.raw[j].p == s.raw[i].p {
+			j++
+		}
+		s.nodes = append(s.nodes, glyphNode{s.raw[i].p, i, j - i, j-i >= 3})
+		i = j
+	}
+	// A travel junction is a pair of adjacent anchors; it can fly
+	// when a bridge from the exit tangent to the entry tangent stays
+	// within the curvature envelope. fly[i] refers to the junction
+	// between nodes[i] and nodes[i+1].
+	s.fly = s.fly[:0]
+	for range max(len(s.nodes)-1, 0) {
+		s.fly = append(s.fly, false)
+	}
+	fly := s.fly
+	cref := s.chordRef()
+	var bridge []bezier.Point
+	anyFly := false
+	for i := 0; i+1 < len(s.nodes); i++ {
+		a, b := s.nodes[i], s.nodes[i+1]
+		if !a.anchor || !b.anchor || a.p == b.p ||
+			i == 0 || i+2 == len(s.nodes) {
+			continue
+		}
+		// Adjacent anchors also encode straight strokes ([P×3][Q×3]
+		// with the line drawn between them); only a move run may fly.
+		if s.raw[a.i0+a.n-1].line || s.raw[b.i0].line {
+			continue
+		}
+		// Both neighboring strokes must be long enough to absorb the
+		// junction blend and its easing; a dot or serif is not.
+		strokeLen := func(from, dir int) int {
+			sum, k := 0, from
+			for k+dir >= 0 && k+dir < len(s.nodes) && sum < 6*cref {
+				sum += ManhattanDist(s.nodes[k].p, s.nodes[k+dir].p)
+				k += dir
+				if s.nodes[k].anchor {
+					break
+				}
+			}
+			return sum
+		}
+		if strokeLen(i, -1) < 6*cref || strokeLen(i+1, +1) < 6*cref {
+			continue
+		}
+		if bridge = flyBridge(bridge[:0], s.nodes[i-1].p, a.p, b.p, s.nodes[i+2].p, cref); bridge == nil {
+			continue
+		}
+		length, prev := 0.0, a.p
+		for _, p := range bridge {
+			length += math.Hypot(float64(p.X-prev.X), float64(p.Y-prev.Y))
+			prev = p
+		}
+		length += math.Hypot(float64(b.p.X-prev.X), float64(b.p.Y-prev.Y))
+		hop := math.Hypot(float64(b.p.X-a.p.X), float64(b.p.Y-a.p.Y))
+		if length/flyEngraveSpeed <= flyStopOverhead+hop/flyTravelSpeed {
+			fly[i] = true
+			anyFly = true
+		}
+	}
+	if !anyFly {
+		return replay(0, len(s.raw))
+	}
+	// Emit node by node. Polyline spans in fused runs are subdivided
+	// so no chord dwarfs the sampler's and the whole fused run keeps
+	// a uniform chord scale.
+	cmax := cref
+	fused := false // the current run contains a flown junction
+	// restScan reports whether the run starting at rest anchor `from`
+	// contains a flown junction: the run continues through flying
+	// pairs and ends at the first anchor that neither starts nor
+	// arrives from a flight.
+	restScan := func(from int) bool {
+		for i := from + 1; i < len(s.nodes); i++ {
+			if !s.nodes[i].anchor {
+				continue
+			}
+			if i < len(fly) && fly[i] {
+				return true
+			}
+			if !fly[i-1] {
+				return false
+			}
+		}
+		return false
+	}
+	last := s.nodes[0].p
+	for i, n := range s.nodes {
+		// Subdivide any long span of a fused run so no chord dwarfs
+		// the cruise pace's chord scale: polyline spans, and straight
+		// strokes encoded as bare anchor pairs. The span's ink state
+		// is its destination's first baked flag; arrival hops are
+		// covered by the bridge instead.
+		if fused && i > 0 && !fly[i-1] {
+			if d := ManhattanDist(last, n.p); d > cmax {
+				line := s.raw[n.i0].line
+				steps := (d + cmax - 1) / cmax
+				for k := 1; k < steps; k++ {
+					ip := bezier.Point{
+						X: last.X + (n.p.X-last.X)*k/steps,
+						Y: last.Y + (n.p.Y-last.Y)*k/steps,
+					}
+					if !yield(ControlPoint(line, ip)) {
+						return false
+					}
+				}
+			}
+		}
+		switch {
+		case i > 0 && fly[i-1]:
+			// Arrival: the entry point once, engrave on; the needle
+			// drops during the arrival blend.
+			if !yield(ControlPoint(true, n.p)) {
+				return false
+			}
+		case n.anchor:
+			// Rest anchor (glyph start/end, corner, or a travel that
+			// does not fly): baked knots verbatim.
+			if i+1 < len(s.nodes) && fly[i] {
+				// Departure: the exit point once, engrave on, then
+				// the needle-up bridge.
+				if !yield(ControlPoint(true, n.p)) {
+					return false
+				}
+				bridge = flyBridge(bridge[:0], s.nodes[i-1].p, n.p, s.nodes[i+1].p, s.nodes[i+2].p, cref)
+				for _, p := range bridge {
+					if !yield(ControlPoint(false, p)) {
+						return false
+					}
+				}
+			} else {
+				if !replay(n.i0, n.i0+n.n) {
+					return false
+				}
+			}
+			fused = restScan(i)
+		default:
+			// Polyline point.
+			if !replay(n.i0, n.i0+n.n) {
+				return false
+			}
+		}
+		last = n.p
+	}
+	return true
+}
+
+// chordRef is the glyph's reference chord: the average polyline span,
+// clamped to a sane band of the em.
+func (s *StringCmd) chordRef() int {
+	var sum, n int
+	for i := 1; i < len(s.nodes); i++ {
+		if s.nodes[i].anchor || s.nodes[i-1].anchor {
+			continue
+		}
+		sum += ManhattanDist(s.nodes[i-1].p, s.nodes[i].p)
+		n++
+	}
+	c := s.em / 8
+	if n > 0 {
+		c = sum / n
+	}
+	return min(max(c, s.em/24), s.em/8)
+}
+
+// flyBridge builds the needle-up polygon of a flying junction from
+// the exit point (tangent given by prev->exit) to the entry point
+// (tangent given by entry->next), sampled at the reference chord. It
+// returns nil when the bridge would bend below rminFly.
+func flyBridge(dst []bezier.Point, prev, exit, entry, next bezier.Point, cref int) []bezier.Point {
+	dout := exit.Sub(prev)
+	din := next.Sub(entry)
+	lout := math.Hypot(float64(dout.X), float64(dout.Y))
+	lin := math.Hypot(float64(din.X), float64(din.Y))
+	if lout == 0 || lin == 0 {
+		return nil
+	}
+	c := float64(cref)
+	b1 := bezier.Point{
+		X: exit.X + int(float64(dout.X)/lout*c),
+		Y: exit.Y + int(float64(dout.Y)/lout*c),
+	}
+	b2 := bezier.Point{
+		X: entry.X - int(float64(din.X)/lin*c),
+		Y: entry.Y - int(float64(din.Y)/lin*c),
+	}
+	span := b2.Sub(b1)
+	h := max(math.Hypot(float64(span.X), float64(span.Y))/3, c)
+	cubic := bezier.Cubic{
+		C0: b1,
+		C1: bezier.Point{X: b1.X + int(float64(dout.X)/lout*h), Y: b1.Y + int(float64(dout.Y)/lout*h)},
+		C2: bezier.Point{X: b2.X - int(float64(din.X)/lin*h), Y: b2.Y - int(float64(din.Y)/lin*h)},
+		C3: b2,
+	}
+	dst = append(dst, b1)
+	dst = bezier.Sample(dst, cubic, cref)
+	// The full flown polygon must respect the curvature envelope.
+	if minCircumradius(prev, exit, dst, entry, next) >= rminFly {
+		return dst
+	}
+	// Hairpins and reversals: a bounded-curvature teardrop instead,
+	// with a touch of margin over the envelope floor.
+	dst = dubinsBridge(dst[:0], exit, math.Atan2(float64(dout.Y), float64(dout.X)),
+		entry, math.Atan2(float64(din.Y), float64(din.X)),
+		float64(rminFly)*10/9, float64(cref))
+	if dst == nil {
+		return nil
+	}
+	// The sampler snaps its tail onto the entry point; the arrival
+	// knot follows separately, so drop the duplicate.
+	if n := len(dst); n > 0 && dst[n-1] == entry {
+		dst = dst[:n-1]
+	}
+	if len(dst) == 0 {
+		return nil
+	}
+	if minCircumradius(prev, exit, dst, entry, next) < rminFly {
+		return nil
+	}
+	return dst
+}
+
+// minCircumradius measures the tightest three-point bend of the
+// polygon prev, exit, bridge..., entry, next.
+func minCircumradius(prev, exit bezier.Point, bridge []bezier.Point, entry, next bezier.Point) float64 {
+	r := math.Inf(1)
+	pts := [4]bezier.Point{prev, exit, entry, next}
+	get := func(i int) bezier.Point {
+		switch {
+		case i < 2:
+			return pts[i]
+		case i < 2+len(bridge):
+			return bridge[i-2]
+		default:
+			return pts[i-len(bridge)]
+		}
+	}
+	n := 4 + len(bridge)
+	for i := 2; i < n; i++ {
+		a, b, c := get(i-2), get(i-1), get(i)
+		abx, aby := float64(b.X-a.X), float64(b.Y-a.Y)
+		bcx, bcy := float64(c.X-b.X), float64(c.Y-b.Y)
+		cax, cay := float64(a.X-c.X), float64(a.Y-c.Y)
+		area2 := math.Abs(abx*bcy - aby*bcx)
+		if area2 == 0 {
+			continue
+		}
+		lab := math.Hypot(abx, aby)
+		lbc := math.Hypot(bcx, bcy)
+		lca := math.Hypot(cax, cay)
+		r = min(r, lab*lbc*lca/(2*area2))
+	}
+	return r
 }
 
 func addScale(p1, p2 bezier.Point, em, height int) bezier.Point {

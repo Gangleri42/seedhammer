@@ -9,6 +9,46 @@ import (
 	"seedhammer.com/bspline"
 )
 
+// testTracedMaxima is the tests' own float64 measurement of a timed
+// run's traced kinematics, ink and needle-up separately. It is
+// deliberately independent of the production tracedFlagMaxima so a
+// broken production ruler cannot bless itself.
+func testTracedMaxima(knots []bspline.Knot, tps uint) (vi, ai, ji, vu, au, ju float64) {
+	var seg bspline.Segment
+	for _, k := range knots {
+		c, dt, engrave := seg.Knot(k)
+		if dt == 0 {
+			continue
+		}
+		T := float64(dt) / float64(tps)
+		d1 := [3]bezier.Point{
+			c.C1.Sub(c.C0).Mul(3),
+			c.C2.Sub(c.C1).Mul(3),
+			c.C3.Sub(c.C2).Mul(3),
+		}
+		var v, a float64
+		for i := 0; i <= 16; i++ {
+			u := float64(i) / 16
+			mu := 1 - u
+			vx := (float64(d1[0].X)*mu*mu + 2*float64(d1[1].X)*mu*u + float64(d1[2].X)*u*u) / T
+			vy := (float64(d1[0].Y)*mu*mu + 2*float64(d1[1].Y)*mu*u + float64(d1[2].Y)*u*u) / T
+			v = max(v, math.Abs(vx), math.Abs(vy))
+			ax := 2 * (float64(d1[1].X-d1[0].X)*mu + float64(d1[2].X-d1[1].X)*u) / (T * T)
+			ay := 2 * (float64(d1[1].Y-d1[0].Y)*mu + float64(d1[2].Y-d1[1].Y)*u) / (T * T)
+			a = max(a, math.Abs(ax), math.Abs(ay))
+		}
+		j := max(
+			math.Abs(6*float64(c.C3.X-3*c.C2.X+3*c.C1.X-c.C0.X)/(T*T*T)),
+			math.Abs(6*float64(c.C3.Y-3*c.C2.Y+3*c.C1.Y-c.C0.Y)/(T*T*T)))
+		if engrave {
+			vi, ai, ji = max(vi, v), max(ai, a), max(ji, j)
+		} else {
+			vu, au, ju = max(vu, v), max(au, a), max(ju, j)
+		}
+	}
+	return
+}
+
 // constantRunBuf builds a planEngraving-shaped run buffer: two start
 // clamps, interior knots, and the tripled end knot.
 func constantRunBuf(start bezier.Point, ds []bezier.Point, end bezier.Point) []bspline.Knot {
@@ -65,8 +105,8 @@ func TestConstantRunGate(t *testing.T) {
 		if dur > uniform+uniform/32 {
 			t.Errorf("%s: applied plan slower than priced: %d vs uniform %d", name, dur, uniform)
 		}
-		vi, ai, ji, _, _, _ := tracedFlagMaxima(buf, tps, false)
-		vb, ab, jb, _, _, _ := tracedFlagMaxima(uni, tps, false)
+		vi, ai, ji, _, _, _ := testTracedMaxima(buf, tps)
+		vb, ab, jb, _, _, _ := testTracedMaxima(uni, tps)
 		const floor = 65. / 64
 		const eps = 1.001
 		if vi > max(float64(conf.EngravingSpeed)*floor, vb)*eps ||

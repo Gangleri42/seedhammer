@@ -86,8 +86,9 @@ func tracePitch(spline bspline.Curve) pitchTrace {
 }
 
 // charsetPlate is the worst-case 44x26 charset plate at 3.0mm as one
-// continuous command stream. Planning it per row would drop the
-// inter-row travel ticks and scramble the free-running hammer phase.
+// continuous command stream, serpentine rows like the text-plate
+// assembler. Planning it per row would drop the inter-row travel
+// ticks and scramble the free-running hammer phase.
 func charsetPlate() Engraving {
 	charset := ""
 	for r := rune('!'); r < 127; r++ {
@@ -106,7 +107,11 @@ func charsetPlate() Engraving {
 		for i := range 26 {
 			tr := NewTransform(yield)
 			tr = tr.Offset(0, i*lineHeight)
-			if !String(sh.Font, em, row).Engrave(tr.Yield) {
+			str := String(sh.Font, em, row)
+			if i%2 == 1 {
+				str.Reversed()
+			}
+			if !str.Engrave(tr.Yield) {
 				return
 			}
 		}

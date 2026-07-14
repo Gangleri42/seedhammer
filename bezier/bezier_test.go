@@ -10,6 +10,63 @@ import (
 	"testing"
 )
 
+func TestSampleFineSpacing(t *testing.T) {
+	// Sampling finer than the internal length-estimate partition
+	// must not emit duplicate or zero-value points.
+	line := func(p0, p1 Point) Cubic {
+		return Cubic{
+			C0: p0,
+			C1: p0.Mul(2).Add(p1).Div(3),
+			C2: p1.Mul(2).Add(p0).Div(3),
+			C3: p1,
+		}
+	}
+	tests := []Cubic{
+		line(Pt(32000, 32000), Pt(512000, 32000)),
+		line(Pt(512000, 32000), Pt(32000, 33000)),
+		{C0: Pt(0, 0), C1: Pt(0, 400000), C2: Pt(400000, 400000), C3: Pt(400000, 0)},
+	}
+	for _, c := range tests {
+		samples := Sample([]Point{c.C0}, c, 1920)
+		for i, s := range samples {
+			if i == 0 {
+				continue
+			}
+			if s == samples[i-1] {
+				t.Errorf("Sample(%v): duplicate point %v at %d", c, s, i)
+			}
+		}
+		if got := samples[len(samples)-1]; got != c.C3 {
+			t.Errorf("Sample(%v) ends at %v, want %v", c, got, c.C3)
+		}
+	}
+}
+
+func TestSampleSymMirror(t *testing.T) {
+	// A cubic symmetric about x=cx must sample to mirror-symmetric
+	// points: SampleSym places samples at exact arc-length targets, so
+	// a curve and its reflection yield reflected samples. (The integer
+	// Sample walks one direction and does not.)
+	const cx = 50000
+	arch := Cubic{C0: Pt(0, 0), C1: Pt(0, 100000), C2: Pt(100000, 100000), C3: Pt(100000, 0)}
+	s := SampleSym([]Point{arch.C0}, arch, 6000)
+	if len(s) < 5 {
+		t.Fatalf("too few samples: %d", len(s))
+	}
+	for i, p := range s {
+		m := s[len(s)-1-i]
+		if d := (2*cx - p.X) - m.X; d < -1 || d > 1 {
+			t.Errorf("sample %d %v is not the mirror of %v (x off by %d)", i, p, m, d)
+		}
+		if p.Y != m.Y {
+			t.Errorf("sample %d %v is not the mirror of %v (y differs)", i, p, m)
+		}
+	}
+	if s[len(s)-1] != arch.C3 {
+		t.Errorf("SampleSym ends at %v, want %v", s[len(s)-1], arch.C3)
+	}
+}
+
 func TestBezierAccuracy(t *testing.T) {
 	curves := []struct {
 		steps uint

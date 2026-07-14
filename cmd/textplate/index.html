@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SeedHammer Text Plate</title>
+<style>
+	* { box-sizing: border-box; }
+	body {
+		margin: 0;
+		background: #14161a;
+		color: #d6d9de;
+		font: 15px/1.45 system-ui, sans-serif;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 24px 16px 48px;
+	}
+	h1 {
+		font-size: 20px;
+		font-weight: 600;
+		margin: 0 0 4px;
+	}
+	.sub {
+		color: #8a919c;
+		font-size: 13px;
+		margin-bottom: 20px;
+	}
+	main {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 24px;
+		justify-content: center;
+		align-items: flex-start;
+	}
+	section { display: flex; flex-direction: column; gap: 10px; }
+	textarea {
+		width: 480px;
+		max-width: 90vw;
+		height: 340px;
+		background: #0e1013;
+		color: #e6e9ee;
+		border: 1px solid #333a45;
+		border-radius: 8px;
+		padding: 12px;
+		font: 14px/1.5 ui-monospace, monospace;
+		white-space: pre;
+		overflow-wrap: normal;
+		overflow-x: auto;
+		resize: vertical;
+		outline: none;
+	}
+	textarea:focus { border-color: #5a6575; }
+	textarea.invalid { border-color: #c4534d; }
+	canvas {
+		border-radius: 10px;
+		background: #101215;
+	}
+	.status {
+		display: flex;
+		gap: 16px;
+		font: 13px ui-monospace, monospace;
+		color: #8a919c;
+		flex-wrap: wrap;
+	}
+	.status .size { color: #d8b45a; }
+	.status .bad { color: #e0716b; }
+	.warn {
+		min-height: 1.2em;
+		font-size: 13px;
+		color: #e0a75f;
+	}
+	.buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+	button {
+		background: #2a3a55;
+		color: #e6e9ee;
+		border: 1px solid #3d5378;
+		border-radius: 8px;
+		padding: 9px 16px;
+		font-size: 14px;
+		cursor: pointer;
+	}
+	button:hover:enabled { background: #33486b; }
+	button:disabled { opacity: .45; cursor: default; }
+	label.grid-toggle {
+		font-size: 13px;
+		color: #8a919c;
+		user-select: none;
+	}
+	.help {
+		max-width: 1020px;
+		margin-top: 28px;
+		font-size: 13px;
+		color: #8a919c;
+	}
+	.help code {
+		background: #0e1013;
+		border: 1px solid #2a2f37;
+		border-radius: 4px;
+		padding: 1px 5px;
+		font-size: 12px;
+	}
+	.charset {
+		font: 12px ui-monospace, monospace;
+		color: #6f7681;
+		word-break: break-all;
+	}
+</style>
+</head>
+<body>
+<h1>SeedHammer Text Plate</h1>
+<div class="sub">Compose free-form text for an 85&thinsp;&times;&thinsp;85&thinsp;mm plate. The preview is the engraving.</div>
+<main>
+	<section>
+		<textarea id="text" spellcheck="false" autocapitalize="off" autocomplete="off"
+			placeholder="IN CASE OF FIRE&#10;&#10;BREAK GLASS"></textarea>
+		<div class="status">
+			<span id="pos">1:1</span>
+			<span id="used">0&times;0</span>
+			<span id="engraveAt" class="size"></span>
+			<span id="capacity"></span>
+		</div>
+		<div id="warn" class="warn"></div>
+		<div class="buttons">
+			<button id="copy" disabled>Copy for NFC Tools</button>
+			<button id="webnfc" disabled>Write via Web NFC</button>
+			<label class="grid-toggle"><input type="checkbox" id="grid" checked> grid</label>
+		</div>
+		<div id="nfcStatus" class="warn"></div>
+	</section>
+	<section>
+		<canvas id="plate"></canvas>
+	</section>
+</main>
+<div class="help">
+	<p><b>How it engraves.</b> A line break starts a new line; long lines wrap. The firmware
+	engraves at the largest text size whose grid holds the composition:
+	<span id="sizeTable"></span>. The preview above always shows the size the firmware will pick.</p>
+	<p><b>Android Chrome:</b> the Web NFC button compiles the composition to a
+	<code>seedhammer.com:curves</code> vector record and writes it directly, no app needed.
+	<b>Phone (NFC Tools):</b> copy, then in NFC Tools add a <i>Text</i> record, paste and write
+	while the SeedHammer start screen shows; the firmware lays the text out itself.
+	<b>USB NFC writer:</b> <code>python3 cmd/textplate/write-nfc.py [--curves] plate.txt</code>
+	from the repository.</p>
+	<p class="charset">Supported characters: <span id="charset"></span></p>
+</div>
+<script src="glyphs.js"></script>
+<script>
+"use strict";
+
+const ta = document.getElementById("text");
+const canvas = document.getElementById("plate");
+const ctx = canvas.getContext("2d");
+
+const allowed = new Set(Object.keys(SH.glyphs));
+const paths = {};
+for (const [ch, d] of Object.entries(SH.glyphs)) {
+	paths[ch] = new Path2D(d);
+}
+document.getElementById("charset").textContent =
+	[...allowed].filter(c => c !== " ").join(" ") + "  (and space)";
+document.getElementById("sizeTable").textContent = SH.sizes
+	.map(s => `${s.mm.toFixed(1)}mm → ${s.cols}×${s.rows}`)
+	.join(", ");
+const maxGrid = SH.sizes[SH.sizes.length - 1];
+
+// canonical mirrors the firmware's parsePlainText: strip trailing
+// spaces per line and drop trailing blank lines. This is the payload
+// that gets written and the layout that gets engraved.
+function canonical(text) {
+	const lines = text.split("\n").map(l => l.replace(/ +$/, ""));
+	while (lines.length > 0 && lines[lines.length - 1] === "") {
+		lines.pop();
+	}
+	return lines;
+}
+
+// engraveSize mirrors gui.validateText: the first (largest) ladder
+// size whose grid holds every line unwrapped.
+function engraveSize(lines) {
+	const cols = Math.max(1, ...lines.map(l => l.length));
+	return SH.sizes.find(s => cols <= s.cols && lines.length <= s.rows) || null;
+}
+
+function sanitize() {
+	let v = ta.value.replace(/\r\n?/g, "\n");
+	const dropped = new Set();
+	let clean = "";
+	for (const ch of v) {
+		if (ch === "\n" || allowed.has(ch)) {
+			clean += ch;
+		} else {
+			dropped.add(ch);
+		}
+	}
+	if (clean !== ta.value) {
+		const at = ta.selectionStart - (ta.value.length - clean.length);
+		ta.value = clean;
+		ta.selectionStart = ta.selectionEnd = Math.max(0, at);
+	}
+	document.getElementById("warn").textContent = dropped.size
+		? "not engravable, removed: " + [...dropped].map(c => JSON.stringify(c)).join(" ")
+		: "";
+}
+
+function update() {
+	sanitize();
+	const text = ta.value;
+	const lines = canonical(text);
+	const cols = Math.max(0, ...lines.map(l => l.length));
+	const size = engraveSize(lines);
+	const hasInk = lines.some(l => l.trim() !== "");
+	// "command: " is the firmware's debug prefix; such a payload would
+	// be misread as a command instead of a text plate.
+	const isCommand = lines.length > 0 && lines[0].startsWith("command: ");
+
+	document.getElementById("used").textContent = `${cols}×${lines.length}`;
+	const eng = document.getElementById("engraveAt");
+	if (!hasInk) {
+		eng.textContent = "";
+		eng.className = "size";
+	} else if (isCommand) {
+		eng.textContent = "cannot start with \"command: \"";
+		eng.className = "bad";
+	} else if (size) {
+		eng.textContent = `engraves at ${size.mm.toFixed(1)}mm`;
+		eng.className = "size";
+	} else {
+		eng.textContent = "does not fit any size";
+		eng.className = "bad";
+	}
+	const valid = hasInk && !!size && !isCommand;
+	const cap = document.getElementById("capacity");
+	if (valid) {
+		// Text mode carries the text itself, so it always fits; show
+		// its size next to the (much larger) vectorized size.
+		const textBytes = `${SH.version} text\n`.length + lines.join("\n").length;
+		cap.textContent = `${textBytes} B text / ${compile(lines, size).length} B vector`;
+		cap.className = "";
+	} else {
+		cap.textContent = "";
+	}
+	ta.classList.toggle("invalid", !!text && !valid && hasInk);
+	document.getElementById("copy").disabled = !valid;
+	document.getElementById("webnfc").disabled = !valid || !("NDEFReader" in window);
+	draw(lines, size);
+}
+
+// compile lays the composition out on the engraving grid and emits a
+// seedhammer.com:curves payload: a header line followed by each
+// glyph's path data translated to its cell.
+function compile(lines, size) {
+	const upmm = Math.round(SH.height / size.mm);
+	const stroke = Math.round(SH.strokeMM * upmm);
+	const margin = SH.marginMM * upmm;
+	const parts = [`${SH.version} path ${upmm} ${stroke}`];
+	for (let row = 0; row < lines.length; row++) {
+		const line = lines[row];
+		for (let col = 0; col < line.length; col++) {
+			const d = SH.glyphs[line[col]];
+			if (!d) continue;
+			parts.push(translate(d, margin + col * SH.advance, margin + row * SH.height));
+		}
+	}
+	return parts.join("\n");
+}
+
+// translate offsets every coordinate of glyph path data.
+function translate(d, dx, dy) {
+	let out = "";
+	let isX = true;
+	for (const m of d.matchAll(/([MC])|(-?\d+)/g)) {
+		if (m[1]) {
+			out += m[1];
+			isX = true;
+			continue;
+		}
+		const v = parseInt(m[2], 10) + (isX ? dx : dy);
+		if (out !== "" && !out.endsWith("M") && !out.endsWith("C")) {
+			out += " ";
+		}
+		out += v;
+		isX = !isX;
+	}
+	return out;
+}
+
+function cursor() {
+	const before = ta.value.slice(0, ta.selectionStart).split("\n");
+	document.getElementById("pos").textContent =
+		`${before.length}:${before[before.length - 1].length + 1}`;
+}
+
+function draw(lines, size) {
+	const cssSize = Math.min(520, window.innerWidth - 40);
+	const dpr = window.devicePixelRatio || 1;
+	canvas.style.width = canvas.style.height = cssSize + "px";
+	canvas.width = canvas.height = Math.round(cssSize * dpr);
+	const px = canvas.width / SH.plateMM; // pixels per millimeter
+
+	// Plate.
+	ctx.setTransform(1, 0, 0, 1, 0, 0);
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+	const r = 3 * px; // canonical 3mm corner radius
+	ctx.beginPath();
+	ctx.roundRect(0, 0, canvas.width, canvas.height, r);
+	const steel = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+	steel.addColorStop(0, "#3a3e44");
+	steel.addColorStop(.5, "#2e3237");
+	steel.addColorStop(1, "#3f434a");
+	ctx.fillStyle = steel;
+	ctx.fill();
+
+	const s = size || maxGrid;
+	const cellW = SH.advance / SH.height * s.mm * px;
+	const cellH = s.mm * px;
+	const x0 = SH.marginMM * px;
+	const y0 = SH.marginMM * px;
+
+	if (document.getElementById("grid").checked) {
+		ctx.strokeStyle = "rgba(255,255,255,0.07)";
+		ctx.lineWidth = 1;
+		ctx.beginPath();
+		for (let c = 0; c <= s.cols; c++) {
+			ctx.moveTo(x0 + c * cellW, y0);
+			ctx.lineTo(x0 + c * cellW, y0 + s.rows * cellH);
+		}
+		for (let rw = 0; rw <= s.rows; rw++) {
+			ctx.moveTo(x0, y0 + rw * cellH);
+			ctx.lineTo(x0 + s.cols * cellW, y0 + rw * cellH);
+		}
+		ctx.stroke();
+	}
+
+	// Engraved strokes: wrap overlong lines exactly like the firmware.
+	ctx.strokeStyle = "#f0ead6";
+	ctx.lineCap = ctx.lineJoin = "round";
+	const k = s.mm / SH.height * px; // font units to pixels
+	// lineWidth is scaled by the transform, so express it in font units.
+	ctx.lineWidth = SH.strokeMM * SH.height / s.mm;
+	let row = 0;
+	for (const line of lines) {
+		let rest = line;
+		do {
+			const chunk = rest.slice(0, s.cols);
+			rest = rest.slice(s.cols);
+			for (let i = 0; i < chunk.length; i++) {
+				const p = paths[chunk[i]];
+				if (!p) continue;
+				ctx.setTransform(k, 0, 0, k, x0 + i * cellW, y0 + row * cellH);
+				ctx.stroke(p);
+			}
+			row++;
+		} while (rest.length > 0);
+	}
+	ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+document.getElementById("copy").onclick = async () => {
+	await navigator.clipboard.writeText(canonical(ta.value).join("\n"));
+	nfcStatus("copied ✓ — paste into an NFC Tools Text record");
+};
+
+document.getElementById("webnfc").onclick = async () => {
+	try {
+		nfcStatus("hold the phone against the SeedHammer…");
+		const ndef = new NDEFReader();
+		// Text rides the curves envelope in text mode: the firmware
+		// lays it out and renders it from its own font. Compact, and
+		// unlike vectorized path mode it always fits.
+		const body = `${SH.version} text\n` + canonical(ta.value).join("\n");
+		await ndef.write({ records: [{
+			recordType: SH.recordType,
+			data: new TextEncoder().encode(body),
+		}] });
+		nfcStatus("written ✓");
+	} catch (e) {
+		nfcStatus("NFC: " + e.message);
+	}
+};
+
+function nfcStatus(msg) {
+	document.getElementById("nfcStatus").textContent = msg;
+}
+
+if (!("NDEFReader" in window)) {
+	document.getElementById("webnfc").title = "Web NFC needs Android Chrome over HTTPS";
+}
+
+ta.addEventListener("input", update);
+document.addEventListener("selectionchange", cursor);
+document.getElementById("grid").onchange = update;
+window.addEventListener("resize", update);
+update();
+</script>
+</body>
+</html>

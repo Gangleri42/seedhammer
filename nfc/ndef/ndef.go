@@ -22,6 +22,8 @@ type RecordReader struct {
 	notBegin bool
 	r        io.Reader
 	scratch  [4]byte
+	typeBuf  [32]byte
+	typeLen  uint8
 	length   int
 	skip     bool
 }
@@ -112,6 +114,7 @@ func (r *RecordReader) Read(buf []byte) (int, error) {
 			return n, nil
 		}
 		r.skip = false
+		r.typeLen = 0
 		// Read the header and type length.
 		h := r.scratch[:2]
 		if _, err := io.ReadFull(r.r, h); err != nil {
@@ -134,7 +137,14 @@ func (r *RecordReader) Read(buf []byte) (int, error) {
 			if _, err := io.ReadFull(r.r, b); err != nil {
 				return 0, fmt.Errorf("ndef: message: %w", err)
 			}
-			r.length = int(binary.BigEndian.Uint32(b))
+			plen := binary.BigEndian.Uint32(b)
+			if plen > maxRecordLen {
+				// Reject absurd lengths before narrowing to int, which
+				// would go negative on a 32-bit platform and desync the
+				// parser onto attacker-chosen bytes.
+				return 0, errors.New("ndef: message: record too long")
+			}
+			r.length = int(plen)
 		} else {
 			// Short record.
 			b, err := r.readByte()
@@ -152,15 +162,14 @@ func (r *RecordReader) Read(buf []byte) (int, error) {
 			}
 			idLen = b
 		}
-		// Read the well-known type byte, if any.
-		var wellKnown byte
-		if tlen == 1 {
-			b := r.scratch[:1]
+		// Read the type, if it fits the buffer.
+		if 0 < tlen && int(tlen) <= len(r.typeBuf) {
+			b := r.typeBuf[:tlen]
 			if _, err := io.ReadFull(r.r, b); err != nil {
 				return 0, fmt.Errorf("ndef: message: %w", err)
 			}
-			tlen--
-			wellKnown = b[0]
+			r.typeLen = tlen
+			tlen = 0
 		}
 		// Skip the (remaining) type and id.
 		if err := r.discard(buf, int(tlen)+int(idLen)); err != nil {
@@ -171,13 +180,25 @@ func (r *RecordReader) Read(buf []byte) (int, error) {
 			r.skip = true
 			continue
 		}
-		// Skip unknown formats.
 		switch tnf := flags & 0b111; tnf {
 		case tnfWellKnown:
+		case tnfExternal:
+			// Pass through external records unchanged; skip
+			// records with types too long to identify.
+			r.skip = r.typeLen == 0
+			continue
 		default:
+			// Skip unknown formats.
 			r.skip = true
 			continue
 		}
+		// The well-known type byte, if any. Well-known records
+		// are decoded, not passed through; don't expose their type.
+		var wellKnown byte
+		if r.typeLen == 1 {
+			wellKnown = r.typeBuf[0]
+		}
+		r.typeLen = 0
 		n := 0
 		switch wellKnown {
 		case 'T': // Text
@@ -229,6 +250,13 @@ func (r *RecordReader) Read(buf []byte) (int, error) {
 	}
 }
 
+// RecordType returns the type of the record currently being read,
+// or nil for records without a captured type. The returned slice is
+// valid until the next call to Read that begins a new record.
+func (r *RecordReader) RecordType() []byte {
+	return r.typeBuf[:r.typeLen]
+}
+
 func (r *RecordReader) readByte() (byte, error) {
 	b := r.scratch[:1]
 	_, err := io.ReadFull(r.r, b)
@@ -247,6 +275,11 @@ func (r *RecordReader) discard(buf []byte, n int) error {
 	return nil
 }
 
+// maxRecordLen bounds a record's declared payload length. Any NFC
+// message that fits the tag is far smaller; the cap only stops a
+// hostile 32-bit length from narrowing to a negative int.
+const maxRecordLen = 1 << 20
+
 const (
 	nullType = 0x00
 	ndefType = 0x03
@@ -259,6 +292,7 @@ const (
 	flagMB = 0b1 << 7
 
 	tnfWellKnown = 0x01
+	tnfExternal  = 0x04
 
 	uriPrefixNone     = 0x00
 	uriPrefixHttpWww  = 0x01

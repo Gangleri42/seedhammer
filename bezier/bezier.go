@@ -459,31 +459,159 @@ func Sample(points []Point, b Cubic, spacing int) []Point {
 	nsamples := (totalDist + spacing - 1) / spacing
 	// Sample short segments in the middle.
 	nsamples = max(nsamples, 2)
+	// Cap the samples per curve. The length-estimate Interpolator only
+	// advances samplingRate steps, so the walk below can visit at most
+	// that many distinct grid positions. Beyond it a curve degrades to a
+	// coarser polyline rather than growing the sample buffer without
+	// bound (matching maxSamplesPerCurve in SampleSym). Interpolating to
+	// the exact spacing, unlike the old grid snapping, would otherwise
+	// emit an unbounded run of sub-grid points for a very long stroke.
+	nsamples = min(nsamples, samplingRate)
 	adjSpacing := (totalDist + nsamples - 1) / nsamples
 	prev = first
+	from := first
+	seg := 0
 	var d int
-	pi := 0
-	// Sample inner points.
+	// Sample inner points. Spacings finer than the estimate
+	// partition degenerate into repeated positions; skip them
+	// rather than emit duplicate samples.
 	in = new(Interpolator)
 	in.Segment(b, samplingRate)
 	for range nsamples - 1 {
-		var s Point
-		for d < adjSpacing {
-			pi++
-			in.Step()
-			s = in.Position()
-			d += dist(prev, s)
+		for d < adjSpacing && in.Step() {
+			from = prev
+			s := in.Position()
+			seg = dist(prev, s)
+			d += seg
 			prev = s
 		}
-		points = append(points, s)
+		// Place the sample at exactly adjSpacing along the last grid
+		// step [from, prev] instead of snapping to the grid point prev.
+		// The length-estimate Interpolator walks a coarse samplingRate
+		// grid, so when adjSpacing sits just above one grid step every
+		// chord snaps to 1x or 2x the step. That periodic doubling makes
+		// the worst chord pace the whole engrave (see the planner's
+		// uniform time scale). Interpolating removes the doubling with no
+		// extra steps and no float. int64 avoids overflow of the 32-bit
+		// device int when a grid step spans a large drawing.
+		emit := prev
+		if over := d - adjSpacing; over > 0 && seg > 0 {
+			emit = prev.Add(P64(from.Sub(prev)).Mul(over).Div(seg).Point())
+		}
+		if len(points) == 0 || points[len(points)-1] != emit {
+			points = append(points, emit)
+		}
 		d -= adjSpacing
 	}
 	// Force endpoint to align with curve segment end.
-	points = append(points, b.C3)
+	if len(points) == 0 || points[len(points)-1] != b.C3 {
+		points = append(points, b.C3)
+	}
 	return points
 }
 
+// dist is the Euclidean distance between a and b, rounded to the
+// nearest integer. It is computed in integer arithmetic: Sample calls
+// it a few hundred times per cubic, and the RP2350 has no double
+// hardware, so a float64 Hypot here is software-emulated on the device
+// curve-decode path.
 func dist(a, b Point) int {
 	d := b.Sub(a)
-	return int(math.Round(math.Hypot(float64(d.X), float64(d.Y))))
+	return isqrt(d.X*d.X + d.Y*d.Y)
+}
+
+// isqrt returns sqrt(n) rounded to the nearest integer, for n >= 0.
+func isqrt(n int) int {
+	if n < 2 {
+		return n
+	}
+	// Newton's method settles on floor(sqrt(n)).
+	x := n
+	for {
+		y := (x + n/x) / 2
+		if y >= x {
+			break
+		}
+		x = y
+	}
+	// Round up past the midpoint x*x + x.
+	if n-x*x > x {
+		x++
+	}
+	return x
+}
+
+// sampleRefine is the number of uniform-t subdivisions used to build
+// the arc-length table in SampleSym. It only needs to be fine enough
+// that linear interpolation between table entries is accurate to a
+// fraction of a machine unit for glyph-scale curves.
+const sampleRefine = 1024
+
+// maxSamplesPerCurve caps the samples one call to SampleSym emits. It
+// mirrors the implicit cap in Sample, whose fixed-point Interpolator
+// only advances samplingRate steps and so can never emit more than
+// that many distinct points from a single curve. Downstream run-length
+// guards (e.g. curves.maxRun) rely on a bounded per-curve count so a
+// hostile curve with absurd arc length degrades to a coarse polyline
+// instead of exhausting the sample buffer.
+const maxSamplesPerCurve = 200
+
+// SampleSym is a symmetric arc-length sampler. Like Sample it appends
+// points spaced roughly spacing apart in chord length, forcing the
+// final point to b.C3, but it computes cumulative arc length in
+// floating point and places each interior sample at an exact target
+// arc length. Because the cubic is evaluated with an exact symmetric
+// polynomial and the targets are placed symmetrically, sampling a
+// curve and its mirror yields mirrored points, unlike Sample whose
+// integer fixed-point Interpolator and one-directional remainder walk
+// drift asymmetrically.
+func SampleSym(points []Point, b Cubic, spacing int) []Point {
+	c0x, c0y := float64(b.C0.X), float64(b.C0.Y)
+	c1x, c1y := float64(b.C1.X), float64(b.C1.Y)
+	c2x, c2y := float64(b.C2.X), float64(b.C2.Y)
+	c3x, c3y := float64(b.C3.X), float64(b.C3.Y)
+	eval := func(t float64) (float64, float64) {
+		mt := 1 - t
+		a := mt * mt * mt
+		bb := 3 * mt * mt * t
+		cc := 3 * mt * t * t
+		d := t * t * t
+		return a*c0x + bb*c1x + cc*c2x + d*c3x,
+			a*c0y + bb*c1y + cc*c2y + d*c3y
+	}
+	const n = sampleRefine
+	var xs, ys, cum [n + 1]float64
+	xs[0], ys[0] = c0x, c0y
+	for i := 1; i <= n; i++ {
+		xs[i], ys[i] = eval(float64(i) / n)
+		cum[i] = cum[i-1] + math.Hypot(xs[i]-xs[i-1], ys[i]-ys[i-1])
+	}
+	total := cum[n]
+	nsamples := int(math.Ceil(total/float64(spacing) - 1e-9))
+	nsamples = max(nsamples, 2)
+	nsamples = min(nsamples, maxSamplesPerCurve)
+	adj := total / float64(nsamples)
+	seg := 0
+	for i := 1; i < nsamples; i++ {
+		target := float64(i) * adj
+		for seg < n && cum[seg+1] < target {
+			seg++
+		}
+		l0, l1 := cum[seg], cum[seg+1]
+		var f float64
+		if l1 > l0 {
+			f = (target - l0) / (l1 - l0)
+		}
+		p := Point{
+			X: int(math.Round(xs[seg] + f*(xs[seg+1]-xs[seg]))),
+			Y: int(math.Round(ys[seg] + f*(ys[seg+1]-ys[seg]))),
+		}
+		if len(points) == 0 || points[len(points)-1] != p {
+			points = append(points, p)
+		}
+	}
+	if len(points) == 0 || points[len(points)-1] != b.C3 {
+		points = append(points, b.C3)
+	}
+	return points
 }

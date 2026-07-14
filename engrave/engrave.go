@@ -63,6 +63,7 @@ type Command struct {
 // b-spline.
 type splineKnot struct {
 	Engrave      bool
+	Periodic     bool
 	Knot         bezier.Point
 	Multiplicity int
 }
@@ -72,6 +73,7 @@ type cmdKind uint8
 const (
 	moveCmd cmdKind = iota
 	lineCmd
+	linePeriodicCmd
 	delayCmd
 )
 
@@ -85,16 +87,19 @@ func (c Command) AsDelay() (denom, nom uint, ok bool) {
 }
 
 func (c Command) AsKnot() (splineKnot, bool) {
-	line := false
+	line, periodic := false, false
 	switch c.kind {
 	case moveCmd:
 	case lineCmd:
 		line = true
+	case linePeriodicCmd:
+		line, periodic = true, true
 	default:
 		return splineKnot{}, false
 	}
 	return splineKnot{
-		Engrave: line,
+		Engrave:  line,
+		Periodic: periodic,
 		Knot: bezier.Point{
 			X: int(c.args[0]),
 			Y: int(c.args[1]),
@@ -115,7 +120,7 @@ func NewTransform(yield func(Command) bool) Transform {
 	s.yield = func(c Command) bool {
 		if !s.done {
 			switch c.kind {
-			case moveCmd, lineCmd:
+			case moveCmd, lineCmd, linePeriodicCmd:
 				p := bezier.Pt(int(c.args[0]), int(c.args[1]))
 				coord := s.transform(p)
 				c.args[0], c.args[1] = uint(coord.X), uint(coord.Y)
@@ -243,6 +248,15 @@ func ControlPoint(engrave bool, ctrl bezier.Point) Command {
 	if engrave {
 		c.kind = lineCmd
 	}
+	c.args[0], c.args[1], c.args[2] = uint(ctrl.X), uint(ctrl.Y), 1
+	return c
+}
+
+// PeriodicPoint is an engraved control point of a periodic contour: a
+// closed smooth run the planner paces cyclically across its seam
+// instead of against the clamp boundaries.
+func PeriodicPoint(ctrl bezier.Point) Command {
+	c := Command{kind: linePeriodicCmd}
 	c.args[0], c.args[1], c.args[2] = uint(ctrl.X), uint(ctrl.Y), 1
 	return c
 }
@@ -985,8 +999,10 @@ func planEngraving(knotBuf []bspline.Knot, conf StepperConfig, e Engraving) bspl
 		spline := knotBuf[:0]
 		// Initialize the spline with 2 clamping knots at (0, 0).
 		spline = append(spline, start, start)
+		periodic := false
 		for c := range e {
 			if k, ok := c.AsKnot(); ok {
+				periodic = periodic || k.Periodic
 				for range k.Multiplicity {
 					spline = append(spline, bspline.Knot{Engrave: k.Engrave, Ctrl: k.Knot})
 					if len(spline) < 5 {
@@ -1004,7 +1020,7 @@ func planEngraving(knotBuf []bspline.Knot, conf StepperConfig, e Engraving) bspl
 					if len(spline) == 5 {
 						s, e := spline[1].Ctrl, spline[3].Ctrl
 						spline = appendLine(spline[:0], conf, engrave, s, e)
-					} else {
+					} else if !(periodic && planPeriodicRun(spline, conf, engrave)) {
 						for i := range spline[2 : len(spline)-2] {
 							spline[i+2].T = 1
 						}
@@ -1014,6 +1030,7 @@ func planEngraving(knotBuf []bspline.Knot, conf StepperConfig, e Engraving) bspl
 							spline[i+2].T = tscale
 						}
 					}
+					periodic = false
 					dur := uint(0)
 					for _, k := range spline[2:] {
 						dur += k.T
@@ -1126,6 +1143,198 @@ func appendLine(spline []bspline.Knot, conf StepperConfig, engrave bool, s, e be
 	}
 	spline = append(spline, end, end)
 	return spline
+}
+
+// planPeriodicRun times a buffered periodic contour run, reporting
+// whether it applied. The buffer holds the seam-clamped insertion
+// polygon of a closed loop,
+//
+//	K, K, B2, d1, …, dn-1, B1, K, K, K
+//
+// whose interior traces the loop's periodic polygon exactly. The
+// cruise pace comes from the loop's cyclic kinematics: measured
+// across the seam wrap, the clamp boundary contributes no phantom
+// rest-to-cruise spike, so the loop cruises as fast as its interior
+// allows. The needle still enters and leaves the loop at rest at the
+// seam clamp; the head and tail spans stretch along a jerk-limited
+// s-curve so the boundary velocities ramp within the machine limits.
+// Every stretched span is slower than its cruise pace and the
+// interior stays uniform, keeping the windowed kinematics model
+// valid; a final gate re-measures the timed run and rejects it,
+// falling back to clamped pacing, if it exceeds the limits.
+func planPeriodicRun(spline []bspline.Knot, conf StepperConfig, engrave bool) bool {
+	// Below minSpans the ramps cannot spread and cyclic pacing gains
+	// nothing over the clamped run.
+	const minSpans = 16
+	lo, hi := 2, len(spline)-3
+	nspans := hi - lo + 1
+	if nspans < minSpans {
+		return false
+	}
+	maxv, maxa, maxj := cyclicKinematics(spline[2 : len(spline)-3])
+	tc := timeScale(conf, engrave, maxv, maxa, maxj)
+	if tc == 0 {
+		return false
+	}
+	chord := func(k int) uint {
+		return uint(ManhattanDist(spline[k].Ctrl, spline[k-1].Ctrl))
+	}
+	var length uint
+	for k := lo; k <= hi; k++ {
+		length += chord(k)
+	}
+	if length == 0 {
+		return false
+	}
+	tps := conf.TicksPerSecond
+	// The coasting speed implied by the cruise pace, in steps/s.
+	vc := float32(length) / float32(nspans) * float32(tps) / float32(tc)
+	prof, ok := newRampProfile(float32(length), vc, float32(conf.Acceleration), float32(conf.Jerk))
+	if !ok {
+		return false
+	}
+	// Stretch the head and tail spans along the ramp profile; the
+	// profile is symmetric, so distances from the loop end map to the
+	// same times. The ramp needs at most half the loop by
+	// construction, so the passes meet without overlapping. No span
+	// runs shorter than the cruise duration: an interval below tc on
+	// a short chord is slower in speed, but the windowed kinematics
+	// model reads mixed windows as if their pace applied to full
+	// chords; keeping every interval at or above tc caps every window
+	// read at the pace the cyclic measurement approved.
+	ramp := func(from, to, dir int) int {
+		var cum uint
+		var prev float32
+		k := from
+		for ; k != to+dir; k += dir {
+			cum += chord(k)
+			t := prof.timeAt(float32(cum))
+			dt := max(t-prev, 0)
+			spline[k].T = max(uint(float64(dt)*float64(tps)+0.5), tc)
+			prev = t
+			if float32(cum) >= prof.sAcc {
+				break
+			}
+		}
+		return k
+	}
+	first := ramp(lo, hi, +1) + 1
+	last := hi
+	if first <= hi {
+		last = ramp(hi, first, -1) - 1
+	}
+	for k := first; k <= last; k++ {
+		spline[k].T = tc
+	}
+	// Gate: the construction keeps every span at or below its cruise
+	// pace, so exceeding a limit means degenerate geometry.
+	v, a, j := bspline.ComputeKinematics(spline, tps)
+	limv := conf.Speed
+	if engrave {
+		limv = conf.EngravingSpeed
+	}
+	return v <= limv && a <= conf.Acceleration && j <= conf.Jerk
+}
+
+// cyclicKinematics measures the uniform-pace kinematic maxima of a
+// closed control polygon, the derivative windows wrapping across the
+// seam. The polygon must have at least 7 knots.
+func cyclicKinematics(loop []bspline.Knot) (v, a, j uint) {
+	var kin bspline.Kinematics
+	n := len(loop)
+	// Warm the derivative chain over the wrap-around tail, then
+	// measure one full cycle.
+	for i := n - 6; i < n; i++ {
+		kin.Knot(1, loop[i].Ctrl, 1)
+	}
+	for _, k := range loop {
+		kin.Knot(1, k.Ctrl, 1)
+		kv, ka, kj := kin.Max()
+		v, a, j = max(v, kv), max(a, ka), max(j, kj)
+	}
+	return v, a, j
+}
+
+// rampProfile is the jerk-limited velocity profile a periodic run
+// follows along its arc length: accelerate from rest through
+// constant-jerk and constant-acceleration phases, coast, and mirror
+// down to rest, like the s-curve of a straight line.
+type rampProfile struct {
+	// t1, t2 are the constant-jerk and constant-acceleration phase
+	// durations; tAcc, sAcc the full ramp duration and distance.
+	t1, t2, tAcc, sAcc float32
+	// ph and pht are the start state and time of the three
+	// acceleration phases.
+	ph   [3]physState
+	pht  [3]float32
+	jmax float32
+	// vc is the coasting speed; tTot, sTot the loop totals.
+	vc, tTot, sTot float32
+}
+
+func newRampProfile(length, vc, amax, jmax float32) (rampProfile, bool) {
+	t1 := min(
+		amax/jmax,
+		float32(math.Sqrt(float64(vc/jmax))),
+		float32(math.Cbrt(float64(length/2/jmax))),
+	)
+	var t2 float32
+	if t1 > 0 {
+		t2v := (vc - jmax*t1*t1) / (jmax * t1)
+		t2s := -3./2*t1 + float32(math.Sqrt(float64(1./4*t1*t1+length/(jmax*t1))))
+		t2 = max(0, min(t2v, t2s))
+	}
+	var p rampProfile
+	p.t1, p.t2, p.jmax = t1, t2, jmax
+	p.pht[1] = t1
+	p.ph[1] = p.ph[0].Simulate(t1, jmax)
+	p.pht[2] = t1 + t2
+	p.ph[2] = p.ph[1].Simulate(t2, 0)
+	end := p.ph[2].Simulate(t1, -jmax)
+	p.tAcc, p.sAcc, p.vc = 2*t1+t2, end.s, end.v
+	if !(end.v > 0) {
+		return p, false
+	}
+	p.tTot = 2*p.tAcc + max(0, length-2*end.s)/end.v
+	p.sTot = length
+	return p, true
+}
+
+// timeAt inverts the profile: the time at which arc distance s is
+// reached.
+func (p *rampProfile) timeAt(s float32) float32 {
+	if s <= 0 {
+		return 0
+	}
+	if s >= p.sTot {
+		return p.tTot
+	}
+	if s > p.sTot/2 {
+		return p.tTot - p.timeAt(p.sTot-s)
+	}
+	if s >= p.sAcc {
+		return p.tAcc + (s-p.sAcc)/p.vc
+	}
+	// Bisect within the acceleration phase containing s: position
+	// grows monotonically with time.
+	i, dur, j := 0, p.t1, p.jmax
+	switch {
+	case s >= p.ph[2].s:
+		i, dur, j = 2, p.t1, -p.jmax
+	case s >= p.ph[1].s:
+		i, dur, j = 1, p.t2, 0
+	}
+	st := p.ph[i]
+	lo, hi := float32(0), dur
+	for range 24 {
+		mid := (lo + hi) / 2
+		if st.s+st.v*mid+st.a*mid*mid/2+j*mid*mid*mid/6 < s {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return p.pht[i] + (lo+hi)/2
 }
 
 // timeScale computes the minimum time in ticks to traverse c given

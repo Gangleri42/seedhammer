@@ -28,7 +28,7 @@ type Poller struct {
 	emu     *type4.Tag
 	reading chan struct{}
 	// r is the active reader.
-	r io.Reader
+	r *ndef.RecordReader
 }
 
 type Protocol int
@@ -87,6 +87,16 @@ func (p *Poller) Read(buf []byte) (int, error) {
 		}
 		p.r = ndef.NewRecordReader(r)
 	}
+}
+
+// RecordType returns the type of the NDEF record currently being
+// read, if any. It must only be called from the same goroutine as
+// Read.
+func (p *Poller) RecordType() []byte {
+	if p.r == nil {
+		return nil
+	}
+	return p.r.RecordType()
 }
 
 func (p *Poller) Close() error {

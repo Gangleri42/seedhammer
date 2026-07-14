@@ -55,6 +55,49 @@ func TestWriteFiles(t *testing.T) {
 	}
 }
 
+func TestRetransmit(t *testing.T) {
+	r := &Reader{t: t}
+	r.MsgSENS_REQ()
+	r.MsgSelectNDEF()
+	// The tag's response was lost; the select is retransmitted and
+	// must be answered identically without being reprocessed.
+	r.MsgRetransmit()
+	r.MsgSelectCCFile()
+	r.SelectFile()
+	f := bytes.Repeat([]byte{7, 6, 5}, 100)
+	off := uint16(0)
+	r.writeFileChunk(off, bo.AppendUint16(nil, uint16(len(f))))
+	off += 2
+	rest := f
+	for len(rest) > 0 {
+		n := min(chunkSize, len(rest))
+		r.writeFileChunk(off, rest[:n])
+		// A reprocessed duplicate would advance the write offset and
+		// turn the next chunk into a rejected non-contiguous write.
+		r.MsgRetransmit()
+		r.MsgNAKRetransmit()
+		rest = rest[n:]
+		off += uint16(n)
+	}
+	tag := NewTag(r)
+	buf := make([]byte, 8192)
+	for {
+		n, err := tag.Read(buf)
+		if got, want := buf[:n], f[:n]; !bytes.Equal(got, want) {
+			r.DumpTranscript()
+			t.Fatalf("read %x, expected %x", got, want)
+		}
+		f = f[n:]
+		if err != nil {
+			if err == io.EOF && len(f) == 0 {
+				break
+			}
+			r.DumpTranscript()
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestDoubleSENSREQ(t *testing.T) {
 	r := &Reader{t: t}
 	r.MsgSENS_REQ()
@@ -121,6 +164,26 @@ func (r *Reader) MsgNAK() {
 	r.msgs = append(r.msgs, message{
 		msg:  []byte{isodepR_NAK | r.blockNo},
 		resp: []byte{isodepR_ACK | (1 - r.blockNo)},
+	})
+}
+
+// MsgRetransmit repeats the last I-block exchange, as a reader does
+// when the tag's response was lost (13.2.5.13).
+func (r *Reader) MsgRetransmit() {
+	last := r.msgs[len(r.msgs)-1]
+	r.msgs = append(r.msgs, message{
+		msg:  last.msg,
+		resp: last.resp,
+	})
+}
+
+// MsgNAKRetransmit sends R(NAK) carrying the tag's current block
+// number, expecting the last response again (13.2.5.9).
+func (r *Reader) MsgNAKRetransmit() {
+	last := r.msgs[len(r.msgs)-1]
+	r.msgs = append(r.msgs, message{
+		msg:  []byte{isodepR_NAK | (1 - r.blockNo)},
+		resp: last.resp,
 	})
 }
 

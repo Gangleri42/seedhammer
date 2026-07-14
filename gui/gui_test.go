@@ -9,6 +9,7 @@ import (
 	"io"
 	"iter"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -16,11 +17,13 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil/v2/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg/v2"
+	"seedhammer.com/backup"
 	"seedhammer.com/bip32"
 	"seedhammer.com/bip380"
 	"seedhammer.com/bip39"
 	"seedhammer.com/bspline"
 	"seedhammer.com/engrave"
+	"seedhammer.com/font/sh"
 	"seedhammer.com/gui/op"
 	"seedhammer.com/image/rgb565"
 )
@@ -152,6 +155,129 @@ func newTestEngraveScreen(t *testing.T, ctx *Context) *EngraveScreen {
 		ctx,
 		engravings[0],
 	)
+}
+
+func TestValidateDescriptorFallback(t *testing.T) {
+	multisig := func(threshold, nkeys int) *bip380.Descriptor {
+		desc := &bip380.Descriptor{
+			Script:    bip380.P2WSH,
+			Threshold: threshold,
+			Type:      bip380.SortedMulti,
+			Keys:      make([]bip380.Key, nkeys),
+		}
+		fillDescriptor(t, desc, desc.Script.DerivationPath(), 12, 0)
+		return desc
+	}
+	tests := []struct {
+		threshold, nkeys int
+		want             []string
+	}{
+		// Fits every layout, falling back to smaller text and finer
+		// QR modules where needed.
+		{2, 3, []string{"TEXT + QR", "TEXT ONLY", "QR ONLY"}},
+		// Too long for text wrapped around a QR at any fallback.
+		{4, 6, []string{"TEXT ONLY", "QR ONLY"}},
+	}
+	for _, test := range tests {
+		labels, engravings, err := validateDescriptor(engraverParams, multisig(test.threshold, test.nkeys))
+		if err != nil {
+			t.Fatalf("%d-of-%d: %v", test.threshold, test.nkeys, err)
+		}
+		if !slices.Equal(labels, test.want) {
+			t.Errorf("%d-of-%d: got engravings %q, want %q", test.threshold, test.nkeys, labels, test.want)
+		}
+		if len(engravings) != len(labels) {
+			t.Errorf("%d-of-%d: %d engravings for %d labels", test.threshold, test.nkeys, len(engravings), len(labels))
+		}
+	}
+	// Beyond the largest QR code that fits the plate.
+	if _, _, err := validateDescriptor(engraverParams, multisig(9, 16)); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("16-key descriptor: got %v, want ErrTooLarge", err)
+	}
+}
+
+func TestValidateText(t *testing.T) {
+	line := strings.Repeat("W", 45)
+	grid := func(cols, rows int) string {
+		lines := make([]string, rows)
+		for i := range lines {
+			lines[i] = line[:cols]
+		}
+		return strings.Join(lines, "\n")
+	}
+	// The chosen font size is inferred by comparing durations with a
+	// directly built plate.
+	directPlate := func(text string, size float32) Plate {
+		plan := backup.EngraveText(engraverParams, backup.Text{
+			Paragraphs: []backup.Paragraph{{Text: text}},
+			Font:       sh.Font,
+			FontSize:   size,
+		})
+		plate, err := toPlate(plan, engraverParams)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plate
+	}
+	fits := []struct {
+		name string
+		text string
+		size float32
+	}{
+		{"short text at the largest size", "IN CASE OF FIRE\n\nBREAK GLASS", 3.8},
+		{"full 3.8mm grid", grid(34, 20), 3.8},
+		{"wide lines fall back", grid(38, 23), 3.4},
+		{"tall compositions fall back", grid(1, 26), 3.0},
+		{"full 3.0mm grid", grid(44, 26), 3.0},
+		{"descenders on the last row", grid(34, 19) + "\ngjpqy([])", 3.8},
+	}
+	for _, test := range fits {
+		plate, err := validateText(engraverParams, test.text)
+		if err != nil {
+			t.Fatalf("%s: %v", test.name, err)
+		}
+		if want := directPlate(test.text, test.size); plate.Duration != want.Duration {
+			t.Errorf("%s: duration %d, want %d (%.1fmm)", test.name, plate.Duration, want.Duration, test.size)
+		}
+	}
+	tooLarge := []struct {
+		name string
+		text string
+	}{
+		{"too wide", line},
+		{"too tall", grid(1, 27)},
+	}
+	for _, test := range tooLarge {
+		if _, err := validateText(engraverParams, test.text); !errors.Is(err, ErrTooLarge) {
+			t.Errorf("%s: got %v, want ErrTooLarge", test.name, err)
+		}
+	}
+}
+
+func TestTextNotice(t *testing.T) {
+	tests := []struct {
+		name   string
+		text   string
+		notice string
+	}{
+		{"plain text", "IN CASE OF FIRE\n\nBREAK GLASS", ""},
+		{"prose with common words", "in case of fire break glass and stay calm for the day", ""},
+		{"corrupted descriptor", "wsh(sortedmulti(2,[dc567276/48h", "descriptor"},
+		{"key origin", "[dc567276/48h/0h/0h/2h]xpub6DiYrf", "descriptor"},
+		{"lone xpub", "xpub6DiYrfRwNnjeX4vHsWMajJVFKrb", "descriptor"},
+		{"corrupted codex32", "ms13cashsllhdmn9m42vcsamx24zrxgs3qq", "codex32"},
+		{"mnemonic with a typo", "legal winner thank year wave sausage worth useful legal winner thank yelow", "seed phrase"},
+		{"mnemonic with a bad checksum", "legal winner thank year wave sausage worth useful legal winner thank abandon", "seed phrase"},
+	}
+	for _, test := range tests {
+		got := textNotice(test.text)
+		if test.notice == "" && got != "" {
+			t.Errorf("%s: got notice %q, want none", test.name, got)
+		}
+		if test.notice != "" && !strings.Contains(got, test.notice) {
+			t.Errorf("%s: got notice %q, want mention of %q", test.name, got, test.notice)
+		}
+	}
 }
 
 func TestEngraveScreenCancel(t *testing.T) {

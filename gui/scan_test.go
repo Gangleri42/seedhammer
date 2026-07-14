@@ -32,7 +32,27 @@ func TestScan(t *testing.T) {
 	}{
 		{
 			Name:    "Unknown Format",
-			Encoded: "yadda yadda",
+			Encoded: "unsupported rune: \u00e9",
+			Err:     errScanUnknownFormat,
+		},
+		{
+			Name:    "Plain Text",
+			Encoded: "IN CASE OF FIRE\n\nBREAK GLASS",
+			Content: plainText("IN CASE OF FIRE\n\nBREAK GLASS"),
+		},
+		{
+			Name:    "Plain Text CRLF",
+			Encoded: "LINE 1\r\nLINE 2",
+			Content: plainText("LINE 1\nLINE 2"),
+		},
+		{
+			Name:    "Plain Text Canonicalized",
+			Encoded: "LINE 1  \n\nLINE 2  \n \n\n",
+			Content: plainText("LINE 1\n\nLINE 2"),
+		},
+		{
+			Name:    "Whitespace Only",
+			Encoded: " \n \n",
 			Err:     errScanUnknownFormat,
 		},
 		{

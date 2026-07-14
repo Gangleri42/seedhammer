@@ -162,6 +162,9 @@ func TestText(t *testing.T) {
 		{[]Paragraph{{Text: multisig}}},
 		// Descriptor QR.
 		{[]Paragraph{{QR: QR(t, compactMultisig), QRScale: 3}}},
+		// Free-form text: '\n' forces line breaks, empty lines are
+		// preserved and overlong lines wrap.
+		{[]Paragraph{{Text: "IN CASE OF FIRE\n\nBREAK GLASS\n" + strings.Repeat("W", 50)}}},
 	}
 	for i, test := range tests {
 		name := fmt.Sprintf("%d-shards-%d", i, len(test.data))
@@ -316,6 +319,27 @@ func TestCodex32(t *testing.T) {
 			}
 			compareGolden(t, "codex32-"+name, p)
 		})
+	}
+}
+
+func TestTextGrid(t *testing.T) {
+	// The plate text grid contract: composition tools (the plate
+	// editor, the NFC writer CLI) rely on these dimensions.
+	tests := []struct {
+		fontMM     float32
+		cols, rows int
+	}{
+		{3.8, 34, 20},
+		{3.4, 38, 23},
+		{3.0, 44, 26},
+	}
+	for _, test := range tests {
+		if got := CharsPerLine(params, sh.Font, test.fontMM); got != test.cols {
+			t.Errorf("CharsPerLine(%.1fmm) = %d, want %d", test.fontMM, got, test.cols)
+		}
+		if got := LinesPerPlate(params, test.fontMM); got != test.rows {
+			t.Errorf("LinesPerPlate(%.1fmm) = %d, want %d", test.fontMM, got, test.rows)
+		}
 	}
 }
 

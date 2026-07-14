@@ -148,11 +148,19 @@ func interpolatePoints(pts []bezier.Point) (knots, v, a, j []bezier.Point, err e
 	)
 	derive := func(knots [4]uint, p0, p1 expr, degree int) expr {
 		t := uint(0)
+		n := 0
 		for _, k := range knots[1 : degree+1] {
-			t += k
+			if k != 0 {
+				t += k
+				n++
+			}
 		}
 		res := expr{}
 		if t != 0 {
+			// Fill zero clamp intervals with the mean non-zero interval,
+			// matching Kinematics.derive, so the LP measures the same
+			// boundary kinematics the planner does.
+			t = t * uint(degree) / uint(n)
 			res = p1.Sub(p0).Mul(float64(degree) / float64(t))
 		}
 		return res

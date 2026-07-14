@@ -5,11 +5,20 @@ import (
 	"errors"
 	"io"
 	"log"
+	"unicode/utf8"
 
 	"seedhammer.com/bip39"
 	"seedhammer.com/codex32"
+	"seedhammer.com/curves"
+	"seedhammer.com/font/sh"
 	"seedhammer.com/nonstandard"
 )
+
+// recordTyper is implemented by NFC readers that surface the type of
+// the NDEF record they deliver, such as [poller.Poller].
+type recordTyper interface {
+	RecordType() []byte
+}
 
 type scanner struct {
 	buf      []byte
@@ -25,7 +34,7 @@ var (
 
 func (s *scanner) Scan(r io.Reader) (any, error) {
 	if cap(s.buf) == 0 {
-		s.buf = make([]byte, 8*1024)
+		s.buf = make([]byte, 32*1024)
 	}
 	nn, err := r.Read(s.buf[s.n:])
 	s.n += nn
@@ -33,9 +42,13 @@ func (s *scanner) Scan(r io.Reader) (any, error) {
 	if s.overflow {
 		// Discard the rest of the content.
 		s.n = 0
+		if err != nil {
+			// The oversized record's stream has ended (io.EOF) or the
+			// poller failed; either way the next record starts clean.
+			s.overflow = false
+		}
 		return nil, errScanOverflow
 	}
-	s.overflow = false
 	switch err {
 	case io.EOF:
 	case nil:
@@ -52,6 +65,13 @@ func (s *scanner) Scan(r io.Reader) (any, error) {
 	if len(buf) == 0 {
 		return nil, nil
 	}
+	// Typed records dispatch on their NDEF record type; only untyped
+	// text goes through the content-sniffing cascade below.
+	if rt, ok := r.(recordTyper); ok {
+		if bytes.Equal(rt.RecordType(), []byte(curves.RecordType)) {
+			return curvesPayload(bytes.Clone(buf)), nil
+		}
+	}
 	const cmdPrefix = "command: "
 	if bytes.HasPrefix(buf, []byte(cmdPrefix)) {
 		cmd := debugCommand{string(buf[len(cmdPrefix):])}
@@ -67,6 +87,8 @@ func (s *scanner) Scan(r io.Reader) (any, error) {
 		return d, nil
 	} else if s, err := codex32.New(string(buf)); err == nil {
 		return s, nil
+	} else if t, ok := parsePlainText(buf); ok {
+		return t, nil
 	} else {
 		return nil, errScanUnknownFormat
 	}
@@ -74,4 +96,51 @@ func (s *scanner) Scan(r io.Reader) (any, error) {
 
 type debugCommand struct {
 	Command string
+}
+
+// plainText is a free-form text payload destined for a text plate.
+type plainText string
+
+// parsePlainText accepts payloads whose runes can all be engraved with
+// the plate font, with '\n' separating lines. Accepted text is
+// canonicalized: CRLF and CR become '\n', trailing spaces are stripped
+// from every line and trailing blank lines are dropped. Payloads
+// without at least one visible character are rejected.
+func parsePlainText(buf []byte) (plainText, bool) {
+	visible := false
+	for i := 0; i < len(buf); {
+		r, n := utf8.DecodeRune(buf[i:])
+		i += n
+		if r == '\n' || r == '\r' {
+			continue
+		}
+		if _, _, ok := sh.Font.Decode(r); !ok {
+			return "", false
+		}
+		visible = visible || r != ' '
+	}
+	if !visible {
+		return "", false
+	}
+	// The accepted charset is ASCII; canonicalize bytewise.
+	out := make([]byte, 0, len(buf))
+	for i := 0; i < len(buf); i++ {
+		c := buf[i]
+		if c == '\r' {
+			if i+1 < len(buf) && buf[i+1] == '\n' {
+				continue
+			}
+			c = '\n'
+		}
+		if c == '\n' {
+			for len(out) > 0 && out[len(out)-1] == ' ' {
+				out = out[:len(out)-1]
+			}
+		}
+		out = append(out, c)
+	}
+	for len(out) > 0 && (out[len(out)-1] == ' ' || out[len(out)-1] == '\n') {
+		out = out[:len(out)-1]
+	}
+	return plainText(out), true
 }

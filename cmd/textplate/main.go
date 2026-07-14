@@ -16,9 +16,9 @@ import (
 	"strings"
 
 	"seedhammer.com/backup"
-	"seedhammer.com/bspline"
 	"seedhammer.com/curves"
 	"seedhammer.com/engrave"
+	"seedhammer.com/font/glyph"
 	"seedhammer.com/font/sh"
 	"seedhammer.com/nfc/type4"
 )
@@ -64,6 +64,11 @@ type fontData struct {
 	RecordType string `json:"recordType"`
 	Version    int    `json:"version"`
 	PayloadCap int    `json:"payloadCap"`
+
+	// Drawing caps the device enforces, single-sourced from the curves
+	// package so the editor's gauges cannot drift from the firmware.
+	MaxStrokes int `json:"maxStrokes"`
+	MaxMinutes int `json:"maxMinutes"`
 }
 
 func main() {
@@ -89,6 +94,9 @@ func main() {
 		Version:    curves.Version,
 		// The NDEF file cap, minus record framing headroom.
 		PayloadCap: type4.NDEFFileSize - 64,
+
+		MaxStrokes: curves.MaxStrokes,
+		MaxMinutes: curves.MaxMinutes,
 	}
 	for _, size := range plateFontSizes {
 		data.Sizes = append(data.Sizes, sizeEntry{
@@ -121,41 +129,11 @@ func main() {
 // glyphPath returns a glyph's strokes as SVG path commands in font
 // units. The path is pure geometry from the font spline, without the
 // planner's travel and acceleration knots, so it doubles as the
-// glyph's curves payload fragment.
+// glyph's curves payload fragment. It comes from font/glyph, the same
+// source the engraving converter uses, so the two never diverge.
 func glyphPath(ch rune) string {
-	_, spline, ok := sh.Font.Decode(ch)
-	if !ok {
+	if _, _, ok := sh.Font.Decode(ch); !ok {
 		panic("glyph not in font")
 	}
-	ascent := sh.Font.Metrics().Ascent
-	var b strings.Builder
-	var seg bspline.Segment
-	var prev bspline.Knot
-	first := true
-	emit := func(k bspline.Knot) {
-		c, dt, line := seg.Knot(k)
-		if dt == 0 {
-			return
-		}
-		// Font knots are baseline-relative; shift to the cell top.
-		if line {
-			fmt.Fprintf(&b, "C%d %d %d %d %d %d", c.C1.X, c.C1.Y+ascent, c.C2.X, c.C2.Y+ascent, c.C3.X, c.C3.Y+ascent)
-		} else {
-			fmt.Fprintf(&b, "M%d %d", c.C3.X, c.C3.Y+ascent)
-		}
-	}
-	for {
-		vk, ok := spline.Next()
-		if !ok {
-			break
-		}
-		k := bspline.Knot{Ctrl: vk.Ctrl, T: 1, Engrave: vk.Line}
-		if !first && k.Ctrl == prev.Ctrl {
-			k.T = 0
-		}
-		first = false
-		prev = k
-		emit(k)
-	}
-	return b.String()
+	return glyph.Path(ch)
 }

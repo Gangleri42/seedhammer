@@ -23,11 +23,13 @@ var errCurvesText = errors.New("The text cannot be engraved.")
 // Limits on curves payloads. The knot caps bound the planner's
 // per-stroke buffering and the time limit bounds unattended machine
 // time; none of them are reachable by drawings of sane complexity.
+// The curves package is the single source of these caps; see
+// curves.MaxStrokes and friends.
 const (
-	curvesMaxStrokes     = 512
-	curvesMaxKnots       = 16384
-	curvesMaxStrokeKnots = 2048
-	curvesMaxMinutes     = 45
+	curvesMaxStrokes     = curves.MaxStrokes
+	curvesMaxKnots       = curves.MaxKnots
+	curvesMaxStrokeKnots = curves.MaxStrokeKnots
+	curvesMaxMinutes     = curves.MaxMinutes
 )
 
 // curvesFlow dispatches a seedhammer.com:curves record on its mode:

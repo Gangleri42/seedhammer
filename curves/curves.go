@@ -38,6 +38,24 @@ const RecordType = "seedhammer.com:curves"
 // Version is the payload format version this package implements.
 const Version = 1
 
+// Engraving caps a curves drawing must satisfy to be engraved. The
+// knot caps bound the planner's per-stroke buffering, the time cap
+// bounds unattended machine time, and the plate geometry keeps the
+// head on the plate. They are the single source of these limits,
+// shared by the firmware (gui) and the host converter (cmd/svgplate);
+// none are reachable by drawings of sane complexity.
+const (
+	MaxStrokes     = 512
+	MaxKnots       = 16384
+	MaxStrokeKnots = 2048
+	MaxMinutes     = 45
+	// PlateMM is the square plate side and SafetyMarginMM its
+	// engravable keepout, both in millimeters. A gui test asserts
+	// these match the firmware's own plate geometry.
+	PlateMM        = 85
+	SafetyMarginMM = 3
+)
+
 // The two payload modes a curves record can carry, named in the
 // second header field. Text is a plate of engravable text the
 // firmware lays out and renders from its own font; path is SVG path
@@ -366,4 +384,61 @@ func abs(v int) int {
 		return -v
 	}
 	return v
+}
+
+// Report summarizes a drawing's cost against the engraving caps. All
+// dimensions are in machine units; Seconds is the planned engraving
+// time rounded up.
+type Report struct {
+	Bytes          int
+	Strokes        int
+	Knots          int
+	MaxStrokeKnots int
+	Bounds         bspline.Bounds
+	DurationTicks  uint
+	Seconds        int
+}
+
+// Validate reports the first engraving cap a drawing violates, or nil
+// if it fits. It is the shared gate for the firmware and the host
+// converter, so both reject the same payloads for the same reasons.
+// The returned Report is filled whether or not the drawing fits, so a
+// caller can show every gauge next to its cap. Duration comes from the
+// same PlanEngraving the firmware's toPlate uses; Bounds is the
+// drawing's own knot hull, the field the firmware checks against the
+// plate, so it includes travel moves the planned spline may drop.
+func (d *Drawing) Validate(params engrave.Params) (Report, error) {
+	spline := engrave.PlanEngraving(params.StepperConfig, d.Engraving())
+	attrs := bspline.Measure(spline)
+	secs := 0
+	if tps := params.TicksPerSecond; tps > 0 {
+		secs = int((attrs.Duration + tps - 1) / tps)
+	}
+	r := Report{
+		Bytes:          len(d.path),
+		Strokes:        d.Strokes,
+		Knots:          d.Knots,
+		MaxStrokeKnots: d.MaxStrokeKnots,
+		Bounds:         d.Bounds,
+		DurationTicks:  attrs.Duration,
+		Seconds:        secs,
+	}
+	switch {
+	case d.Strokes > MaxStrokes:
+		return r, fmt.Errorf("curves: %d strokes exceeds the %d supported", d.Strokes, MaxStrokes)
+	case d.Knots > MaxKnots:
+		return r, fmt.Errorf("curves: %d knots exceeds the %d supported", d.Knots, MaxKnots)
+	case d.MaxStrokeKnots > MaxStrokeKnots:
+		return r, fmt.Errorf("curves: a stroke of %d knots exceeds the %d supported", d.MaxStrokeKnots, MaxStrokeKnots)
+	}
+	mm := params.Millimeter
+	margin := bezier.Pt(SafetyMarginMM*mm, SafetyMarginMM*mm)
+	plate := bezier.Pt(PlateMM*mm, PlateMM*mm)
+	if !r.Bounds.In(bspline.Bounds{Min: margin, Max: plate.Sub(margin)}) {
+		return r, fmt.Errorf("curves: the drawing runs outside the %dmm plate's %dmm margin", PlateMM, SafetyMarginMM)
+	}
+	if r.Seconds > MaxMinutes*60 {
+		return r, fmt.Errorf("curves: the engraving would run %d:%02d, over the %d minute cap", r.Seconds/60, r.Seconds%60, MaxMinutes)
+	}
+	return r, nil
 }

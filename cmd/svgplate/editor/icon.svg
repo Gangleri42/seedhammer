@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3a3d44"/>
+      <stop offset="0.5" stop-color="#26282d"/>
+      <stop offset="1" stop-color="#191b1f"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f2c879"/>
+      <stop offset="1" stop-color="#d9a441"/>
+    </linearGradient>
+  </defs>
+  <rect x="40" y="40" width="432" height="432" rx="96" fill="url(#plate)" stroke="#4a4d55" stroke-width="4"/>
+  <!-- mounting holes -->
+  <g fill="#141519">
+    <circle cx="104" cy="104" r="15"/>
+    <circle cx="408" cy="104" r="15"/>
+    <circle cx="104" cy="408" r="15"/>
+    <circle cx="408" cy="408" r="15"/>
+  </g>
+  <!-- engraved hammer: head + handle, single-stroke like the plate font -->
+  <g fill="none" stroke="url(#mark)" stroke-width="30" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M188 168 L324 304"/>
+    <path d="M300 148 a56 56 0 0 1 64 64 l-52 52 -64 -64 z"/>
+    <path d="M300 330 L214 416"/>
+  </g>
+</svg>

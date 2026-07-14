@@ -149,7 +149,7 @@ func engraveSeedString(params engrave.Params, plate SeedString, qrc *engrave.Con
 		if plate.MasterFingerprint != 0 {
 			mfp := fmt.Sprintf("%.8X", plate.MasterFingerprint)
 			offy := (plateDims.Y-col1Height)/2 - metaMargin
-			mfpStr := engrave.String(plate.Font, params.F(plateSmallFontSize), mfp)
+			mfpStr := engrave.String(plate.Font, params.F(plateSmallFontSize), mfp).SourceOrder()
 			mfpszX, mfpszY := mfpStr.Measure()
 			t.Offset((plateDims.X-mfpszX)/2, offy-mfpszY)
 			mfpStr.Engrave(t.Yield)
@@ -180,7 +180,7 @@ func engraveSeedString(params engrave.Params, plate SeedString, qrc *engrave.Con
 		title := strings.ToUpper(plate.Title)
 		{
 			offy := (plateDims.Y+col1Height)/2 + metaMargin
-			title := engrave.String(plate.Font, params.F(plateSmallFontSize), title)
+			title := engrave.String(plate.Font, params.F(plateSmallFontSize), title).SourceOrder()
 			titleWidth, _ := title.Measure()
 			t.Offset((plateDims.X-titleWidth)/2, offy)
 			title.Engrave(t.Yield)
@@ -211,7 +211,7 @@ func frontSideSeed(params engrave.Params, plate Seed, qrc *engrave.ConstantQRCmd
 		if plate.MasterFingerprint != 0 {
 			mfp := fmt.Sprintf("%.8X", plate.MasterFingerprint)
 			offy := (plateDims.Y-col1Height)/2 - metaMargin
-			mfpStr := engrave.String(plate.Font, params.F(plateSmallFontSize), mfp)
+			mfpStr := engrave.String(plate.Font, params.F(plateSmallFontSize), mfp).SourceOrder()
 			mfpszX, mfpszY := mfpStr.Measure()
 			t.Offset((plateDims.X-mfpszX)/2, offy-mfpszY)
 			mfpStr.Engrave(t.Yield)
@@ -246,7 +246,7 @@ func frontSideSeed(params engrave.Params, plate Seed, qrc *engrave.ConstantQRCmd
 		title := strings.ToUpper(plate.Title)
 		{
 			offy := (plateDims.Y+col1Height)/2 + metaMargin
-			title := engrave.String(plate.Font, params.F(plateSmallFontSize), title)
+			title := engrave.String(plate.Font, params.F(plateSmallFontSize), title).SourceOrder()
 			titleWidth, _ := title.Measure()
 			t.Offset((plateDims.X-titleWidth)/2, offy)
 			title.Engrave(t.Yield)
@@ -257,7 +257,7 @@ func frontSideSeed(params engrave.Params, plate Seed, qrc *engrave.ConstantQRCmd
 func wordColumn(t engrave.Transform, constant *engrave.ConstantStringer, font *vector.Face, fontSize int, mnemonic []string, shortest, longest, start, end int) {
 	y := 0
 	for i := start; i < end; i++ {
-		num := engrave.String(font, fontSize, fmt.Sprintf("%2d ", i+1))
+		num := engrave.String(font, fontSize, fmt.Sprintf("%2d ", i+1)).SourceOrder()
 		width, _ := num.Measure()
 		w := mnemonic[i]
 		word := strings.ToUpper(w)

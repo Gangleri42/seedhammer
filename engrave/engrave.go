@@ -1821,9 +1821,19 @@ type StringCmd struct {
 	em   int
 	txt  string
 	// Reused glyph decode buffers for the flying re-emission.
-	raw   []glyphKnot
-	nodes []glyphNode
-	fly   []bool
+	raw       []glyphKnot
+	nodes     []glyphNode
+	fly       []bool
+	spans     []glyphSpan
+	scratch   []glyphKnot
+	keepOrder bool
+}
+
+// SourceOrder disables stroke reordering and flying transitions for
+// this text: seed plates keep their baked emission untouched.
+func (s *StringCmd) SourceOrder() *StringCmd {
+	s.keepOrder = true
+	return s
 }
 
 func (s *StringCmd) Engrave(yield func(Command) bool) bool {
@@ -1872,6 +1882,14 @@ type glyphNode struct {
 	p      bezier.Point
 	i0, n  int
 	anchor bool
+}
+
+// glyphSpan is one stroke of a glyph: a raw knot range with its
+// engraving endpoints, possibly reversed by the ordering pass.
+type glyphSpan struct {
+	i0, i1   int
+	from, to bezier.Point
+	rev      bool
 }
 
 // Flying-transition envelope, in machine units of the SH2 (6400
@@ -1933,8 +1951,13 @@ func (s *StringCmd) engraveGlyph(yield func(Command) bool, pos bezier.Point, hei
 		}
 		return true
 	}
-	if periodic || !FlyingTransitions {
-		// Periodic contours pace cyclically; leave them untouched.
+	if periodic || s.keepOrder {
+		// Periodic contours pace cyclically, and source-ordered text
+		// (seed plates) keeps the baked emission; leave them alone.
+		return replay(0, len(s.raw))
+	}
+	s.orderStrokes()
+	if !FlyingTransitions {
 		return replay(0, len(s.raw))
 	}
 	// Collapse coincident knots into nodes.
@@ -2086,6 +2109,95 @@ func (s *StringCmd) engraveGlyph(yield func(Command) bool, pos bezier.Point, hei
 		last = n.p
 	}
 	return true
+}
+
+// orderStrokes reorders and orients a glyph's strokes in place to
+// shorten its travels: a greedy chain from the baked entry stroke,
+// picking the unvisited stroke whose nearer endpoint is closest and
+// engraving it backwards when its far end is the nearer one. The
+// baked order is kept unless the chain strictly shortens the total
+// travel, and the first stroke stays fixed and forward so the glyph's
+// entry point (and the travel from the previous glyph) is unchanged.
+//
+// A reversed stroke emits its knots backwards with each flag taken
+// from its forward successor: a knot's flag describes the span
+// arriving at it, and the arriving span of the reversal is the
+// departing span of the original. The rule also mirrors the boundary
+// anchors' baked roles ([M,M,L] entry for [L,L,M] exit and back).
+func (s *StringCmd) orderStrokes() {
+	if len(s.raw) == 0 {
+		return
+	}
+	// Stroke spans: raw index ranges split where a move run leaves
+	// one coincident anchor for another.
+	s.spans = s.spans[:0]
+	start := 0
+	for i := 1; i < len(s.raw); i++ {
+		// A travel boundary: previous knot is a move away from its
+		// coincident group and this knot starts a new position.
+		if !s.raw[i-1].line && !s.raw[i].line && s.raw[i-1].p != s.raw[i].p {
+			s.spans = append(s.spans, glyphSpan{start, i - 1, s.raw[start].p, s.raw[i-1].p, false})
+			start = i
+		}
+	}
+	s.spans = append(s.spans, glyphSpan{start, len(s.raw) - 1, s.raw[start].p, s.raw[len(s.raw)-1].p, false})
+	n := len(s.spans)
+	if n < 2 {
+		return
+	}
+	strokes, order := s.spans[:n], s.spans[n:]
+	baked := 0
+	for i := 1; i < n; i++ {
+		baked += ManhattanDist(strokes[i-1].to, strokes[i].from)
+	}
+	order = append(order, strokes[0])
+	strokes[0].rev = true // marks visited below
+	for i := 1; i < n; i++ {
+		strokes[i].rev = false
+	}
+	cur := strokes[0].to
+	total := 0
+	for range n - 1 {
+		bi, brev, bd := -1, false, 0
+		for i := 1; i < n; i++ {
+			if strokes[i].rev {
+				continue
+			}
+			if d := ManhattanDist(cur, strokes[i].from); bi < 0 || d < bd {
+				bi, brev, bd = i, false, d
+			}
+			if d := ManhattanDist(cur, strokes[i].to); d < bd {
+				bi, brev, bd = i, true, d
+			}
+		}
+		st := strokes[bi]
+		strokes[bi].rev = true
+		st.rev = brev
+		if brev {
+			st.from, st.to = st.to, st.from
+		}
+		order = append(order, st)
+		cur = st.to
+		total += bd
+	}
+	if total >= baked {
+		return
+	}
+	s.scratch = s.scratch[:0]
+	for _, st := range order {
+		if !st.rev {
+			s.scratch = append(s.scratch, s.raw[st.i0:st.i1+1]...)
+			continue
+		}
+		for i := st.i1; i >= st.i0; i-- {
+			line := false
+			if i+1 <= st.i1 {
+				line = s.raw[i+1].line
+			}
+			s.scratch = append(s.scratch, glyphKnot{s.raw[i].p, line})
+		}
+	}
+	s.raw = append(s.raw[:0], s.scratch...)
 }
 
 // chordRef is the glyph's reference chord: the average polyline span,

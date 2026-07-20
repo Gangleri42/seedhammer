@@ -1,0 +1,117 @@
+# Publish the two static web editors that live on this branch to
+# GitHub Pages: SeedHammer Studio (cmd/svgplate/editor) under /studio/
+# and the plain-text plate composer (cmd/textplate) under /textplate/.
+# Both are self-contained static apps — their glyphs.js is committed and
+# byte-identity to the firmware-generated source is guarded by
+# TestEditorGlyphsInSync — so this job only copies files. No Go, WASM or
+# other toolchain build. The /studio/ and /textplate/ paths match the
+# URLs the nfc-bridge allow-list and existing bookmarks already use.
+name: "Pages: Studio + text composer"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cmd/svgplate/editor/**'
+      - 'cmd/textplate/index.html'
+      - 'cmd/textplate/glyphs.js'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Serialise Pages deploys but never cancel an in-flight one — losing the
+# upload between artifact assembly and deploy is worse than queue time.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assemble Pages tree
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          SHORT="${SHA:0:7}"
+
+          mkdir -p dist/studio dist/textplate
+
+          # SeedHammer Studio: the whole self-contained editor tree
+          # (index.html, glyphs.js, sw.js, manifest, icons) drops in as-is.
+          cp -R cmd/svgplate/editor/. dist/studio/
+
+          # Plain-text composer: two static files.
+          cp cmd/textplate/index.html cmd/textplate/glyphs.js dist/textplate/
+
+          # Minimal landing page: two tiles, Studio and the boot-key
+          # guide (linked to the rendered doc on GitHub). System font,
+          # both themes, no external assets.
+          cat > dist/index.html <<HTML
+          <!doctype html>
+          <html lang="en">
+          <head>
+          <meta charset="utf-8">
+          <title>SeedHammer II</title>
+          <meta name="viewport" content="width=device-width,initial-scale=1">
+          <style>
+            :root { color-scheme: light dark; --ink:#1a1c20; --muted:#5c646d; --bg:#f2f3f5; --card:#fff; --line:#e0e3e7; --accent:#9a670f; }
+            @media (prefers-color-scheme: dark) {
+              :root { --ink:#e7e9ec; --muted:#99a1aa; --bg:#131518; --card:#1a1d22; --line:#282d34; --accent:#d7a24d; }
+            }
+            html,body { margin:0; }
+            body { min-height:100vh; box-sizing:border-box; padding:14vh 20px; background:var(--bg); color:var(--ink);
+                   font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+            .wrap { max-width:560px; margin:0 auto; }
+            h1 { font-size:1.5rem; letter-spacing:-.01em; margin:0 0 4px; }
+            .sub { color:var(--muted); margin:0 0 28px; font-size:.95rem; }
+            a.card { display:block; text-decoration:none; color:inherit; background:var(--card);
+                     border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:10px 0;
+                     transition:transform .12s ease; }
+            a.card:hover { transform:translateY(-1px); border-color:var(--accent); }
+            .card h2 { font-size:1.05rem; margin:0 0 3px; }
+            .card p { margin:0; color:var(--muted); font-size:.9rem; }
+            footer { margin-top:28px; color:var(--muted); font-size:.78rem; font-family:ui-monospace,Menlo,monospace; }
+            footer a { color:inherit; }
+          </style>
+          </head>
+          <body>
+          <div class="wrap">
+            <h1>SeedHammer II</h1>
+            <p class="sub">The plate editor, and how to run your own signed firmware.</p>
+            <a class="card" href="./studio/">
+              <h2>SeedHammer Studio</h2>
+              <p>Compose plates from text, rich text, and SVG graphics; preview the exact engraving and send it over NFC. Installable.</p>
+            </a>
+            <a class="card" href="https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/howto-bootkey.md">
+              <h2>Set a custom boot key</h2>
+              <p>Program a second boot-key slot with picotool and boot your own signed firmware on a locked SeedHammer II. Advanced, irreversible.</p>
+            </a>
+            <footer>Commit <a href="https://github.com/${GITHUB_REPOSITORY}/commit/${SHA}">${SHORT}</a></footer>
+          </div>
+          </body>
+          </html>
+          HTML
+
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

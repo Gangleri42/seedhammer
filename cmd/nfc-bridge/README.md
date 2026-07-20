@@ -7,7 +7,7 @@ not exist. It reuses the same nfcpy write path as
 
 It serves Studio at `http://127.0.0.1:8787/`, so the local page POSTs
 same-origin with no CORS friction. The hosted site
-(`https://gangleri42.github.io/seedhammer/studio/`) can use it too:
+(`https://gangleri42.github.io/studio/`) can use it too:
 only allow-listed origins receive the CORS + Private Network Access
 headers a public HTTPS page needs to reach a loopback server.
 

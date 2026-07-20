@@ -2,6 +2,11 @@ name: "Build image"
 on:
   create:
   push:
+
+# Publishing a Release (on tag) needs write access to repo contents.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,3 +28,19 @@ jobs:
         archive: false
         name: seedhammerii-${{ env.version }}.uf2
         path: seedhammerii-${{ env.version }}.uf2
+
+    # On a pushed tag, publish the built firmware as a GitHub Release asset
+    # so it has a stable, public, login-free download URL (Actions artifacts
+    # expire and need auth). Studio's "download firmware" link points at this
+    # fork's latest release. Gated to the push event so the create+push
+    # double-trigger publishes exactly once.
+    - name: Publish firmware to a Release
+      if: ${{ github.ref_type == 'tag' && github.event_name == 'push' }}
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ github.ref_name }}
+        UF2: seedhammerii-${{ env.version }}.uf2
+      run: |
+        set -euo pipefail
+        gh release create "$TAG" --title "$TAG" --generate-notes || true
+        gh release upload "$TAG" "$UF2" --clobber

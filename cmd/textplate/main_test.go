@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,6 +14,20 @@ import (
 	"seedhammer.com/engrave"
 	"seedhammer.com/font/sh"
 )
+
+// TestGlyphsInSync fails if the committed glyphs.js has drifted from the
+// generator. write-nfc.py reads this file at runtime for its charset and
+// glyph geometry, so a stale copy would engrave the wrong shapes.
+func TestGlyphsInSync(t *testing.T) {
+	committed, err := os.ReadFile("glyphs.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := render(); !bytes.Equal(got, committed) {
+		t.Errorf("glyphs.js (%d bytes) is stale vs a fresh render (%d bytes); regenerate with go run seedhammer.com/cmd/textplate cmd/textplate/glyphs.js",
+			len(committed), len(got))
+	}
+}
 
 // TestCurvesRoundTrip compiles a composition to a curves payload the
 // way the editor does and validates it as the firmware would.

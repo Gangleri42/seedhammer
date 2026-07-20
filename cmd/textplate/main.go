@@ -1,8 +1,11 @@
-// Command textplate generates the glyph geometry and plate grid data
-// for the text plate editor (index.html) and the NFC writer CLI
-// (write-nfc.py). The output is derived from the same packages the
-// firmware engraves with, so composition tools match the engraved
-// plate exactly.
+// Command textplate generates glyphs.js: the glyph geometry, charset,
+// and plate grid data, derived from the same packages the firmware
+// engraves with, so composition tools match the engraved plate exactly.
+//
+// Two tools read the output. The USB writer CLI (write-nfc.py) reads the
+// glyphs.js next to it in this directory. SeedHammer Studio lives in its
+// own repo (Gangleri42/studio), commits its own glyphs.js, and its CI
+// regenerates from this command to guard that copy against drift.
 //
 // Usage:
 //
@@ -76,6 +79,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: textplate <output.js>")
 		os.Exit(1)
 	}
+	if err := os.WriteFile(os.Args[1], render(), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// render builds the glyphs.js content from the firmware font and curves
+// packages. It is deterministic and reads no files, so TestGlyphsInSync
+// can compare its output against the committed glyphs.js.
+func render() []byte {
 	m := sh.Font.Metrics()
 	adv, _, ok := sh.Font.Decode('W')
 	if !ok {
@@ -120,10 +133,7 @@ func main() {
 	fmt.Fprintf(&b, "//\n// Glyph paths are in font units with the baseline at y=%d. The\n", m.Ascent)
 	fmt.Fprintf(&b, "// value is strict JSON so non-JS tools can parse it too.\n")
 	fmt.Fprintf(&b, "const SH = %s;\n", enc)
-	if err := os.WriteFile(os.Args[1], []byte(b.String()), 0o644); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	return []byte(b.String())
 }
 
 // glyphPath returns a glyph's strokes as SVG path commands in font

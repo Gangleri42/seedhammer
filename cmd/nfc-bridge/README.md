@@ -5,11 +5,11 @@ to a USB NFC reader on the desktop, where Web NFC (`NDEFReader`) does
 not exist. It reuses the same nfcpy write path as
 `cmd/textplate/write-nfc.py`.
 
-It serves Studio at `http://127.0.0.1:8787/`, so the local page POSTs
-same-origin with no CORS friction. The hosted site
-(`https://gangleri42.github.io/studio/`) can use it too:
-only allow-listed origins receive the CORS + Private Network Access
-headers a public HTTPS page needs to reach a loopback server.
+Studio is hosted at `https://gangleri42.github.io/studio/`; its Send
+button calls this daemon cross-origin. Only allow-listed origins receive
+the CORS + Private Network Access headers a public HTTPS page needs to
+reach a loopback server. A plain GET to `http://127.0.0.1:8787/`
+redirects to the hosted app.
 
 ## Endpoints
 

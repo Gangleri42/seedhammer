@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """seedhammer-nfc-bridge: a localhost daemon that writes SeedHammer
-curves/text payloads to a USB NFC reader on behalf of the web editor,
+curves/text payloads to a USB NFC reader on behalf of SeedHammer Studio,
 so the Studio "Send" button works on desktop, where Web NFC does not
 exist.
 
-It also serves Studio itself, so the local page POSTs same-origin with
-no CORS or Private Network Access friction. The hosted site may use it
-cross-origin: only allow-listed origins get the CORS + PNA headers.
+Studio is hosted at https://gangleri42.github.io/studio/ and reaches this
+daemon cross-origin: only allow-listed origins get the CORS + Private
+Network Access headers a public HTTPS page needs to call a loopback
+server. A plain GET to the bridge root redirects there.
 
 Security posture (this drives a hardware wallet tool):
   - binds 127.0.0.1 only, so no other host can reach it;
@@ -16,7 +17,7 @@ Security posture (this drives a hardware wallet tool):
     most make the SeedHammer ask "engrave this?".
 
 Run:  /home/wodan/.nfc-venv/bin/python3 bridge.py
-Env:  SH_BRIDGE_PORT (default 8787), SH_BRIDGE_EDITOR (Studio dir).
+Env:  SH_BRIDGE_PORT (default 8787), SH_BRIDGE_ORIGINS (allow-list).
 """
 
 import datetime
@@ -30,9 +31,7 @@ import ndef
 import nfc
 
 PORT = int(os.environ.get("SH_BRIDGE_PORT", "8787"))
-EDITOR_DIR = os.environ.get(
-    "SH_BRIDGE_EDITOR", "/home/wodan/seedhammer/cmd/svgplate/editor"
-)
+STUDIO_URL = "https://gangleri42.github.io/studio/"
 LOG_PATH = os.path.expanduser("~/bench/nfc-bridge.log")
 RECORD_TYPE = "urn:nfc:ext:seedhammer.com:curves"
 TAP_TIMEOUT_S = 30
@@ -112,10 +111,7 @@ def write_payload(payload: bytes, timeout=TAP_TIMEOUT_S) -> dict:
     return result
 
 
-class Handler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self, *a, **k):
-        super().__init__(*a, directory=EDITOR_DIR, **k)
-
+class Handler(http.server.BaseHTTPRequestHandler):
     # --- CORS + Private Network Access ---
     def _cors(self):
         origin = self.headers.get("Origin", "")
@@ -154,9 +150,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self._host_ok():
             return self._deny()
-        if self.path.split("?")[0].rstrip("/") == "/bridge/health":
+        path = self.path.split("?")[0].rstrip("/")
+        if path == "/bridge/health":
             return self._json(200, {"ok": True, "name": "seedhammer-nfc-bridge", "version": 1})
-        return super().do_GET()
+        if path == "":
+            # The bridge no longer serves Studio; send a browser on to the
+            # hosted app, which then calls back here cross-origin.
+            self.send_response(302)
+            self.send_header("Location", STUDIO_URL)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        return self._json(404, {"error": "not found"})
 
     def do_POST(self):
         if not self._host_ok():
@@ -199,7 +204,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 def main():
     server = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    log(f"bridge up on 127.0.0.1:{PORT}, serving {EDITOR_DIR}")
+    log(f"bridge up on 127.0.0.1:{PORT}")
     print(f"seedhammer-nfc-bridge on http://127.0.0.1:{PORT}", flush=True)
     server.serve_forever()
 

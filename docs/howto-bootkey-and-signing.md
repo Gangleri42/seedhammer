@@ -1,4 +1,4 @@
-# Set a custom boot key on your SeedHammer II
+# Set a custom boot key and sign your own firmware on the SeedHammer II
 
 You own a SeedHammer II locked with the manufacturer's signing key, and you want to play with your own firmware on it. You can. The RP2350 chip has four boot-key slots; SeedHammer fills one. Three are open. With your own secp256k1 key, `picotool`, and the repo's `picosign` tool, you program a second slot and boot whatever you've signed.
 

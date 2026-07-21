@@ -59,11 +59,11 @@ jobs:
         UF2: seedhammerii-${{ env.version }}.uf2
       run: |
         set -euo pipefail
-        cp "$UF2" seedhammerii-latest.uf2
-        NOTES="Unsigned firmware, built automatically from the tip of \`main\` (${GITHUB_SHA:0:12}). Flash with the custom boot-key flow — see the Boot-key guide. Rolling build, rebuilt on every push to main; not a tagged release."
+        cp "$UF2" seedhammerii-latest-unsigned.uf2
+        NOTES="Unsigned firmware, built automatically from the tip of \`main\` (${GITHUB_SHA:0:12}). It is UNSIGNED: flash it via the custom boot-key + signing flow — see docs/howto-bootkey-and-signing.md. Rolling build, rebuilt on every push to main; not a tagged release."
         if gh release view edge >/dev/null 2>&1; then
           gh release edit edge --prerelease --title "Latest firmware (unsigned, fork tip)" --notes "$NOTES"
         else
           gh release create edge --prerelease --title "Latest firmware (unsigned, fork tip)" --notes "$NOTES"
         fi
-        gh release upload edge seedhammerii-latest.uf2 --clobber
+        gh release upload edge seedhammerii-latest-unsigned.uf2 --clobber

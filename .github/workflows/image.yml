@@ -2,6 +2,7 @@ name: "Build image"
 on:
   create:
   push:
+  workflow_dispatch:
 
 # Publishing a Release (on tag) needs write access to repo contents.
 permissions:
@@ -44,3 +45,25 @@ jobs:
         set -euo pipefail
         gh release create "$TAG" --title "$TAG" --generate-notes || true
         gh release upload "$TAG" "$UF2" --clobber
+
+    # On every push to main, publish the just-built UNSIGNED firmware to a
+    # rolling "edge" prerelease under a STABLE asset name (seedhammerii-latest.uf2),
+    # so Studio's "Download firmware" button always serves the latest build from
+    # the fork tip via a stable, login-free URL:
+    #   .../releases/download/edge/seedhammerii-latest.uf2
+    # Marked prerelease so it never shadows a future versioned tag release.
+    - name: Publish the tip build to the rolling 'edge' release
+      if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+      env:
+        GH_TOKEN: ${{ github.token }}
+        UF2: seedhammerii-${{ env.version }}.uf2
+      run: |
+        set -euo pipefail
+        cp "$UF2" seedhammerii-latest.uf2
+        NOTES="Unsigned firmware, built automatically from the tip of \`main\` (${GITHUB_SHA:0:12}). Flash with the custom boot-key flow — see the Boot-key guide. Rolling build, rebuilt on every push to main; not a tagged release."
+        if gh release view edge >/dev/null 2>&1; then
+          gh release edit edge --prerelease --title "Latest firmware (unsigned, fork tip)" --notes "$NOTES"
+        else
+          gh release create edge --prerelease --title "Latest firmware (unsigned, fork tip)" --notes "$NOTES"
+        fi
+        gh release upload edge seedhammerii-latest.uf2 --clobber

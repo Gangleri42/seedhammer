@@ -2369,7 +2369,20 @@ func (s *TextScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {
 	)
 }
 
+// plateRecorder is an optional Platform capability: a platform that wants a
+// vector artifact of an engraving implements it and NewEngraveScreen hands it
+// the planned plate. The emulator uses it to render an SVG that resembles the
+// steel; the real controller does not implement it, so this is a no-op there.
+// Same optional-interface shape as recordTyper in scan.go — nothing is added
+// to the Platform interface, so no implementer needs to change.
+type plateRecorder interface {
+	RecordPlate(Plate)
+}
+
 func NewEngraveScreen(ctx *Context, plate Plate) *EngraveScreen {
+	if r, ok := ctx.Platform.(plateRecorder); ok {
+		r.RecordPlate(plate)
+	}
 	return &EngraveScreen{
 		duration: plate.Duration,
 		job:      newEngraverJob(ctx.Platform, plate.Spline, 0),

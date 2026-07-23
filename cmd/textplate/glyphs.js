@@ -11,6 +11,21 @@ const SH = {
 	"strokeMM": 0.3,
 	"sizes": [
 		{
+			"mm": 6,
+			"cols": 22,
+			"rows": 13
+		},
+		{
+			"mm": 5,
+			"cols": 26,
+			"rows": 15
+		},
+		{
+			"mm": 4.4,
+			"cols": 30,
+			"rows": 17
+		},
+		{
 			"mm": 3.8,
 			"cols": 34,
 			"rows": 20

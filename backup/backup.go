@@ -50,6 +50,14 @@ const innerMargin = 10
 // plateSize is the width and height of a plate in millimeters.
 const plateSize = 85
 
+// FontSizes is the descending ladder of plate text sizes in
+// millimeters, tried largest-first until an engraving fits its plate.
+// The device auto-fit (gui) and the editor grid data (cmd/textplate,
+// which bakes it into glyphs.js) both read this one slice, so the
+// firmware and the composition tools can never disagree on which sizes
+// exist. Keep it sorted descending: the fit loops take the first match.
+var FontSizes = []float32{6.0, 5.0, 4.4, 3.8, 3.4, 3.0}
+
 // CharsPerLine returns the number of fixed-width characters that fit
 // on one plate line at the given text size in millimeters.
 func CharsPerLine(params engrave.Params, fnt *vector.Face, fontMM float32) int {

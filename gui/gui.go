@@ -381,10 +381,6 @@ var progressImageGen = op.RegisterParameterizedImage(func() op.ParameterizedImag
 	}
 })
 
-// plateFontSizes is the descending ladder of text sizes in millimeters
-// tried until an engraving fits its plate.
-var plateFontSizes = []float32{3.8, 3.4, 3.0}
-
 func NewErrorScreen(err error) *ErrorScreen {
 	switch {
 	case errors.Is(err, ErrTooLarge):
@@ -429,7 +425,7 @@ func validateDescriptor(params engrave.Params, desc *bip380.Descriptor) ([]strin
 	// QR modules until the engraving fits the plate. QR module size
 	// outranks text size because engraved QR codes are the hardest
 	// element to scan.
-	fontSizes := plateFontSizes
+	fontSizes := backup.FontSizes
 	qrScales := []int{3, 2}
 	var validLabels []string
 	var validEngravings []Plate
@@ -488,7 +484,7 @@ func validateText(params engrave.Params, text string) (Plate, error) {
 		maxLine = max(maxLine, n)
 	}
 	var lastErr error
-	for _, size := range plateFontSizes {
+	for _, size := range backup.FontSizes {
 		if maxLine > backup.CharsPerLine(params, sh.Font, size) ||
 			lines > backup.LinesPerPlate(params, size) {
 			lastErr = ErrTooLarge

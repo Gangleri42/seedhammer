@@ -9,7 +9,7 @@ import (
 )
 
 // Rich-text layout constants, in millimeters or multiples of the body
-// size. The subset is deliberately small: three header levels, italic
+// size. The subset is deliberately small: five header levels, italic
 // via an oblique shear, and GFM pipe tables.
 const (
 	textMarginMM = 5.0  // top-left origin of the text block.
@@ -19,7 +19,15 @@ const (
 	rowPadMM     = 0.6  // table cell vertical padding.
 )
 
-var headerScale = map[int]float64{1: 2.0, 2: 1.5, 3: 1.25}
+// headerScale maps a header level to its size as a multiple of the
+// body size. Each level halves the previous level's excess over 1.0
+// (1.0, 0.5, 0.25, 0.125, 0.0625), so every level stays visibly larger
+// than body text and the steps taper smoothly. A level absent from
+// this map would render at size 0 (invisible), so keep it in sync with
+// the header() loop bound below.
+const maxHeaderLevel = 5
+
+var headerScale = map[int]float64{1: 2.0, 2: 1.5, 3: 1.25, 4: 1.125, 5: 1.0625}
 
 // renderMarkdown lays out a markdown subset as plate geometry in
 // millimeters. bodyMM is the body-text cell height; headers scale off
@@ -236,9 +244,9 @@ func (r *textRenderer) vline(y0, y1, x float64) {
 	)
 }
 
-// header reports a line's header level (1-3) and its text, or 0.
+// header reports a line's header level (1-5) and its text, or 0.
 func header(line string) (int, string) {
-	for lvl := 3; lvl >= 1; lvl-- {
+	for lvl := maxHeaderLevel; lvl >= 1; lvl-- {
 		p := strings.Repeat("#", lvl) + " "
 		if strings.HasPrefix(line, p) {
 			return lvl, strings.TrimSpace(line[len(p):])

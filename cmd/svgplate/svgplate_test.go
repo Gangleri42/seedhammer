@@ -157,6 +157,31 @@ func TestRichTextHeaderIsLarger(t *testing.T) {
 	}
 }
 
+func TestRichTextHeaderLevels(t *testing.T) {
+	// Every supported header level renders larger than body text, and
+	// the levels shrink monotonically as the '#' prefix grows.
+	body, err := renderMarkdown("Hi", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyW := segsBounds(body).width()
+	prev := 0.0
+	for lvl := 1; lvl <= maxHeaderLevel; lvl++ {
+		segs, err := renderMarkdown(strings.Repeat("#", lvl)+" Hi", 4)
+		if err != nil {
+			t.Fatalf("level %d: %v", lvl, err)
+		}
+		w := segsBounds(segs).width()
+		if w <= bodyW {
+			t.Errorf("level %d width %.1f should exceed body %.1f", lvl, w, bodyW)
+		}
+		if prev != 0 && w >= prev {
+			t.Errorf("level %d width %.1f should be smaller than level %d width %.1f", lvl, w, lvl-1, prev)
+		}
+		prev = w
+	}
+}
+
 func TestRichTextValid(t *testing.T) {
 	const md = "# Title\n\nKeep *safe*.\n"
 	segs, err := renderMarkdown(md, 4)

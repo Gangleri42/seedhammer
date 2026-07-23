@@ -329,6 +329,9 @@ func TestTextGrid(t *testing.T) {
 		fontMM     float32
 		cols, rows int
 	}{
+		{6.0, 22, 13},
+		{5.0, 26, 15},
+		{4.4, 30, 17},
 		{3.8, 34, 20},
 		{3.4, 38, 23},
 		{3.0, 44, 26},

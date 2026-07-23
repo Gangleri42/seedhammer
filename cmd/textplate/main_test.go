@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"seedhammer.com/backup"
 	"seedhammer.com/bspline"
 	"seedhammer.com/curves"
 	"seedhammer.com/engrave"
@@ -34,7 +35,7 @@ func TestGlyphsInSync(t *testing.T) {
 func TestCurvesRoundTrip(t *testing.T) {
 	m := sh.Font.Metrics()
 	adv, _, _ := sh.Font.Decode('W')
-	for _, size := range plateFontSizes {
+	for _, size := range backup.FontSizes {
 		unitsPerMM := int(math.Round(float64(m.Height) / float64(size)))
 		strokeWidth := int(math.Round(0.3 * float64(unitsPerMM)))
 		margin := 3 * unitsPerMM

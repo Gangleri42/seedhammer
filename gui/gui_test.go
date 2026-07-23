@@ -224,7 +224,10 @@ func TestValidateText(t *testing.T) {
 		text string
 		size float32
 	}{
-		{"short text at the largest size", "IN CASE OF FIRE\n\nBREAK GLASS", 3.8},
+		{"short text at the largest size", "IN CASE OF FIRE\n\nBREAK GLASS", 6.0},
+		{"full 6.0mm grid", grid(22, 13), 6.0},
+		{"full 5.0mm grid", grid(26, 15), 5.0},
+		{"full 4.4mm grid", grid(30, 17), 4.4},
 		{"full 3.8mm grid", grid(34, 20), 3.8},
 		{"wide lines fall back", grid(38, 23), 3.4},
 		{"tall compositions fall back", grid(1, 26), 3.0},

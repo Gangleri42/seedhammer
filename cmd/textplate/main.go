@@ -43,9 +43,6 @@ var params = engrave.Params{
 	StepperConfig: conf,
 }
 
-// plateFontSizes mirrors the gui ladder.
-var plateFontSizes = []float32{3.8, 3.4, 3.0}
-
 type sizeEntry struct {
 	MM   float32 `json:"mm"`
 	Cols int     `json:"cols"`
@@ -111,7 +108,7 @@ func render() []byte {
 		MaxStrokes: curves.MaxStrokes,
 		MaxMinutes: curves.MaxMinutes,
 	}
-	for _, size := range plateFontSizes {
+	for _, size := range backup.FontSizes {
 		data.Sizes = append(data.Sizes, sizeEntry{
 			MM:   size,
 			Cols: backup.CharsPerLine(params, sh.Font, size),

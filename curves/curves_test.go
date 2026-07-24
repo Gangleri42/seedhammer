@@ -36,7 +36,7 @@ func TestParseErrors(t *testing.T) {
 	}{
 		{"no header", "M 0 0 L 1 1"},
 		{"short header", "1 path 400\nM 0 0 L 800 800"},
-		{"unsupported version", "2 path 400 120\nM 0 0 L 800 800"},
+		{"unsupported version", "3 path 400 120\nM 0 0 L 800 800"},
 		{"zero units", "1 path 0 120\nM 0 0 L 800 800"},
 		{"negative units", "1 path -400 120\nM 0 0 L 800 800"},
 		{"stroke too narrow", "1 path 400 60\nM 0 0 L 800 800"},
@@ -289,7 +289,8 @@ func TestMode(t *testing.T) {
 		{"1 text", ModeText, false},
 		{"", "", true},
 		{"1", "", true},
-		{"2 text\nHELLO", "", true},
+		{"2 text\nHELLO", ModeText, false},
+		{"3 text\nHELLO", "", true},
 		{"1 draw\nx", "", true},
 	}
 	for _, test := range tests {

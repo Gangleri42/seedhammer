@@ -133,7 +133,7 @@ func TestSVGRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	segs := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
-	_, _, r, err := finish(segs)
+	_, _, r, err := finish(segs, true)
 	if err != nil {
 		t.Fatalf("finish: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestRichTextValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := finish(segs); err != nil {
+	if _, _, _, err := finish(segs, true); err != nil {
 		t.Fatalf("finish: %v", err)
 	}
 }
@@ -222,19 +222,32 @@ func TestRichTextUnderline(t *testing.T) {
 }
 
 func TestByteCapRejected(t *testing.T) {
-	// A dense table overruns the NDEF byte cap well before the knot
-	// caps; the converter must reject it.
-	// Wide rows overrun the byte cap (~10KB/row) while staying under
-	// the 512-stroke cap, so the byte check is what fires.
-	var b strings.Builder
-	b.WriteString("| A | B | C | D |\n| - | - | - | - |\n")
-	for i := 0; i < 8; i++ {
-		b.WriteString("| ABCDEF | GHIJKL | MNOPQR | STUVWX |\n")
+	// v2's binary encoding makes bytes cheap, so overrunning the NDEF byte
+	// cap takes a lot of geometry. Many short zigzag strokes push the
+	// payload over the cap while staying under the stroke, knot and time
+	// caps, so the byte check is the one that fires.
+	var segs []fseg
+	const strokes, cubics, step = 80, 80, 0.5
+	for s := 0; s < strokes; s++ {
+		y := 6.0 + float64(s%60)*1.2 // rows within the plate margin
+		x := 6.0
+		segs = append(segs, fseg{op: svgpath.MoveTo, p: [3]fpt{{x, y}}})
+		for i := 0; i < cubics; i++ {
+			// A straight run of short collinear cubics: knots track path
+			// length (the fitter samples by arc length), so short cubics
+			// keep knots low while every cubic is a wire record, pushing
+			// bytes over the cap first.
+			segs = append(segs, fseg{op: svgpath.CubeTo, p: [3]fpt{
+				{x + step/3, y}, {x + 2*step/3, y}, {x + step, y},
+			}})
+			x += step
+		}
 	}
-	segs, _ := renderMarkdown(b.String(), 4)
-	_, _, r, err := finish(segs)
+	_, _, r, err := finish(segs, true)
+	t.Logf("gauges: bytes=%d strokes=%d knots=%d knots/stroke=%d secs=%d",
+		r.Bytes, r.Strokes, r.Knots, r.MaxStrokeKnots, r.Seconds)
 	if err == nil || !strings.Contains(err.Error(), "NDEF cap") {
-		t.Fatalf("want NDEF cap rejection (strokes=%d), got %v", r.Strokes, err)
+		t.Fatalf("want NDEF cap rejection, got %v", err)
 	}
 }
 
@@ -304,7 +317,7 @@ func TestNonFiniteRejected(t *testing.T) {
 	}
 	// The guard itself rejects a hand-built non-finite segment.
 	bad := []fseg{{op: svgpath.MoveTo, p: [3]fpt{{math.Inf(1), 0}}}}
-	if _, _, _, err := finish(bad); err == nil {
+	if _, _, _, err := finish(bad, true); err == nil {
 		t.Error("finish accepted a non-finite coordinate")
 	}
 }
@@ -321,7 +334,7 @@ func TestRealLogos(t *testing.T) {
 			continue
 		}
 		segs := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
-		if _, _, _, err := finish(segs); err != nil {
+		if _, _, _, err := finish(segs, true); err != nil {
 			t.Errorf("%s: finish: %v", f, err)
 		}
 	}

@@ -20,6 +20,8 @@ Run:  /home/wodan/.nfc-venv/bin/python3 bridge.py
 Env:  SH_BRIDGE_PORT (default 8787), SH_BRIDGE_ORIGINS (allow-list).
 """
 
+import base64
+import binascii
 import datetime
 import http.server
 import json
@@ -182,11 +184,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(413, {"error": "payload too large"})
         try:
             data = json.loads(self.rfile.read(n) or b"{}")
-            payload = data["payload"]
-            if not isinstance(payload, str) or not payload:
+            # payloadB64 carries a binary v2 curves payload (arbitrary bytes,
+            # which JSON cannot hold as a string); payload stays a plain string
+            # for text envelopes and v1 paths.
+            if data.get("payloadB64"):
+                payload = base64.b64decode(data["payloadB64"], validate=True)
+            else:
+                payload = data["payload"]
+                if not isinstance(payload, str) or not payload:
+                    raise ValueError("empty payload")
+                payload = payload.encode()
+            if not payload:
                 raise ValueError("empty payload")
-            payload = payload.encode()
-        except (ValueError, KeyError, json.JSONDecodeError) as e:
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError, binascii.Error) as e:
             return self._json(400, {"error": f"bad request: {e}"})
         if not _write_lock.acquire(blocking=False):
             return self._json(409, {"status": "busy"})

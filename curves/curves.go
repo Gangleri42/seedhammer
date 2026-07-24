@@ -1,15 +1,23 @@
 // Package curves implements the seedhammer.com:curves payload:
 // free-form vector engravings received over NFC.
 //
-// A payload is ASCII text: a header line of three positive decimal
-// integers
+// Every payload opens with a one-line ASCII header, the fields
+// separated by spaces and terminated by a newline:
 //
-//	version units-per-mm stroke-width
+//	version mode units-per-mm stroke-width
 //
-// followed by SVG path data restricted to the absolute commands M,
-// L, C, Q and Z. Coordinates are in payload units, converted through
-// units-per-mm; stroke-width is the width the source device assumed,
-// in payload units, and must match the machine's needle.
+// The leading token dispatches the version and mode before any body
+// parse. Two path encodings share this header:
+//
+//   - Version 1 (path): the body is ASCII SVG path data restricted to
+//     the absolute commands M, L, C, Q and Z.
+//   - Version 2 (path): the body is a compact binary stream of the same
+//     M/L/Q/C commands with relative zigzag-varint coordinates. See
+//     Version2 and EncodePath.
+//
+// Coordinates are payload units, converted to machine units through
+// units-per-mm; stroke-width is the width the source device assumed, in
+// payload units, and must match the machine's needle.
 //
 // The source device is responsible for all layout: coordinates are
 // plate-absolute, with (0, 0) the top left corner of the plate. The
@@ -18,6 +26,7 @@
 package curves
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"math"
@@ -68,12 +77,19 @@ const (
 // Mode reports a payload's mode from its header line, which is
 // "version mode ..." for both kinds.
 func Mode(data []byte) (string, error) {
-	header, _, _ := strings.Cut(string(data), "\n")
+	// Read only the header: a v2 body is binary and may hold 0x0a bytes,
+	// so never stringify past the first newline.
+	var header string
+	if nl := bytes.IndexByte(data, '\n'); nl < 0 {
+		header = string(data)
+	} else {
+		header = string(data[:nl])
+	}
 	fields := strings.Fields(header)
 	if len(fields) < 2 {
 		return "", fmt.Errorf("curves: malformed header %q", header)
 	}
-	if v, err := strconv.Atoi(fields[0]); err != nil || v != Version {
+	if v, err := strconv.Atoi(fields[0]); err != nil || (v != Version && v != Version2) {
 		return "", fmt.Errorf("curves: unsupported version %q", fields[0])
 	}
 	switch m := fields[1]; m {
@@ -125,19 +141,29 @@ type Drawing struct {
 	// units.
 	Bounds bspline.Bounds
 
-	path  string
-	scale float64
-	prec  int
+	// Exactly one of path (v1 ASCII) and binary (v2 body) is set; run
+	// walks whichever is present. Both alias the payload, so a Drawing
+	// retains only the wire bytes, not a materialized geometry.
+	path   string
+	binary []byte
+	// wireBytes is the full payload length (header included), the figure
+	// Report.Bytes gauges against the NDEF cap for either format.
+	wireBytes int
+	scale     float64
+	prec      int
 }
 
 // Parse validates a path-mode curves payload against the engraver
 // parameters. Text-mode payloads are the caller's concern; see Mode
 // and Text.
 func Parse(data []byte, params engrave.Params) (*Drawing, error) {
-	header, path, ok := strings.Cut(string(data), "\n")
-	if !ok {
+	// The header is ASCII up to the first newline; a v2 body is binary
+	// and may hold 0x0a, so split on the byte, never stringify past it.
+	nl := bytes.IndexByte(data, '\n')
+	if nl < 0 {
 		return nil, fmt.Errorf("curves: missing header")
 	}
+	header, body := string(data[:nl]), data[nl+1:]
 	// version path units-per-mm stroke-width
 	fields := strings.Fields(header)
 	if len(fields) != 4 || fields[1] != ModePath {
@@ -152,29 +178,41 @@ func Parse(data []byte, params engrave.Params) (*Drawing, error) {
 		vals[i] = v
 	}
 	version, unitsPerMM, strokeWidth := vals[0], vals[1], vals[2]
-	if version != Version {
-		return nil, fmt.Errorf("curves: unsupported version %d", version)
-	}
 	scale := float64(params.Millimeter) / float64(unitsPerMM)
 	if w := int(math.Round(float64(strokeWidth) * scale)); 8*abs(w-params.StrokeWidth) > params.StrokeWidth {
 		return nil, fmt.Errorf("curves: stroke width %d units differs from the %d machine units engraved", w, params.StrokeWidth)
 	}
-	for i := 0; i < len(path); i++ {
-		switch c := path[i]; {
-		case c == 'M' || c == 'L' || c == 'C' || c == 'Q' || c == 'Z':
-		case '0' <= c && c <= '9' || c == '.' || c == '-':
-		case c == ' ' || c == ',' || c == '\t' || c == '\n':
-		default:
-			return nil, fmt.Errorf("curves: unsupported byte %q in path data", c)
-		}
-	}
-	if p := strings.TrimLeft(path, " ,\t\n"); p == "" || p[0] != 'M' {
-		return nil, fmt.Errorf("curves: path data must begin with M")
-	}
 	d := &Drawing{
-		path:  path,
-		scale: scale,
-		prec:  max(1, params.StrokeWidth),
+		wireBytes: len(data),
+		scale:     scale,
+		prec:      max(1, params.StrokeWidth),
+	}
+	switch version {
+	case Version:
+		path := string(body)
+		for i := 0; i < len(path); i++ {
+			switch c := path[i]; {
+			case c == 'M' || c == 'L' || c == 'C' || c == 'Q' || c == 'Z':
+			case '0' <= c && c <= '9' || c == '.' || c == '-':
+			case c == ' ' || c == ',' || c == '\t' || c == '\n':
+			default:
+				return nil, fmt.Errorf("curves: unsupported byte %q in path data", c)
+			}
+		}
+		if p := strings.TrimLeft(path, " ,\t\n"); p == "" || p[0] != 'M' {
+			return nil, fmt.Errorf("curves: path data must begin with M")
+		}
+		d.path = path
+	case Version2:
+		// The binary body streams through binaryIter; it needs only the
+		// leading-move guarantee up front, the rest is validated as run
+		// walks it (bad opcodes, truncated varints).
+		if len(body) == 0 || body[0] != 'M' {
+			return nil, fmt.Errorf("curves: path data must begin with a move")
+		}
+		d.binary = body
+	default:
+		return nil, fmt.Errorf("curves: unsupported version %d", version)
 	}
 	var (
 		first    = true
@@ -254,7 +292,12 @@ func (d *Drawing) run(yield func(engrave.Command) bool) error {
 		v = math.Round(v * d.scale)
 		return int(min(max(v, -maxCoord), maxCoord))
 	}
-	it := svgpath.NewIter(d.path, 0, 0, scale)
+	var it segIter
+	if d.binary != nil {
+		it = newBinaryIter(d.binary, scale)
+	} else {
+		it = svgpath.NewIter(d.path, 0, 0, scale)
+	}
 	var (
 		pen   bezier.Point
 		out   bezier.Point
@@ -415,7 +458,7 @@ func (d *Drawing) Validate(params engrave.Params) (Report, error) {
 		secs = int((attrs.Duration + tps - 1) / tps)
 	}
 	r := Report{
-		Bytes:          len(d.path),
+		Bytes:          d.wireBytes,
 		Strokes:        d.Strokes,
 		Knots:          d.Knots,
 		MaxStrokeKnots: d.MaxStrokeKnots,

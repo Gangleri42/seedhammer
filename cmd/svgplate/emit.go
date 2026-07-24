@@ -15,22 +15,10 @@ import (
 // NDEF file size less record framing headroom, matching cmd/textplate.
 const payloadByteCap = type4.NDEFFileSize - 64
 
-// The SH2 engraver parameters, mirroring cmd/controller/platform_sh2.go
-// (and cmd/textplate). A payload is validated against these so the
-// converter accepts exactly what the device engraves.
-const deviceMM = 200 / 8 * 256 // 6400 machine units per millimeter.
-
-var sh2 = engrave.Params{
-	StrokeWidth: int(0.3 * deviceMM),
-	Millimeter:  deviceMM,
-	StepperConfig: engrave.StepperConfig{
-		TicksPerSecond: 30 * deviceMM,
-		Speed:          30 * deviceMM,
-		EngravingSpeed: 8 * deviceMM,
-		Acceleration:   250 * deviceMM,
-		Jerk:           2600 * deviceMM,
-	},
-}
+// sh2 is the shared SeedHammer II engraver profile (engrave.SH2Params). A
+// payload is validated against it so the converter accepts exactly what the
+// device engraves.
+var sh2 = engrave.SH2Params
 
 // Payload units: 100 per millimeter, so the 0.3mm needle is 30 units.
 // A coordinate is an integer count of these; the plate is 8500 wide.

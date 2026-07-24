@@ -184,18 +184,11 @@ const (
 	originX, originY = 5.0 * mm, 3.2 * mm
 	// Maximum distance to travel before giving up homing.
 	homingDist = 200 * mm
-	// strokeWidth of engraving lines.
-	strokeWidth = 0.3 * mm
-	// Speeds in steps/second.
-	topSpeed       = 30 * mm
-	engravingSpeed = 8 * mm
-	homingSpeed    = 15 * mm
-	// acceleration in steps/s².
-	acceleration = 250 * mm
-	// jerk in steps/s³.
-	jerk    = 2600 * mm
-	invertX = true
-	invertY = false
+	// homingSpeed in steps/second. The engraver's stroke width, speeds,
+	// acceleration, and jerk are the shared engrave.SH2Params (single source).
+	homingSpeed = 15 * mm
+	invertX     = true
+	invertY     = false
 )
 
 // Debug hooks.
@@ -391,19 +384,18 @@ func (p *Platform) Wakeup() {
 	}
 }
 
+// The engraver profile is the shared single source. mm is derived from the
+// stepper hardware above and must equal the profile's scale; the compile-time
+// checks below fail the build if they ever drift, so the host tools always plan
+// against the same geometry the device engraves.
 var (
-	engraverConf = engrave.StepperConfig{
-		TicksPerSecond: topSpeed,
-		Speed:          topSpeed,
-		EngravingSpeed: engravingSpeed,
-		Acceleration:   acceleration,
-		Jerk:           jerk,
-	}
-	engraverParams = engrave.Params{
-		StrokeWidth:   strokeWidth,
-		Millimeter:    mm,
-		StepperConfig: engraverConf,
-	}
+	engraverConf   = engrave.SH2Params.StepperConfig
+	engraverParams = engrave.SH2Params
+)
+
+const (
+	_ = uint(mm - engrave.SH2Millimeter)
+	_ = uint(engrave.SH2Millimeter - mm)
 )
 
 func (p *Platform) EngraverParams() engrave.Params {

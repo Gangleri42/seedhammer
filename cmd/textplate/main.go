@@ -26,22 +26,12 @@ import (
 	"seedhammer.com/nfc/type4"
 )
 
-// The SH2 engraver parameters, as in cmd/controller/platform_sh2.go.
-const mm = 200 / 8 * 256
-
-var conf = engrave.StepperConfig{
-	TicksPerSecond: 30 * mm,
-	Speed:          30 * mm,
-	EngravingSpeed: 8 * mm,
-	Acceleration:   250 * mm,
-	Jerk:           2600 * mm,
-}
-
-var params = engrave.Params{
-	StrokeWidth:   int(0.3 * mm),
-	Millimeter:    mm,
-	StepperConfig: conf,
-}
+// The shared SeedHammer II engraver profile (engrave.SH2Params): glyphs.js and
+// the round-trip test are built against exactly what the device engraves.
+var (
+	params = engrave.SH2Params
+	conf   = engrave.SH2Params.StepperConfig
+)
 
 type sizeEntry struct {
 	MM   float32 `json:"mm"`

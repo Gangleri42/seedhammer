@@ -32,14 +32,30 @@ const (
 
 // emitPayload quantizes millimeter segments to payload units and encodes
 // them as a Version2 binary curves path payload. Segments must already be
-// laid out on the plate with (0,0) at its top-left corner.
-func emitPayload(segs []fseg) ([]byte, error) {
+// laid out on the plate with (0,0) at its top-left corner. When order is
+// set the strokes are resequenced to shorten head travel; the drawing is
+// non-secret art, so this only saves time, never leaks content.
+func emitPayload(segs []fseg, order bool) ([]byte, error) {
 	q := func(v float64) int { return int(math.Round(v * payloadUnitsPerMM)) }
 	out := make([]svgpath.Segment, len(segs))
 	for i, s := range segs {
 		out[i].Op = s.op
 		for j := 0; j < s.npts(); j++ {
 			out[i].Args[j] = bezier.Pt(q(s.p[j].X), q(s.p[j].Y))
+		}
+	}
+	if order {
+		// Ordering is quadratic in strokes. Skip it for inputs already far
+		// past the stroke cap: validation rejects them right after, and a
+		// pathological SVG must not grind for minutes first.
+		strokes := 0
+		for _, s := range out {
+			if s.Op == svgpath.MoveTo {
+				strokes++
+			}
+		}
+		if strokes <= 2*curves.MaxStrokes {
+			out = curves.Order(out)
 		}
 	}
 	return curves.EncodePath(payloadUnitsPerMM, payloadStroke, out)
@@ -49,7 +65,7 @@ func emitPayload(segs []fseg) ([]byte, error) {
 // the payload bytes, the parsed drawing (for preview) and its gauge
 // report. A parse or cap failure is returned as an error with the
 // report still filled where possible.
-func finish(segs []fseg) (payload []byte, d *curves.Drawing, r curves.Report, err error) {
+func finish(segs []fseg, order bool) (payload []byte, d *curves.Drawing, r curves.Report, err error) {
 	// Guard the payload choke point: a non-finite coordinate (from a
 	// malformed source, a degenerate transform, or an arc edge case)
 	// would quantize to garbage and desync curves.Parse.
@@ -60,7 +76,7 @@ func finish(segs []fseg) (payload []byte, d *curves.Drawing, r curves.Report, er
 			}
 		}
 	}
-	payload, err = emitPayload(segs)
+	payload, err = emitPayload(segs, order)
 	if err != nil {
 		return payload, nil, curves.Report{Bytes: len(payload)}, err
 	}

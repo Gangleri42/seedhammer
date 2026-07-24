@@ -34,6 +34,7 @@ func main() {
 		pos     = flag.String("pos", "center", "placement: center, or x,y mm of the top-left")
 		body    = flag.Float64("size", 4, "body text height in mm (rich text)")
 		side    = flag.Int("previewpx", 1024, "preview size in pixels")
+		noorder = flag.Bool("noorder", false, "skip travel-optimizing stroke ordering")
 	)
 	flag.Parse()
 	if flag.NArg() != 1 {
@@ -72,7 +73,7 @@ func main() {
 		}
 	}
 
-	payload, d, r, verr := finish(segs)
+	payload, d, r, verr := finish(segs, !*noorder)
 	report(in, payload, r, warn, verr)
 
 	if *out == "" {

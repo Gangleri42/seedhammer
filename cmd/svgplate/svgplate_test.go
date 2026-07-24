@@ -133,7 +133,7 @@ func TestSVGRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	segs := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
-	_, _, r, err := finish(segs)
+	_, _, r, err := finish(segs, true)
 	if err != nil {
 		t.Fatalf("finish: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestRichTextValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := finish(segs); err != nil {
+	if _, _, _, err := finish(segs, true); err != nil {
 		t.Fatalf("finish: %v", err)
 	}
 }
@@ -243,7 +243,7 @@ func TestByteCapRejected(t *testing.T) {
 			x += step
 		}
 	}
-	_, _, r, err := finish(segs)
+	_, _, r, err := finish(segs, true)
 	t.Logf("gauges: bytes=%d strokes=%d knots=%d knots/stroke=%d secs=%d",
 		r.Bytes, r.Strokes, r.Knots, r.MaxStrokeKnots, r.Seconds)
 	if err == nil || !strings.Contains(err.Error(), "NDEF cap") {
@@ -317,7 +317,7 @@ func TestNonFiniteRejected(t *testing.T) {
 	}
 	// The guard itself rejects a hand-built non-finite segment.
 	bad := []fseg{{op: svgpath.MoveTo, p: [3]fpt{{math.Inf(1), 0}}}}
-	if _, _, _, err := finish(bad); err == nil {
+	if _, _, _, err := finish(bad, true); err == nil {
 		t.Error("finish accepted a non-finite coordinate")
 	}
 }
@@ -334,7 +334,7 @@ func TestRealLogos(t *testing.T) {
 			continue
 		}
 		segs := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
-		if _, _, _, err := finish(segs); err != nil {
+		if _, _, _, err := finish(segs, true); err != nil {
 			t.Errorf("%s: finish: %v", f, err)
 		}
 	}

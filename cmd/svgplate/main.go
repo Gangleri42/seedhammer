@@ -79,7 +79,7 @@ func main() {
 		*out = strings.TrimSuffix(in, filepath.Ext(in)) + ".curves"
 	}
 	if verr == nil {
-		if err := os.WriteFile(*out, []byte(payload), 0o644); err != nil {
+		if err := os.WriteFile(*out, payload, 0o644); err != nil {
 			die(err)
 		}
 		fmt.Fprintf(os.Stderr, "wrote %s\n", *out)
@@ -109,7 +109,7 @@ func placementOf(height, rotate float64, pos string) (placement, error) {
 
 // report prints the gauge table: every cost against its cap, so the
 // user sees the wall whether or not the drawing cleared it.
-func report(name, payload string, r curves.Report, warn, verr error) {
+func report(name string, payload []byte, r curves.Report, warn, verr error) {
 	w := os.Stderr
 	fmt.Fprintf(w, "%s\n", name)
 	mm := float64(sh2.Millimeter)

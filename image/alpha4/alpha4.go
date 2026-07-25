@@ -76,7 +76,8 @@ func (r Rectangle) Rect() image.Rectangle {
 }
 
 func (p *Image) Set(x, y int, c color.Color) {
-	panic("not implemented")
+	a := color.AlphaModel.Convert(c).(color.Alpha)
+	p.SetAlpha4(x, y, a.A>>4)
 }
 
 func (p *Image) SetAlpha4(x, y int, a byte) {

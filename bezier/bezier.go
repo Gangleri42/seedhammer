@@ -565,6 +565,19 @@ const maxSamplesPerCurve = 200
 // curve and its mirror yields mirrored points, unlike Sample whose
 // integer fixed-point Interpolator and one-directional remainder walk
 // drift asymmetrically.
+//
+// The float64 arc-length table is host-only by design: the single call
+// path is cmd/vectorfont -> svgpath.ToBSpline, run at font-generation
+// time on a dev machine, where the symmetric sampler is required so
+// mirrored outlines bake to mirrored splines. The device never
+// executes it — firmware curve decode and engrave-time sampling use
+// the integer Sample with Newton-isqrt distances, introduced
+// specifically to purge software doubles from the M33 hot path. A
+// fixed-point SampleSym would buy nothing on-device (it never runs
+// there) and would risk reintroducing the asymmetric-overshoot
+// distortion it was written to fix. Revisit only if a future feature
+// moves spline fitting (not decoding) onto the device; the curves v2
+// format keeps fitting host-side.
 func SampleSym(points []Point, b Cubic, spacing int) []Point {
 	c0x, c0y := float64(b.C0.X), float64(b.C0.Y)
 	c1x, c1y := float64(b.C1.X), float64(b.C1.Y)

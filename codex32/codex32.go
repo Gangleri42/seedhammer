@@ -35,6 +35,7 @@ var (
 	errMismatchedThreshold = errors.New("mismatched threshold")
 	errInvalidIDLength     = errors.New("invalid id length")
 	errRepeatedIndex       = errors.New("repeated index")
+	errInvalidHRP          = errors.New("invalid HRP")
 )
 
 const (
@@ -58,42 +59,6 @@ func (s String) sanityCheck() error {
 	return nil
 }
 
-// fromUnchecksummed constructs a codex32 string from a not-yet-checksummed string.
-func fromUnchecksummed(s string) (String, error) {
-	// Determine what checksum to use and extend the string.
-	var clen int
-	var check *engine
-	switch {
-	case len(s) <= shortCodeMaxLength-shortChecksumLen:
-		clen, check = shortChecksumLen, newShortChecksum()
-	case len(s) <= longCodeMaxLength-longChecksumLen:
-		clen, check = longChecksumLen, newLongChecksum()
-	default:
-		return String{}, fmt.Errorf("codex32: %w", errInvalidLength)
-	}
-
-	r := new(strings.Builder)
-	r.Grow(clen)
-	r.WriteString(s)
-	hrp, res := splitHRP(s)
-	// Compute the checksum.
-	if err := check.inputHRP(hrp); err != nil {
-		return String{}, fmt.Errorf("codex32: %w", err)
-	}
-	if err := check.inputData(res); err != nil {
-		return String{}, fmt.Errorf("codex32: %w", err)
-	}
-	for _, c := range check.residue {
-		r.WriteByte(c.rune())
-	}
-
-	ret := String{r.String()}
-	if err := ret.sanityCheck(); err != nil {
-		return String{}, fmt.Errorf("codex32: %w", err)
-	}
-	return ret, nil
-}
-
 // New constructs a codex32 string from a string.
 func New(s string) (String, error) {
 	var check *engine
@@ -107,6 +72,9 @@ func New(s string) (String, error) {
 	}
 
 	hrp, res := splitHRP(s)
+	if strings.ToLower(hrp) != "ms" {
+		return String{}, fmt.Errorf("codex32: %w", errInvalidHRP)
+	}
 	if err := check.inputHRP(hrp); err != nil {
 		return String{}, fmt.Errorf("codex32: %w", err)
 	}
@@ -277,6 +245,26 @@ func Interpolate(shares []String, index rune) (String, error) {
 
 // NewSeed creates a share from secret data. The share index 'S' denotes an unshared secret.
 func NewSeed(hrp string, threshold int, id string, shareIdx rune, data []byte) (String, error) {
+	// Letters in the HRP must be uniformly one case; the output case
+	// follows it. The string is built lowercase and upcased at the end.
+	var hasUpper, hasLower bool
+	for _, c := range hrp {
+		switch {
+		case unicode.IsUpper(c):
+			hasUpper = true
+		case unicode.IsLower(c):
+			hasLower = true
+		}
+	}
+	if hasUpper && hasLower {
+		return String{}, fmt.Errorf("codex32: %w", errInvalidCase)
+	}
+	isUpper := len(hrp) > 0 && hasUpper
+	if strings.ToLower(hrp) != "ms" {
+		return String{}, fmt.Errorf("codex32: %w", errInvalidHRP)
+	}
+	hrp = strings.ToLower(hrp)
+	id = strings.ToLower(id)
 	if len(id) != 4 {
 		return String{}, errInvalidIDLength
 	}
@@ -313,7 +301,6 @@ func NewSeed(hrp string, threshold int, id string, shareIdx rune, data []byte) (
 	default:
 		return String{}, errInvalidThreshold
 	}
-	// FIXME correct case to match HRP.
 	ret.WriteByte(k.rune())
 	ret.WriteString(id)
 	ret.WriteByte(si.rune())
@@ -371,15 +358,11 @@ func NewSeed(hrp string, threshold int, id string, shareIdx rune, data []byte) (
 		ret.WriteByte(e.rune())
 	}
 
-	payload = ret.String()
-	check = newShortChecksum()
-	if err := check.inputHRP(hrp); err != nil {
-		return String{}, err
+	out := ret.String()
+	if isUpper {
+		out = strings.ToUpper(out)
 	}
-	if err := check.inputData(payload[len(hrp)+1:]); err != nil {
-		return String{}, err
-	}
-	return String{payload}, nil
+	return String{out}, nil
 }
 
 // Seed extracts the seed.

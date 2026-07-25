@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -258,8 +259,65 @@ func TestBIPInvalidThreshold(t *testing.T) {
 	}
 }
 
-// Skip tho "missing ms prefix" tests because this library is HRP-agnostic
-// FIXME it probably should not be, and should probably enforce the ms
+// The "ms" HRP is enforced by New and NewSeed; see TestBIPInvalidHRP.
+
+func TestBIPInvalidHRP(t *testing.T) {
+	invalids := []string{
+		"bc10testsxxxxxxxxxxxxxxxxxxxxxxxxxx4nzvca9cmczlw",
+		"bc10testsqqqsyqcyq5rqwzqfpg9scrgwpu8ydf98cmvre7p",
+	}
+	for _, chk := range invalids {
+		_, err := New(chk)
+		if !errors.Is(err, errInvalidHRP) {
+			t.Errorf("%s parsed with error %v, expected %v", chk, err, errInvalidHRP)
+		}
+	}
+	seedB, err := hex.DecodeString("ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewSeed("bc", 0, "leet", 'S', seedB); !errors.Is(err, errInvalidHRP) {
+		t.Errorf("NewSeed with hrp bc returned error %v, expected %v", err, errInvalidHRP)
+	}
+}
+
+func TestNewSeedUppercaseHRP(t *testing.T) {
+	seedB, err := hex.DecodeString("ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := NewSeed("MS", 0, "LEET", 'S', seedB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantSeed = "ms10leetsllhdmn9m42vcsamx24zrxgs3qrl7ahwvhw4fnzrhve25gvezzyqqtum9pgv99ycma"
+	if want := strings.ToUpper(wantSeed); seed.String() != want {
+		t.Errorf("got seed %s, want %s", seed, want)
+	}
+	if _, err := New(seed.String()); err != nil {
+		t.Errorf("round-trip of %s failed: %v", seed, err)
+	}
+}
+
+func TestNewSeedMixedCaseHRP(t *testing.T) {
+	seedB, err := hex.DecodeString("ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hrp := range []string{"Ms", "mS"} {
+		if _, err := NewSeed(hrp, 0, "leet", 'S', seedB); !errors.Is(err, errInvalidCase) {
+			t.Errorf("NewSeed with hrp %s returned error %v, expected %v", hrp, err, errInvalidCase)
+		}
+	}
+	// The id case is normalized to the HRP case.
+	seed, err := NewSeed("MS", 0, "leet", 'S', seedB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := seed.String(); got != strings.ToUpper(got) {
+		t.Errorf("got seed %s, want uniformly uppercase", got)
+	}
+}
 
 func TestBIPInvalidCase(t *testing.T) {
 	badCase := []string{

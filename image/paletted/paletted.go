@@ -47,7 +47,7 @@ func (p *Image) At(x, y int) color.Color {
 	return p.RGBA64At(x, y)
 }
 
-func (p *Image) ColorModel() color.Model { panic("not implemented") }
+func (p *Image) ColorModel() color.Model { return color.RGBA64Model }
 
 func (p *Image) RGBA64At(x, y int) color.RGBA64 {
 	if len(p.Palette) == 0 {

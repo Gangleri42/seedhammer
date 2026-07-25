@@ -485,7 +485,19 @@ func parsePath(path string) ([]Derivation, error) {
 			if err != nil {
 				return nil, err
 			}
-			// Assume for now that ranges can't be hardened.
+			// BIP389 allows each tuple element to carry its own hardened
+			// marker (/<0h;1h>, even mixed /<0;1h>). We reject hardened range
+			// elements deliberately: SeedHammer only accepts public-key
+			// descriptors (ParseExtendedKey rejects private version bytes),
+			// and hardened children cannot be derived from an xpub, so a
+			// hardened tuple in our input can never yield addresses — no
+			// wallet export produces one (BIP388 policies mandate unhardened
+			// tuple NUMs). Rejecting here fails loudly at scan time instead
+			// of deep in address derivation. Supporting it properly would
+			// also need per-element hardening in Derivation (single Hardened
+			// bool today) plus matching changes to Encode (which would
+			// currently emit the invalid '/<a;b>h' form) and the
+			// crypto-output CBOR keypath in bc/urtypes.
 			if start > end || start >= hdkeychain.HardenedKeyStart || end >= hdkeychain.HardenedKeyStart {
 				return nil, fmt.Errorf("invalid range path element: %q", p)
 			}

@@ -203,9 +203,15 @@ func (d *Device) Reset() {
 	for rp.DMA.CHAN_ABORT.Get()&uint32(d.channels) != 0 {
 		runtime.Gosched()
 	}
-	// Keep the DMA buffers alive.
-	// TODO: use runtime.Pinner to pin the buffer before
-	// starting DMA and unpin it after stopping DMA.
+	// Keep the DMA buffers alive until the hardware has provably stopped
+	// using their addresses. runtime.Pinner would express this better (pin
+	// at DMA start, unpin here), but TinyGo — 0.41.1 as pinned in
+	// flake.nix — does not provide runtime.Pinner at all (its runtime
+	// exposes only the KeepAlive intrinsic), so Pinner code would not
+	// compile. It also would not add safety: TinyGo's collectors
+	// (including -gc precise) are non-moving, so premature collection is
+	// the only hazard and KeepAlive covers it exactly. Revisit only if
+	// the toolchain pin moves to a TinyGo that ships a functional Pinner.
 	runtime.KeepAlive(d.dmaBuf)
 	runtime.KeepAlive(d.dmaCtrl)
 

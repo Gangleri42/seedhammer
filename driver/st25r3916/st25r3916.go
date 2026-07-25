@@ -430,8 +430,14 @@ func (d *Device) waitForInterrupt(timeout time.Duration) (interrupts, error) {
 		case intrs.Error&(0b1<<i_err1) != 0:
 			err = errors.New("hard framing error")
 		case intrs.Main&(0b1<<i_col) != 0:
-			// We don't implement anti-collision loops yet,
-			// so for now treat collisions as errors.
+			// Anti-collision loops are deliberately not implemented:
+			// the product presents exactly one tag at a time, and
+			// resolving a collision would silently pick an arbitrary
+			// tag -- the ambiguity nfc/type2.selectTag's doc comment
+			// warns against. A collision therefore surfaces as an
+			// error, which the poller treats as a retriable non-read
+			// (nfc/poller.poll ignores it), so stacked tags simply
+			// retry until one is removed.
 			err = errors.New("collision")
 		case intrs.Timer&(0b1<<i_nre) != 0:
 			err = errors.New("response timeout")
@@ -605,8 +611,13 @@ func (d *Device) read(buf []byte) (int, error) {
 		return 0, err
 	}
 	fifoLen := int(fifoStatus[1]&0b1100_0000)<<2 | int(fifoStatus[0])
-	// Exclude the CRC bytes left in the FIFO.
-	// Messages without CRC are not supported in listen mode.
+	// Exclude the CRC bytes left in the FIFO. In listen mode this is
+	// unconditional and correct: all CRC-less ISO14443-A frames (REQA/WUPA
+	// short frames, SDD/anticollision) are answered by the chip's automatic
+	// response state machine from PT memory (see Configure) and never reach
+	// the FIFO. Every frame software receives after target activation is
+	// ISO-DEP (Type 4) and carries CRC_A per ISO14443-3/-4; no real writer
+	// sends a CRC-less frame here, so this is a closed non-limitation.
 	if d.excludeCRC || d.extField >= fieldOn {
 		fifoLen = max(fifoLen-2, 0)
 	}

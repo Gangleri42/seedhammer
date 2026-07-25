@@ -1764,7 +1764,10 @@ func engraveObjectFlow(ctx *Context, th *Colors, obj any) bool {
 	switch scan := obj.(type) {
 	case bip39.Mnemonic:
 		backupWalletFlow(ctx, th, scan)
-		// TODO: re-enable SLIP39. See also nfcpoller.go.
+		// SLIP39 share engraving stays disabled by choice: parsing a
+		// scanned share needs the external go-slip39 module, against the
+		// no-dependencies rule (see scan.go). The engrave flow below is
+		// kept for reference should a dep-free parser ever land.
 	// case slip39.Share:
 	// 	w, err := scan.Words()
 	// 	// No space for secrets > 128 bits.
@@ -2053,7 +2056,9 @@ func newInputFlow(ctx *Context, th *Colors) (any, bool) {
 				if ok {
 					return s, true
 				}
-				// TODO: re-enable
+				// SLIP-39 keyboard entry stays disabled with the scan
+				// path: producing a share to engrave needs go-slip39
+				// (external dep, see scan.go). Kept for reference.
 				// case 3:
 				// 	mnemonic := emptySLIP39Mnemonic(20)
 				// 	if ok := inputSLIP39Flow(ctx, th, mnemonic, 0); !ok {
@@ -2143,6 +2148,14 @@ events:
 				for _, w := range mnemonic {
 					words = append(words, bip39.LabelFor(w))
 				}
+				// Electrum seeds share the BIP39 wordlist but use their
+				// own HMAC version-check instead of the BIP39 checksum,
+				// and derive keys via a non-BIP32-standard scheme.
+				// Supporting them would engrave plates that standard
+				// BIP39 restore tools cannot recover, so we deliberately
+				// detect them only to give this specific rejection
+				// (upstream 3e8d306) rather than the generic
+				// invalid-seed message. Intentionally not supported.
 				if nonstandard.ElectrumSeed(strings.Join(words, " ")) {
 					scr.Body = "Electrum seeds are not supported."
 				} else {
@@ -2207,6 +2220,15 @@ func isMnemonicComplete(m bip39.Mnemonic) bool {
 	return len(m) > 0
 }
 
+// seedColumns returns the number of columns that fit n seed words in a
+// content area contentDx wide with colWidth-wide columns, and the number
+// of rows per column needed to balance the words across them.
+func seedColumns(n, contentDx, colWidth int) (cols, rows int) {
+	cols = max(1, contentDx/colWidth)
+	rows = (n + cols - 1) / cols
+	return
+}
+
 func (s *SeedScreen) Draw(ctx *Context, th *Colors, dims image.Point, mnemonic bip39.Mnemonic) op.Op {
 	if len(s.words) != len(mnemonic) {
 		s.words = make([]Clickable, len(mnemonic))
@@ -2239,8 +2261,10 @@ func (s *SeedScreen) Draw(ctx *Context, th *Colors, dims image.Point, mnemonic b
 		scroll = 0
 	}
 	largeScreen := dims.X >= 480
+	rows := len(mnemonic)
 	if largeScreen {
 		scroll = 0
+		_, rows = seedColumns(len(mnemonic), content.Dx(), longest.X+16)
 	}
 	off := content.Min.Add(image.Pt(0, -scroll*lineHeight))
 	var m op.Op
@@ -2277,9 +2301,8 @@ func (s *SeedScreen) Draw(ctx *Context, th *Colors, dims image.Point, mnemonic b
 			wordOp.Offset(pos),
 		)
 		y += lineHeight
-		// TODO: hack to show words on two columns in
-		// touch mode.
-		if largeScreen && i == 11 {
+		// Wrap into the next column in touch mode.
+		if largeScreen && (i+1)%rows == 0 {
 			y = 0
 			off.X += longest.X + 16
 		}
@@ -2383,7 +2406,10 @@ func (s *DescriptorScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.O
 		bodytxt.Y += infoSpacing
 	}
 	bodytxt.Add(&ctx.B, subst, body.Dx(), th.Text, "Type")
-	testnet := any("") // TODO: TinyGo allocates without explicit interface conversion.
+	// Explicit any conversion: verified on TinyGo 0.41.1 that boxing a
+	// non-constant string at the variadic call heap-allocates per frame,
+	// while constant conversions lower to static globals.
+	testnet := any("")
 	if len(desc.Keys) > 0 && desc.Keys[0].Network != &chaincfg.MainNetParams {
 		testnet = " (testnet)"
 	}

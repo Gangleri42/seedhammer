@@ -441,7 +441,14 @@ func (g *group) add(op op) {
 		return
 	}
 	if op.buf != g.buf {
-		panic("TODO")
+		// Ops are index ranges into a single Buffer; the jump encoding
+		// (opJump carries only indices, Drawer.draw walks one Buffer)
+		// cannot reference a second buffer. The firmware allocates exactly
+		// one Buffer (gui.Context.B), so mixing buffers in a group is a
+		// caller bug, not a missing feature. Supporting it would require
+		// per-jump buffer identity throughout the draw machinery for no
+		// reachable use case.
+		panic("op: group ops must come from the same Buffer")
 	}
 	next := op.r
 	if g.r.end != next.start {

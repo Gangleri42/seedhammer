@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"io"
 	"iter"
+	"math"
 	"os"
 	"slices"
 	"strings"
@@ -24,6 +25,8 @@ import (
 	"seedhammer.com/bspline"
 	"seedhammer.com/engrave"
 	"seedhammer.com/font/sh"
+	"seedhammer.com/gui/assets"
+	"seedhammer.com/gui/layout"
 	"seedhammer.com/gui/op"
 	"seedhammer.com/image/rgb565"
 )
@@ -609,4 +612,39 @@ func uiContains(content, str string) bool {
 	txt := strings.ToLower(content)
 	clean := strings.ReplaceAll(strings.ToLower(str), " ", "")
 	return strings.Contains(txt, clean)
+}
+
+func TestSeedColumns(t *testing.T) {
+	// Mirror SeedScreen.Draw's measurements at the touch-mode 480x320
+	// display: the derived column split must reproduce the historical
+	// two-column, 12-row layout for 24 words and keep every mnemonic
+	// length inside the list area.
+	style := NewStyles().word
+	longestPrefix := style.Measure(math.MaxInt, "24: ")
+	txt := style.Measure(math.MaxInt, widestWord)
+	longest := image.Pt(longestPrefix.X+txt.X, txt.Y)
+	lineHeight := longest.Y + 2
+	dims := image.Pt(480, 320)
+	navw := assets.NavBtnPrimary.Bounds().Dx()
+	r := layout.Rectangle{Max: dims}
+	list := r.Shrink(leadingSize, 0, 0, 0)
+	content := list.Shrink(scrollFadeDist, navw, scrollFadeDist, navw)
+	tests := []struct {
+		words, cols, rows int
+	}{
+		{12, 2, 6},
+		{18, 2, 9},
+		{24, 2, 12},
+	}
+	for _, test := range tests {
+		cols, rows := seedColumns(test.words, content.Dx(), longest.X+16)
+		if cols != test.cols || rows != test.rows {
+			t.Errorf("seedColumns(%d, %d, %d) = %d cols, %d rows; want %d, %d",
+				test.words, content.Dx(), longest.X+16, cols, rows, test.cols, test.rows)
+		}
+		if h := rows * lineHeight; h > list.Dy() {
+			t.Errorf("%d words: %d rows (%dpx) exceed the list height %dpx",
+				test.words, rows, h, list.Dy())
+		}
+	}
 }

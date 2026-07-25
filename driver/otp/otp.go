@@ -189,6 +189,12 @@ func ReadWhiteLabelString(idx uint8) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// The bootrom's white-label STRDEFs may be UTF-16 (bit 0x80). We
+	// never write UTF-16 (see WriteWhiteLabelString), and OTP is
+	// write-once, so this branch is reachable only on a board whose
+	// white-label table was burned by external tooling before LockBoot.
+	// Not worth an encoder: erroring loudly here is the correct
+	// behavior for a foreign table.
 	if utf16 := entry&0x80 != 0; utf16 {
 		return "", errors.New("otp: UTF-16 label not supported")
 	}
@@ -225,8 +231,12 @@ func WriteWhiteLabelString(idx uint8, s string) error {
 		return fmt.Errorf("otp: white label string %q too long", s)
 	}
 	len16 := uint16(len(s))
-	// Some of the string fields support UTF-16 text, but we
-	// don't.
+	// The bootrom supports UTF-16 white-label strings, but every
+	// string we burn (platform_sh2.go writeOTPValues) is a
+	// compile-time ASCII constant. If non-ASCII branding is ever
+	// needed, add UTF-16LE encoding here and decoding in
+	// ReadWhiteLabelString; until then this check makes a bad
+	// constant fail at the bench, not in the field.
 	for _, r := range s {
 		if r > unicode.MaxASCII {
 			return fmt.Errorf("otp: white label string %q contains non-ascii character '%c'", s, r)

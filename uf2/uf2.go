@@ -74,6 +74,15 @@ func (r *Reader) Read(buf []byte) (int, error) {
 	return n, err
 }
 
+// Write patches the payload bytes at the Reader's current position in place,
+// so it requires the underlying reader to also be an io.Writer positioned over
+// the same bytes (an *os.File opened O_RDWR, as cmd/picosign does). In-place
+// patching is intrinsically impossible over a pure io.Reader — there is nothing
+// to write to — so a "general" Write cannot exist without an API change (a
+// separate ReadWriter type), which would buy compile-time typing for exactly
+// one caller at the cost of a second type. The runtime assertion with a clear
+// error is the deliberate trade; the io.Writer branch is the standard io idiom
+// (cf. io.ReaderFrom detection).
 func (r *Reader) Write(buf []byte) (int, error) {
 	bytes := 0
 	w, ok := r.r.(io.Writer)

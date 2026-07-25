@@ -148,8 +148,17 @@ func (e *engraveJob) runEngraving(quit <-chan struct{}, progress chan uint) (cer
 	res := newSplineResumer(drv, e.safePoint.Resume(conf))
 	skipKnots := e.nknots
 	for k := range e.spline {
-		// TODO: use iter.Pull to resume the spline if the goroutine stack cost is
-		// reasonable.
+		// Re-iterating the spline and skipping already-engraved knots is
+		// deliberate. The alternative, holding an iter.Pull iterator across
+		// restarts, is not cheap on the pinned toolchain: TinyGo 0.41.1
+		// implements iter.Pull as a naive coroutine (runtime/coro.go) — a full
+		// goroutine (16KB fixed stack under -scheduler tasks -stack-size 16kb,
+		// leaked unless stop() is threaded through job teardown) plus two
+		// channel handoffs per knot on the hot stepper-feed path. Re-iteration
+		// costs CPU only, runs at most once per operator resume/retry, and is
+		// hidden behind the 1s hold-to-confirm gesture and the physical
+		// catch-up traversal. Revisit only if TinyGo grows a real coroutine
+		// implementation.
 		if skipKnots > 0 {
 			skipKnots--
 			continue

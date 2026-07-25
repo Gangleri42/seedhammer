@@ -359,11 +359,16 @@ func constantQRMove(target bezier.Point) qrMove {
 	return m
 }
 
-// constantTimeQRModules returns the exact number of modules in a constant
-// time QR code, given its dimension.
+// constantTimeQRModules returns the fixed plan capacity for a constant
+// time QR code, given its dimension. Engrave always emits exactly this
+// many equal-duration slots, so engraving time depends only on dims. If
+// a QR's plan exceeds the capacity, ConstantQR fails closed at plan time
+// (see the len(modules) > nmod error below) before any command is
+// emitted — an undersized table can only fail a plate, never leak
+// timing.
 func constantTimeQRModules(dims int) int {
-	// The numbers below are maximum numbers found through fuzzing.
-	// Add a bit more to account for outliers not yet found.
+	// Base values are fuzz-derived maxima (FuzzConstantQR); extra is
+	// availability headroom only.
 	const extra = 5
 	switch dims {
 	case 21:

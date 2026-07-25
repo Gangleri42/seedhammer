@@ -85,6 +85,9 @@ func TestConstantQR(t *testing.T) {
 					t.Errorf("entropy: %x: engraving is not constant compared to %x", entropy, templateEntropy)
 				}
 				dim := qrc.Size
+				if n := len(cmd.plan); n > constantTimeQRModules(dim)-1 {
+					t.Errorf("entropy: %x: plan length %d within 1 of capacity %d — retune table", entropy, n, constantTimeQRModules(dim))
+				}
 				want := bitmapForQR(qrc)
 				got := newBitmap(dim, dim)
 				posMarkers, alignMarkers := bitmapForQRStatic(dim)
@@ -106,6 +109,35 @@ func TestConstantQR(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestConstantQRFailClosed verifies that a QR code whose plan exceeds the
+// fixed capacity makes ConstantQR fail at plan time, before any command is
+// emitted. This pins the fail-closed path that makes the constant-time
+// invariant unconditional: an undersized capacity table can only fail a
+// plate, never leak timing.
+func TestConstantQRFailClosed(t *testing.T) {
+	const dim = 21
+	stride := (dim + 7) / 8
+	bitmap := make([]byte, dim*stride)
+	for i := range bitmap {
+		bitmap[i] = 0xff
+	}
+	qrc := &qr.Code{
+		Bitmap: bitmap,
+		Size:   dim,
+		Stride: stride,
+	}
+	cmd, err := ConstantQR(qrc)
+	if err == nil {
+		t.Fatal("ConstantQR succeeded on worst-case all-black QR code")
+	}
+	if !strings.Contains(err.Error(), "too many") {
+		t.Errorf("error %q does not contain %q", err, "too many")
+	}
+	if cmd != nil {
+		t.Errorf("ConstantQR returned non-nil command along with error")
 	}
 }
 

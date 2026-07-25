@@ -80,11 +80,13 @@ func (s *scanner) Scan(r io.Reader) (any, error) {
 		return cmd, nil
 	} else if m, err := bip39.Parse(buf); err == nil {
 		return m, nil
-		// TODO: re-enable SLIP39 support. Note that
-		// github.com/gavincarr/go-slip39 adds ~55kb of RAM use in the unicode
-		// package.
-		// } else if m, err := slip39.ParseShare(sbuf); err == nil {
-		// 	res.Content = m
+		// Scanning a SLIP39 share stays disabled by choice. Parsing one
+		// (rs1024 checksum + share decode) means github.com/gavincarr/
+		// go-slip39, which pulls three external modules against this
+		// project's no-dependencies rule (the in-tree seedhammer.com/
+		// slip39 package is only the keyboard wordlist, not a parser).
+		// The keyboard SLIP-39 entry flow is likewise gated off in
+		// newInputFlow. Revisit only if a dep-free share parser lands.
 	} else if d, err := nonstandard.OutputDescriptor(buf); err == nil {
 		return d, nil
 	} else if s, err := codex32.New(string(buf)); err == nil {
@@ -94,6 +96,14 @@ func (s *scanner) Scan(r io.Reader) (any, error) {
 	} else if nip19.IsCompound(string(bytes.TrimSpace(buf))) {
 		return nil, errScanCompoundNostr
 	} else if t, ok := parsePlainText(buf); ok {
+		// Intentionally kept in this fork: the untyped Text fallback and
+		// curves ModeText converge on the single parsePlainText + textFlow
+		// funnel, so there is one text screen and one canonicalizer — this
+		// branch is the bench's cheap input channel (write-nfc.py, any
+		// phone NFC app) and removing it would strictly reduce input
+		// options for zero code payoff. Retire only in an
+		// upstream-submission patch series. Must stay below the nip19
+		// branches so nsec1/npub1 recognition wins over free text.
 		return t, nil
 	} else {
 		return nil, errScanUnknownFormat

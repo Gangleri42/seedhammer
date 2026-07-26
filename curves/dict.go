@@ -35,7 +35,7 @@ func leadMoveLen(k string) int {
 	return pos
 }
 
-// EncodeGroups encodes placed shape groups as a Version2 binary path
+// EncodeGroups encodes placed shape groups as a binary path
 // payload, carrying each repeated shape once in the dictionary section
 // and stamping it by placement. A shape enters the dictionary when
 // that undercuts inlining every instance; a drawing without such
@@ -107,7 +107,7 @@ func EncodeGroups(unitsPerMM, strokeWidth int, groups []Group) ([]byte, error) {
 		ids[k] = i
 	}
 
-	b := []byte(fmt.Sprintf("%d %s %d %d\n", Version2, ModePath, unitsPerMM, strokeWidth))
+	b := []byte(fmt.Sprintf("%d %s %d %d\n", Version, ModePath, unitsPerMM, strokeWidth))
 	if len(shapes) > 0 {
 		b = append(b, 'D')
 		b = binary.AppendUvarint(b, uint64(len(shapes)))

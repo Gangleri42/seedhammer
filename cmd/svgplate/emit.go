@@ -36,7 +36,7 @@ const (
 const orderMaxStrokes = 4096
 
 // emitPayload quantizes millimeter segments to payload units and encodes
-// them as a Version2 binary curves path payload. Segments must already be
+// them as a binary curves path payload. Segments must already be
 // laid out on the plate with (0,0) at its top-left corner. When order is
 // set the strokes are resequenced to shorten head travel; the drawing is
 // non-secret art, so this only saves time, never leaks content.

@@ -2,6 +2,7 @@ package curves
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"seedhammer.com/bezier"
 	"seedhammer.com/bspline"
 	"seedhammer.com/engrave"
+	"seedhammer.com/svgpath"
 )
 
 // params with 400 machine units per mm so that a units-per-mm of 400
@@ -25,36 +27,60 @@ var params = engrave.Params{
 	},
 }
 
-func payload(path string) []byte {
-	return []byte("1 path 400 120\n" + path)
+// payloadAt converts test ASCII path notation into the version 2
+// binary wire at the given quantization: the test grammar rides
+// svgpath (M/L/C/Q/Z, implicit linetos), the wire is what the device
+// sees.
+func payloadAt(unitsPerMM, strokeWidth int, path string) []byte {
+	segs, err := svgpath.ParseData(path, 0, 0, func(v float64) int { return int(math.Round(v)) })
+	if err != nil {
+		panic(err)
+	}
+	b, err := EncodePath(unitsPerMM, strokeWidth, segs)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
+func payload(path string) []byte { return payloadAt(400, 120, path) }
+
 func TestParseErrors(t *testing.T) {
-	tests := []struct {
+	// Header failures: the header stays ASCII, so these are raw. The
+	// version 1 grammar cases (relative commands, arcs, exponents, the
+	// byte whitelist) retired with the ASCII path body — the binary
+	// wire cannot express them, and its own hostile cases live in
+	// binary_test and dict_test.
+	body := string(payload("M 0 0 L 800 800")[len("2 path 400 120\n"):])
+	raw := []struct {
 		name string
 		data string
 	}{
 		{"no header", "M 0 0 L 1 1"},
-		{"short header", "1 path 400\nM 0 0 L 800 800"},
-		{"unsupported version", "3 path 400 120\nM 0 0 L 800 800"},
-		{"zero units", "1 path 0 120\nM 0 0 L 800 800"},
-		{"negative units", "1 path -400 120\nM 0 0 L 800 800"},
-		{"stroke too narrow", "1 path 400 60\nM 0 0 L 800 800"},
-		{"stroke too wide", "1 path 400 240\nM 0 0 L 800 800"},
-		{"relative command", "1 path 400 120\nM 0 0 l 800 800"},
-		{"horizontal command", "1 path 400 120\nM 0 0 H 800"},
-		{"smooth command", "1 path 400 120\nM 0 0 C 1 2 3 4 5 6 S 7 8 9 10"},
-		{"arc command", "1 path 400 120\nM 0 0 A 1 1 0 0 0 2 2"},
-		{"exponent", "1 path 400 120\nM 0 0 L 8e2 800"},
-		{"starts with line", "1 path 400 120\nL 800 800"},
-		{"coordinates only", "1 path 400 120\n800 800"},
-		{"incomplete group", "1 path 400 120\nM 0 0 C 1 2 3 4"},
-		{"empty path", "1 path 400 120\n"},
-		{"move only", "1 path 400 120\nM 400 400"},
-		{"zero-length drawing", "1 path 400 120\nM 400 400 L 400 400 C 400 400 400 400 400 400"},
+		{"short header", "2 path 400\n" + body},
+		{"retired version", "1 path 400 120\nM 0 0 L 800 800"},
+		{"unsupported version", "3 path 400 120\n" + body},
+		{"zero units", "2 path 0 120\n" + body},
+		{"negative units", "2 path -400 120\n" + body},
+		{"stroke too narrow", "2 path 400 60\n" + body},
+		{"stroke too wide", "2 path 400 240\n" + body},
+		{"empty body", "2 path 400 120\n"},
 	}
-	for _, test := range tests {
+	for _, test := range raw {
 		if _, err := Parse([]byte(test.data), params); err == nil {
+			t.Errorf("%s: Parse succeeded, want error", test.name)
+		}
+	}
+	// Geometry failures survive any encoding.
+	geo := []struct {
+		name string
+		path string
+	}{
+		{"move only", "M 400 400"},
+		{"zero-length drawing", "M 400 400 L 400 400 C 400 400 400 400 400 400"},
+	}
+	for _, test := range geo {
+		if _, err := Parse(payload(test.path), params); err == nil {
 			t.Errorf("%s: Parse succeeded, want error", test.name)
 		}
 	}
@@ -65,19 +91,19 @@ func TestParseErrors(t *testing.T) {
 func TestParseHostile(t *testing.T) {
 	tests := []struct {
 		name    string
-		data    string
+		data    []byte
 		wantErr bool
 	}{
 		// A cubic whose control point escapes the degenerate filter
 		// but whose whole arc rounds to a single sample point. Must
 		// not reach the fitter with a one-point run.
-		{"collapsing cubic", "1 path 400 120\nM 0 0 C 1 0 0 0 0 0", true},
-		{"collapsing cubic mid", "1 path 400 120\nM 100 100 C 101 100 99 100 100 100", true},
+		{"collapsing cubic", payloadAt(400, 120, "M 0 0 C 1 0 0 0 0 0"), true},
+		{"collapsing cubic mid", payloadAt(400, 120, "M 100 100 C 101 100 99 100 100 100"), true},
 		// Coordinates that scale past the fixed-point range would
 		// overflow the sampler or divide by zero. Clamped to a safe
 		// magnitude, so Parse succeeds but the plate bounds land far
 		// outside the plate for the caller to reject.
-		{"overflow coordinates", "1 path 3 1\nM 0 0 L 2000000 2000000 L 0 0 Z", false},
+		{"overflow coordinates", payloadAt(3, 1, "M 0 0 L 2000000 2000000 L 0 0 Z"), false},
 	}
 	for _, test := range tests {
 		func() {
@@ -86,7 +112,7 @@ func TestParseHostile(t *testing.T) {
 					t.Errorf("%s: Parse panicked: %v", test.name, r)
 				}
 			}()
-			d, err := Parse([]byte(test.data), params)
+			d, err := Parse(test.data, params)
 			switch {
 			case test.wantErr && err == nil:
 				t.Errorf("%s: Parse succeeded, want error", test.name)
@@ -109,7 +135,7 @@ func TestParseUnboundedStroke(t *testing.T) {
 		n  = 250
 	)
 	var b strings.Builder
-	b.WriteString("1 path 400 120\nM 0 17000")
+	b.WriteString("M 0 17000")
 	for i := 0; i < n; i++ {
 		x0 := i * l
 		// Each cubic bows the same way, so consecutive tangents turn
@@ -118,7 +144,7 @@ func TestParseUnboundedStroke(t *testing.T) {
 		fmt.Fprintf(&b, " C %d %d %d %d %d %d",
 			x0+l/3, 17000+dy, x0+2*l/3, 17000+dy, x0+l, 17000)
 	}
-	if _, err := Parse([]byte(b.String()), params); err == nil {
+	if _, err := Parse(payload(b.String()), params); err == nil {
 		t.Error("Parse accepted a pathologically long stroke")
 	}
 }
@@ -159,7 +185,7 @@ func TestParse(t *testing.T) {
 func TestUnitsPerMM(t *testing.T) {
 	// The same drawing at 100 units per mm spans 4 times the machine
 	// units, with a proportionally scaled stroke width.
-	d, err := Parse([]byte("1 path 100 30\nM 100 100 L 300 100"), params)
+	d, err := Parse(payloadAt(100, 30, "M 100 100 L 300 100"), params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,10 +271,9 @@ func TestSmoothJoinNotClamped(t *testing.T) {
 
 func TestStrokeWidthTolerance(t *testing.T) {
 	// Within an eighth of the machine stroke width passes.
-	for _, w := range []string{"110", "120", "130"} {
-		data := []byte("1 path 400 " + w + "\nM 400 400 L 1200 400")
-		if _, err := Parse(data, params); err != nil {
-			t.Errorf("stroke width %s: %v", w, err)
+	for _, w := range []int{110, 120, 130} {
+		if _, err := Parse(payloadAt(400, w, "M 400 400 L 1200 400"), params); err != nil {
+			t.Errorf("stroke width %d: %v", w, err)
 		}
 	}
 }
@@ -284,14 +309,14 @@ func TestMode(t *testing.T) {
 		mode string
 		err  bool
 	}{
-		{"1 text\nHELLO", ModeText, false},
-		{"1 path 400 120\nM 0 0 L 1 1", ModePath, false},
-		{"1 text", ModeText, false},
-		{"", "", true},
-		{"1", "", true},
 		{"2 text\nHELLO", ModeText, false},
+		{"2 path 400 120\nM 0 0 L 1 1", ModePath, false},
+		{"2 text", ModeText, false},
+		{"", "", true},
+		{"2", "", true},
+		{"1 text\nHELLO", "", true},
 		{"3 text\nHELLO", "", true},
-		{"1 draw\nx", "", true},
+		{"2 draw\nx", "", true},
 	}
 	for _, test := range tests {
 		mode, err := Mode([]byte(test.data))
@@ -305,14 +330,14 @@ func TestMode(t *testing.T) {
 }
 
 func TestText(t *testing.T) {
-	got, err := Text([]byte("1 text\nIN CASE OF FIRE\nBREAK GLASS"))
+	got, err := Text([]byte("2 text\nIN CASE OF FIRE\nBREAK GLASS"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := "IN CASE OF FIRE\nBREAK GLASS"; got != want {
 		t.Errorf("Text = %q, want %q", got, want)
 	}
-	if _, err := Text([]byte("1 path 400 120\nM 0 0 L 1 1")); err == nil {
+	if _, err := Text([]byte("2 path 400 120\nM 0 0 L 1 1")); err == nil {
 		t.Error("Text accepted a path payload")
 	}
 }
@@ -320,7 +345,7 @@ func TestText(t *testing.T) {
 func TestParseRejectsTextMode(t *testing.T) {
 	// Parse is the path decoder; a text payload must not slip through
 	// it and be read as geometry.
-	if _, err := Parse([]byte("1 text\nHELLO"), params); err == nil {
+	if _, err := Parse([]byte("2 text\nHELLO"), params); err == nil {
 		t.Error("Parse accepted a text-mode payload")
 	}
 }
@@ -342,11 +367,11 @@ func TestPeriodicCircle(t *testing.T) {
 			TicksPerSecond: 30 * mm,
 		},
 	}
-	circle := []byte("1 path 100 30\n" +
-		"M4250 750 C6183 750 7750 2317 7750 4250 " +
-		"C7750 6183 6183 7750 4250 7750 " +
-		"C2317 7750 750 6183 750 4250 " +
-		"C750 2317 2317 750 4250 750")
+	circle := payloadAt(100, 30,
+		"M4250 750 C6183 750 7750 2317 7750 4250 "+
+			"C7750 6183 6183 7750 4250 7750 "+
+			"C2317 7750 750 6183 750 4250 "+
+			"C750 2317 2317 750 4250 750")
 	d, err := Parse(circle, sh2)
 	if err != nil {
 		t.Fatal(err)

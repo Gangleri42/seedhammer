@@ -141,6 +141,5 @@ const SH = {
 	"recordType": "seedhammer.com:curves",
 	"version": 1,
 	"payloadCap": 32703,
-	"maxStrokes": 512,
-	"maxMinutes": 45
+	"maxMinutes": 60
 };

@@ -49,17 +49,18 @@ const RecordType = "seedhammer.com:curves"
 // Version is the payload format version this package implements.
 const Version = 1
 
-// Engraving caps a curves drawing must satisfy to be engraved. The
-// knot caps bound the planner's per-stroke buffering, the time cap
-// bounds unattended machine time, and the plate geometry keeps the
-// head on the plate. They are the single source of these limits,
-// shared by the firmware (gui) and the host converter (cmd/svgplate);
-// none are reachable by drawings of sane complexity.
+// Engraving limits a curves drawing must satisfy to be engraved,
+// shared by the firmware (gui) and the host converter (cmd/svgplate).
+// The duration cap bounds unattended machine time — an operator
+// policy, and since 2026-07-26 the only complexity gate: the planner
+// streams every drawing through a fixed 100-knot window, so the
+// structural stroke and knot caps of the original curves flow
+// (a28b918: 512 strokes, 16384 knots, 2048 knots per stroke) guarded
+// no real resource and were retired once the payload dictionary made
+// dense text plates cheap enough to reach them. The plate geometry
+// keeps the head on the plate.
 const (
-	MaxStrokes     = 512
-	MaxKnots       = 16384
-	MaxStrokeKnots = 2048
-	MaxMinutes     = 45
+	MaxMinutes = 60
 	// PlateMM is the square plate side and SafetyMarginMM its
 	// engravable keepout, both in millimeters. A gui test asserts
 	// these match the firmware's own plate geometry.
@@ -130,22 +131,22 @@ const maxRun = 4096
 
 var errStrokeTooLong = errors.New("stroke too long")
 
-// Hard parse bounds, a headroom multiple above the engraving caps. The
-// dictionary lets a 32 KB payload expand to millions of knots, so the
-// counting walk stops once no Validate outcome but rejection remains
-// possible; the multiple keeps Validate's gauge report intact for
-// honestly-over drawings, and only expansion bombs hit these.
+// Hard parse bounds. The dictionary lets a 32 KB payload expand to
+// millions of knots, so the counting walk stops once a drawing cannot
+// possibly fit the duration cap; a full hour of engraving plans to
+// well under 100k knots, so these sit far above any honest drawing —
+// Validate's duration check owns the real rejections, with its gauge
+// report intact — and only expansion bombs reach them.
 //
 // The segment bound backs the knot bound: degenerate zero-length
 // segments decode without yielding a knot, so a knot count alone would
 // let a placement bomb of degenerate filler walk millions of segments
 // on the device before erroring. Real drawings yield at least as many
-// knots as segments (the fitter samples at stroke width), so the same
-// headroom multiple applies.
+// knots as segments (the fitter samples at stroke width).
 const (
-	parseMaxStrokes = 4 * MaxStrokes
-	parseMaxKnots   = 4 * MaxKnots
-	parseMaxSegs    = 4 * MaxKnots
+	parseMaxStrokes = 16384
+	parseMaxKnots   = 1 << 18
+	parseMaxSegs    = 1 << 18
 )
 
 // Drawing is a validated curves payload, ready for engraving.
@@ -513,14 +514,6 @@ func (d *Drawing) Validate(params engrave.Params) (Report, error) {
 		Bounds:         d.Bounds,
 		DurationTicks:  attrs.Duration,
 		Seconds:        secs,
-	}
-	switch {
-	case d.Strokes > MaxStrokes:
-		return r, fmt.Errorf("curves: %d strokes exceeds the %d supported", d.Strokes, MaxStrokes)
-	case d.Knots > MaxKnots:
-		return r, fmt.Errorf("curves: %d knots exceeds the %d supported", d.Knots, MaxKnots)
-	case d.MaxStrokeKnots > MaxStrokeKnots:
-		return r, fmt.Errorf("curves: a stroke of %d knots exceeds the %d supported", d.MaxStrokeKnots, MaxStrokeKnots)
 	}
 	mm := params.Millimeter
 	margin := bezier.Pt(SafetyMarginMM*mm, SafetyMarginMM*mm)

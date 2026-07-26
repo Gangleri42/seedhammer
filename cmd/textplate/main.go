@@ -57,7 +57,6 @@ type fontData struct {
 
 	// Drawing caps the device enforces, single-sourced from the curves
 	// package so the editor's gauges cannot drift from the firmware.
-	MaxStrokes int `json:"maxStrokes"`
 	MaxMinutes int `json:"maxMinutes"`
 }
 
@@ -95,7 +94,6 @@ func render() []byte {
 		// The NDEF file cap, minus record framing headroom.
 		PayloadCap: type4.NDEFFileSize - 64,
 
-		MaxStrokes: curves.MaxStrokes,
 		MaxMinutes: curves.MaxMinutes,
 	}
 	for _, size := range backup.FontSizes {

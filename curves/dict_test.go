@@ -317,7 +317,7 @@ func TestParseKnotFreeBomb(t *testing.T) {
 	b = append(b, 'D', 0x01)
 	b = binary.AppendUvarint(b, uint64(len(shape)))
 	b = append(b, shape...)
-	for i := 0; i < 100; i++ {
+	for i := 0; i < parseMaxSegs/1000+50; i++ {
 		b = append(b, 'G', 0x00, 0x02, 0x02)
 	}
 	_, err := Parse(b, engrave.SH2Params)
@@ -326,12 +326,13 @@ func TestParseKnotFreeBomb(t *testing.T) {
 	}
 }
 
-// A drawing honestly over an engraving cap but inside the parse
-// headroom must still Parse — Validate owns the rejection, with the
-// full gauge report intact.
-func TestParseHeadroomKeepsGauges(t *testing.T) {
+// The structural caps are retired: a drawing far past the old 512
+// strokes parses AND validates when it fits the plate and the hour —
+// only the parse bounds (bombs) and the duration cap remain. The
+// report still carries the structural numbers for the gauges.
+func TestStructuralCapsRetired(t *testing.T) {
 	var groups []Group
-	for i := 0; i < 600; i++ { // over MaxStrokes 512, under the 4x parse bound
+	for i := 0; i < 600; i++ {
 		groups = append(groups, Group{At: bezier.Pt(100+(i%40)*15, 100+(i/40)*15), Segs: []svgpath.Segment{
 			mkseg(svgpath.MoveTo, [2]int{0, 0}),
 			mkseg(svgpath.LineTo, [2]int{8, 0}),
@@ -343,17 +344,17 @@ func TestParseHeadroomKeepsGauges(t *testing.T) {
 	}
 	d, err := Parse(payload, engrave.SH2Params)
 	if err != nil {
-		t.Fatalf("Parse rejected an in-headroom drawing: %v", err)
+		t.Fatalf("Parse rejected the drawing: %v", err)
 	}
 	if d.Strokes != 600 {
 		t.Errorf("strokes = %d, want 600", d.Strokes)
 	}
 	r, err := d.Validate(engrave.SH2Params)
-	if err == nil || !strings.Contains(err.Error(), "strokes") {
-		t.Fatalf("want stroke-cap rejection from Validate, got %v", err)
+	if err != nil {
+		t.Fatalf("Validate rejected a plate-fitting drawing: %v", err)
 	}
-	if r.Strokes != 600 {
-		t.Errorf("report strokes = %d, want 600", r.Strokes)
+	if r.Strokes != 600 || r.Seconds <= 0 {
+		t.Errorf("report: strokes=%d seconds=%d, want 600 and a positive duration", r.Strokes, r.Seconds)
 	}
 }
 

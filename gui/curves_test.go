@@ -158,18 +158,9 @@ func TestValidateCurvesErrors(t *testing.T) {
 		t.Error("unsupported version passed validation")
 	}
 
-	// Stroke cap.
+	// Duration cap — the one complexity gate since the structural
+	// caps retired: 450 exact-line strokes of 75mm run far over it.
 	var b strings.Builder
-	for i := 0; i <= curvesMaxStrokes; i++ {
-		fmt.Fprintf(&b, "M 1000 %d L 2000 %d ", 1000+i*10, 1000+i*10)
-	}
-	if _, err := validateCurves(new(CurvesScreen), curvesTestPayload(b.String()), engraverParams, dims); err == nil || !strings.Contains(err.Error(), "strokes") {
-		t.Errorf("stroke cap: %v, expected a stroke count error", err)
-	}
-
-	// Duration cap: 450 exact-line strokes of 75mm run far over the
-	// limit while staying under the stroke and knot caps.
-	b.Reset()
 	for i := 0; i < 450; i++ {
 		y := 500 + i*16
 		fmt.Fprintf(&b, "M 500 %d L 8000 %d ", y, y)

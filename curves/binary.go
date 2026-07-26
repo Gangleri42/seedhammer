@@ -199,6 +199,16 @@ func newBinaryIter(body []byte, dict [][2]int32, main int, scale func(float64) i
 
 func (it *binaryIter) Err() error { return it.err }
 
+// mainPos is the walk's position in the main stream, for progress
+// reporting. It is monotonic across placement expansions: while a
+// shape plays, the position holds at the main stream's resume point.
+func (it *binaryIter) mainPos() int {
+	if it.inShape {
+		return it.ret
+	}
+	return it.pos
+}
+
 func (it *binaryIter) Next() (svgpath.Segment, bool) {
 	for {
 		if it.err != nil {

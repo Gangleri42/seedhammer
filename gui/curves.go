@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"runtime"
+	"time"
 
 	"seedhammer.com/bezier"
 	"seedhammer.com/bspline"
 	"seedhammer.com/curves"
 	"seedhammer.com/engrave"
+	"seedhammer.com/gui/assets"
 	"seedhammer.com/gui/op"
 	"seedhammer.com/gui/widget"
 )
@@ -57,8 +60,12 @@ func blankScreen(ctx *Context, th *Colors, dims image.Point) op.Op {
 func curvesPathFlow(ctx *Context, th *Colors, payload curvesPayload) {
 	params := ctx.Platform.EngraverParams()
 	cs := &CurvesScreen{}
-	plate, err := validateCurves(cs, payload, params, ctx.Platform.DisplaySize())
+	plate, err := scanCurves(ctx, th, cs, payload, params)
 	if err != nil {
+		if errors.Is(err, curves.ErrCanceled) {
+			return
+		}
+		cs.info = ""
 		showError(ctx, th, err, cs.Draw)
 		return
 	}
@@ -74,14 +81,114 @@ func curvesPathFlow(ctx *Context, th *Colors, payload curvesPayload) {
 	}
 }
 
+// scanRefresh is the progress screen's redraw cadence while a scanned
+// drawing walks through validateCurves.
+const scanRefresh = time.Second / 4
+
+// scanCurves validates the payload in a worker goroutine while the
+// flow animates the screen: the preview raster fills stroke by stroke
+// as the walk streams and the info line carries the walked fraction.
+// The back button abandons the scan with curves.ErrCanceled.
+//
+// The worker exists for its stack, not for parallelism: the fused
+// walk pipeline and the frame rasterizer are each about as deep as a
+// goroutine's fixed 16KB stack comfortably carries, so the walk keeps
+// its own. The tasks scheduler is cooperative; the walk yields to the
+// frame loop from its progress callback.
+func scanCurves(ctx *Context, th *Colors, cs *CurvesScreen, payload []byte, params engrave.Params) (Plate, error) {
+	type result struct {
+		plate Plate
+		err   error
+	}
+	res := make(chan result, 1)
+	progress := make(chan [2]int, 1)
+	quit := make(chan struct{})
+	go func() {
+		defer ctx.Platform.Wakeup()
+		plate, err := validateCurves(cs, payload, params, ctx.Platform.DisplaySize(), func(done, total int) bool {
+			select {
+			case <-progress:
+			default:
+			}
+			select {
+			case progress <- [2]int{done, total}:
+			default:
+			}
+			runtime.Gosched()
+			select {
+			case <-quit:
+				return false
+			default:
+				return true
+			}
+		})
+		res <- result{plate, err}
+	}()
+	// The worker aliases the payload and the screen's preview; every
+	// return drains res so neither outlives the walk.
+	backBtn := &Clickable{Button: Button1}
+	for !ctx.Done {
+		// The cancel outranks a racing completion: a click pending from
+		// the previous frame must not be swallowed by a plate that
+		// finished in the same window.
+		if backBtn.Clicked(ctx) {
+			break
+		}
+		select {
+		case r := <-res:
+			return r.plate, r.err
+		default:
+		}
+		select {
+		case p := <-progress:
+			if p[1] > 0 {
+				cs.info = fmt.Sprintf("Preparing %d%%", p[0]*100/p[1])
+			}
+		default:
+		}
+		dims := ctx.Platform.DisplaySize()
+		nav, _ := layoutNavigation(&ctx.B, th, dims,
+			NavButton{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack},
+		)
+		ctx.WakeupAt(time.Now().Add(scanRefresh))
+		ctx.Frame(op.Layer(nav, cs.Draw(ctx, th, dims)))
+	}
+	close(quit)
+	r := <-res
+	if r.err == nil {
+		// The walk outran the cancel; the operator still asked out.
+		return Plate{}, curves.ErrCanceled
+	}
+	return Plate{}, r.err
+}
+
 // validateCurves parses and validates a curves payload and fills in
-// the screen's preview. Unlike text plates, the payload dictates all
-// geometry, so everything is checked up front: the confirm screen
-// preview is the operator's only verification.
-func validateCurves(cs *CurvesScreen, payload []byte, params engrave.Params, dims image.Point) (Plate, error) {
-	drawing, err := curves.Parse(payload, params)
+// the screen's preview, walking the drawing once: the payload's
+// commands stream through the planner while the duration and the
+// preview raster accumulate from the planned knots. The payload
+// dictates all geometry, so everything is checked up front: the
+// confirm screen preview is the operator's only verification. pump,
+// if not nil, observes the walk and cancels it by returning false.
+func validateCurves(cs *CurvesScreen, payload []byte, params engrave.Params, dims image.Point, pump func(done, total int) bool) (Plate, error) {
+	drawing, err := curves.Open(payload, params)
 	if err != nil {
 		return Plate{}, err
+	}
+	r := newSplineRasterizer(previewSide(dims), params)
+	// Shared with the pumping frame loop as it fills; the cooperative
+	// scheduler serializes the access.
+	cs.preview = r.preview
+	var walkErr error
+	var duration uint
+	spline := engrave.PlanEngraving(params.StepperConfig, func(yield func(engrave.Command) bool) {
+		walkErr = drawing.Walk(pump, yield)
+	})
+	for k := range spline {
+		duration += k.T
+		r.knot(k)
+	}
+	if walkErr != nil {
+		return Plate{}, walkErr
 	}
 	// The planner measures engraved segments only; bound every knot,
 	// including travel, to keep the head on the plate.
@@ -91,16 +198,18 @@ func validateCurves(cs *CurvesScreen, payload []byte, params engrave.Params, dim
 	if !drawing.Bounds.In(bspline.Bounds{Min: margin, Max: sz.Sub(margin)}) {
 		return Plate{}, ErrTooLarge
 	}
-	plate, err := toPlate(drawing.Engraving(), params)
-	if err != nil {
-		return Plate{}, err
-	}
 	tps := params.TicksPerSecond
-	if plate.Duration > curvesMaxMinutes*60*tps {
-		mins := (plate.Duration + 60*tps - 1) / (60 * tps)
+	if duration > curvesMaxMinutes*60*tps {
+		mins := (duration + 60*tps - 1) / (60 * tps)
 		return Plate{}, fmt.Errorf("The engraving would run %d minutes; at most %d are allowed.", mins, curvesMaxMinutes)
 	}
-	cs.init(plate, drawing, params, dims)
+	plate := Plate{
+		Duration: duration,
+		// A fresh plan for the engraver's own re-iterations; the walk
+		// above already proved it.
+		Spline: engrave.PlanEngraving(params.StepperConfig, drawing.Engraving()),
+	}
+	cs.init(plate, drawing, params)
 	return plate, nil
 }
 
@@ -109,9 +218,7 @@ type CurvesScreen struct {
 	info    string
 }
 
-func (s *CurvesScreen) init(plate Plate, drawing *curves.Drawing, params engrave.Params, dims image.Point) {
-	side := previewSide(dims)
-	s.preview = rasterizeSpline(plate.Spline, params, side)
+func (s *CurvesScreen) init(plate Plate, drawing *curves.Drawing, params engrave.Params) {
 	mm := params.Millimeter
 	w := (drawing.Bounds.Dx() + mm/2) / mm
 	h := (drawing.Bounds.Dy() + mm/2) / mm
@@ -169,29 +276,41 @@ type curvesPreview struct {
 	bits []uint32
 }
 
-func rasterizeSpline(spline bspline.Curve, params engrave.Params, side int) *curvesPreview {
-	p := &curvesPreview{
-		sz:   image.Pt(side, side),
-		bits: make([]uint32, (side*side+31)/32),
-	}
+// splineRasterizer accumulates the preview from planned spline knots
+// as they stream by, so the raster costs no walk of its own.
+type splineRasterizer struct {
+	preview *curvesPreview
+	seg     bspline.Segment
+	samples []bezier.Point
+	plate   int
+	spacing int
+}
+
+func newSplineRasterizer(side int, params engrave.Params) *splineRasterizer {
 	plate := SquarePlate.Dims(params.Millimeter).X
-	// Sample at a third of a pixel so plotted points form contiguous
-	// strokes without a line rasterizer.
-	spacing := max(1, plate/(side*3))
-	var samples []bezier.Point
-	var seg bspline.Segment
-	for k := range spline {
-		c, dt, engrave := seg.Knot(k)
-		if dt == 0 || !engrave {
-			continue
-		}
-		samples = append(samples[:0], c.C0)
-		samples = bezier.Sample(samples, c, spacing)
-		for _, pt := range samples {
-			p.set(pt.X*side/plate, pt.Y*side/plate)
-		}
+	return &splineRasterizer{
+		preview: &curvesPreview{
+			sz:   image.Pt(side, side),
+			bits: make([]uint32, (side*side+31)/32),
+		},
+		plate: plate,
+		// Sample at a third of a pixel so plotted points form
+		// contiguous strokes without a line rasterizer.
+		spacing: max(1, plate/(side*3)),
 	}
-	return p
+}
+
+func (r *splineRasterizer) knot(k bspline.Knot) {
+	c, dt, engrave := r.seg.Knot(k)
+	if dt == 0 || !engrave {
+		return
+	}
+	r.samples = append(r.samples[:0], c.C0)
+	r.samples = bezier.Sample(r.samples, c, r.spacing)
+	side := r.preview.sz.X
+	for _, pt := range r.samples {
+		r.preview.set(pt.X*side/r.plate, pt.Y*side/r.plate)
+	}
 }
 
 func (p *curvesPreview) set(x, y int) {

@@ -22,12 +22,35 @@ import (
 //     exit IS the travel vector; the flying planner reads it off the
 //     wire. M and L carry one pair, Q two (control, end), C three.
 //
+// The body may open with a shape dictionary, so a drawing full of
+// repeated shapes — a plate of text in a font the firmware does not
+// have — ships each shape's outline once:
+//
+//   - 'D', a uvarint shape count, then each shape as a uvarint byte
+//     length followed by that many bytes of the shape's own opcode
+//     stream: shape-local coordinates with the cursor starting at
+//     (0, 0), the first command a move, placements not allowed.
+//   - In the main stream that follows, 'G' places a shape: a uvarint
+//     shape id, then the zigzag-varint delta from the cursor to the
+//     placement base. The shape's coordinates are all offset by the
+//     base, and the cursor continues from its placed exit point, so
+//     the next delta stays travel-sized.
+//
 // Coordinates are payload units (units-per-mm from the header), the same
 // quantization v1 uses, so a v2 payload decodes to geometry identical to
 // the v1 payload for the same points — only the encoding differs.
 // Decoding is a stateful four-way switch that reads a fixed pair count
-// and accumulates the cursor, point by point, nothing materialized.
+// and accumulates the cursor, point by point, nothing materialized; a
+// placement redirects it into the shape's byte range and back, one
+// level deep, without allocating.
 const Version2 = 2
+
+// MaxDictShapes caps the dictionary of a Version2 payload. Every
+// dictionary shape holds at least one stroke and must be placed at
+// least twice to pay off, so MaxStrokes distinct shapes could never
+// all be engraved; the cap only denies a hostile payload a large
+// shape index.
+const MaxDictShapes = MaxStrokes
 
 // maxPayloadCoord bounds the accumulated cursor, in payload units, so a
 // hostile run of large deltas clamps out of the plate instead of
@@ -78,19 +101,74 @@ func EncodePath(unitsPerMM, strokeWidth int, segs []svgpath.Segment) ([]byte, er
 	if len(segs) == 0 || segs[0].Op != svgpath.MoveTo {
 		return nil, fmt.Errorf("curves: path must begin with a move")
 	}
+	// Bound the coordinate domain: past maxPayloadCoord the decoder's
+	// cursor clamp would silently reshape the drawing.
+	for _, s := range segs {
+		_, n := opByte(s.Op)
+		for i := 0; i < n; i++ {
+			if p := s.Args[i]; abs(p.X) > maxPayloadCoord || abs(p.Y) > maxPayloadCoord {
+				return nil, fmt.Errorf("curves: coordinate %v outside the payload range", p)
+			}
+		}
+	}
 	b := []byte(fmt.Sprintf("%d %s %d %d\n", Version2, ModePath, unitsPerMM, strokeWidth))
 	var cur bezier.Point
+	return appendSegs(b, segs, bezier.Point{}, &cur), nil
+}
+
+// appendSegs appends segs to b in the wire's opcode + chained-delta
+// encoding, offsetting every point by off and differencing from *cur,
+// which it advances to the final offset point.
+func appendSegs(b []byte, segs []svgpath.Segment, off bezier.Point, cur *bezier.Point) []byte {
 	for _, s := range segs {
 		opc, n := opByte(s.Op)
 		b = append(b, opc)
 		for i := 0; i < n; i++ {
-			p := s.Args[i]
+			p := s.Args[i].Add(off)
 			b = binary.AppendVarint(b, int64(p.X-cur.X))
 			b = binary.AppendVarint(b, int64(p.Y-cur.Y))
-			cur = p
+			*cur = p
 		}
 	}
-	return b, nil
+	return b
+}
+
+// scanDict reads the optional shape dictionary opening a Version2
+// body and validates its framing, so the decoder can jump into shape
+// byte ranges without bounds checks of its own. It returns each
+// shape's byte range and the offset of the main stream; a body not
+// opening with 'D' has no dictionary. The shape streams themselves
+// are validated as the decoder walks them.
+func scanDict(body []byte) (shapes [][2]int32, main int, err error) {
+	if len(body) == 0 || body[0] != 'D' {
+		return nil, 0, nil
+	}
+	pos := 1
+	count, n := binary.Uvarint(body[pos:])
+	if n <= 0 {
+		return nil, 0, fmt.Errorf("%w in dictionary", errTruncatedVarint)
+	}
+	pos += n
+	if count == 0 || count > MaxDictShapes {
+		return nil, 0, fmt.Errorf("dictionary of %d shapes, at most %d supported", count, MaxDictShapes)
+	}
+	shapes = make([][2]int32, 0, count)
+	for i := 0; i < int(count); i++ {
+		sz, n := binary.Uvarint(body[pos:])
+		if n <= 0 {
+			return nil, 0, fmt.Errorf("%w in dictionary", errTruncatedVarint)
+		}
+		pos += n
+		if sz == 0 || sz > uint64(len(body)-pos) {
+			return nil, 0, fmt.Errorf("dictionary shape %d runs past the payload", i)
+		}
+		if body[pos] != 'M' {
+			return nil, 0, fmt.Errorf("dictionary shape %d must begin with a move", i)
+		}
+		shapes = append(shapes, [2]int32{int32(pos), int32(pos + int(sz))})
+		pos += int(sz)
+	}
+	return shapes, pos, nil
 }
 
 // segIter is the segment source run walks: v1's ASCII svgpath.Iter or
@@ -106,66 +184,164 @@ type segIter interface {
 // builder pipeline is identical for both formats. scale converts an
 // accumulated payload-unit coordinate to machine units (and clamps to
 // maxCoord), exactly as v1's NewIter scale does.
+//
+// A placement redirects the iterator into its shape's byte range with
+// the placement base added to every shape-local coordinate, then back
+// to the main stream — one level (scanDict guarantees a shape starts
+// with a move, and place rejects nesting), with no allocation, so
+// each replay of the engraving stays cheap.
 type binaryIter struct {
 	body  []byte
+	dict  [][2]int32
 	pos   int
 	cur   bezier.Point // payload-unit cursor
 	scale func(float64) int
 	first bool
 	err   error
+
+	// Placement expansion state; inShape guards the single level.
+	inShape bool
+	sEnd    int          // end of the current shape's byte range
+	ret     int          // main-stream position to resume at
+	base    bezier.Point // placement base offsetting the shape
+	local   bezier.Point // shape-local cursor
 }
 
-func newBinaryIter(body []byte, scale func(float64) int) *binaryIter {
-	return &binaryIter{body: body, scale: scale, first: true}
+func newBinaryIter(body []byte, dict [][2]int32, main int, scale func(float64) int) *binaryIter {
+	return &binaryIter{body: body, dict: dict, pos: main, scale: scale, first: true}
 }
 
 func (it *binaryIter) Err() error { return it.err }
 
 func (it *binaryIter) Next() (svgpath.Segment, bool) {
-	if it.err != nil || it.pos >= len(it.body) {
-		return svgpath.Segment{}, false
-	}
-	opc := it.body[it.pos]
-	it.pos++
-	op, n, ok := opPairs(opc)
-	if !ok {
-		it.err = fmt.Errorf("curves: unexpected opcode %#x in path data", opc)
-		return svgpath.Segment{}, false
-	}
-	if it.first && op != svgpath.MoveTo {
-		it.err = fmt.Errorf("curves: path data must begin with a move")
-		return svgpath.Segment{}, false
-	}
-	it.first = false
-	s := svgpath.Segment{Op: op}
-	for i := 0; i < n; i++ {
-		dx, ok := it.readDelta()
-		if !ok {
+	for {
+		if it.err != nil {
 			return svgpath.Segment{}, false
 		}
-		dy, ok := it.readDelta()
-		if !ok {
+		if it.inShape && it.pos >= it.sEnd {
+			// The shape is exhausted: the cursor continues from its
+			// placed exit and the main stream resumes.
+			it.inShape = false
+			it.cur = addClamped(it.base, it.local)
+			it.pos = it.ret
+		}
+		if !it.inShape && it.pos >= len(it.body) {
 			return svgpath.Segment{}, false
 		}
-		it.cur = bezier.Pt(
-			clampPayload(int64(it.cur.X)+dx),
-			clampPayload(int64(it.cur.Y)+dy),
-		)
-		s.Args[i] = bezier.Pt(it.scale(float64(it.cur.X)), it.scale(float64(it.cur.Y)))
+		opc := it.body[it.pos]
+		it.pos++
+		if opc == 'G' {
+			if it.err = it.place(); it.err != nil {
+				return svgpath.Segment{}, false
+			}
+			continue
+		}
+		op, n, ok := opPairs(opc)
+		if !ok {
+			it.err = fmt.Errorf("unexpected opcode %#x in path data", opc)
+			return svgpath.Segment{}, false
+		}
+		if it.first && op != svgpath.MoveTo {
+			it.err = fmt.Errorf("path data must begin with a move")
+			return svgpath.Segment{}, false
+		}
+		it.first = false
+		s := svgpath.Segment{Op: op}
+		for i := 0; i < n; i++ {
+			dx, ok := it.readDelta()
+			if !ok {
+				return svgpath.Segment{}, false
+			}
+			dy, ok := it.readDelta()
+			if !ok {
+				return svgpath.Segment{}, false
+			}
+			abs := &it.cur
+			if it.inShape {
+				abs = &it.local
+			}
+			*abs = bezier.Pt(
+				clampPayload(int64(abs.X)+dx),
+				clampPayload(int64(abs.Y)+dy),
+			)
+			p := *abs
+			if it.inShape {
+				p = addClamped(it.base, it.local)
+			}
+			s.Args[i] = bezier.Pt(it.scale(float64(p.X)), it.scale(float64(p.Y)))
+		}
+		return s, true
 	}
-	return s, true
 }
 
-// readDelta reads one zigzag-varint from the body, advancing pos. It
-// records a truncation error and returns ok=false at end of input.
-func (it *binaryIter) readDelta() (int64, bool) {
-	v, n := binary.Varint(it.body[it.pos:])
+// end bounds the current read region: the shape's declared byte range
+// while expanding a placement, the whole body otherwise. Varints must
+// not read past it — a shape whose length cuts a command short must
+// error, not borrow the following bytes as coordinates.
+func (it *binaryIter) end() int {
+	if it.inShape {
+		return it.sEnd
+	}
+	return len(it.body)
+}
+
+// place enters a 'G' placement: shape id, then the travel delta to the
+// placement base. The iterator continues inside the shape's byte range.
+func (it *binaryIter) place() error {
+	if it.inShape {
+		return fmt.Errorf("nested placement in a dictionary shape")
+	}
+	if len(it.dict) == 0 {
+		return fmt.Errorf("placement without a dictionary")
+	}
+	id, n := binary.Uvarint(it.body[it.pos:])
 	if n <= 0 {
-		it.err = fmt.Errorf("curves: %w in path data", errTruncatedVarint)
+		return fmt.Errorf("%w in path data", errTruncatedVarint)
+	}
+	it.pos += n
+	if id >= uint64(len(it.dict)) {
+		return fmt.Errorf("placement of shape %d outside the %d-shape dictionary", id, len(it.dict))
+	}
+	dx, ok := it.readDelta()
+	if !ok {
+		return it.err
+	}
+	dy, ok := it.readDelta()
+	if !ok {
+		return it.err
+	}
+	it.base = bezier.Pt(
+		clampPayload(int64(it.cur.X)+dx),
+		clampPayload(int64(it.cur.Y)+dy),
+	)
+	it.local = bezier.Point{}
+	it.ret = it.pos
+	sh := it.dict[id]
+	it.pos, it.sEnd = int(sh[0]), int(sh[1])
+	it.inShape = true
+	return nil
+}
+
+// readDelta reads one zigzag-varint from the current read region,
+// advancing pos. It records a truncation error and returns ok=false at
+// the region's end.
+func (it *binaryIter) readDelta() (int64, bool) {
+	v, n := binary.Varint(it.body[it.pos:it.end()])
+	if n <= 0 {
+		it.err = fmt.Errorf("%w in path data", errTruncatedVarint)
 		return 0, false
 	}
 	it.pos += n
 	return v, true
+}
+
+// addClamped is the payload-unit point sum, clamped like any
+// accumulated cursor.
+func addClamped(a, b bezier.Point) bezier.Point {
+	return bezier.Pt(
+		clampPayload(int64(a.X)+int64(b.X)),
+		clampPayload(int64(a.Y)+int64(b.Y)),
+	)
 }
 
 func clampPayload(v int64) int {

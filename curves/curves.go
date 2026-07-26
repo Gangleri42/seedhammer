@@ -12,8 +12,10 @@
 //   - Version 1 (path): the body is ASCII SVG path data restricted to
 //     the absolute commands M, L, C, Q and Z.
 //   - Version 2 (path): the body is a compact binary stream of the same
-//     M/L/Q/C commands with relative zigzag-varint coordinates. See
-//     Version2 and EncodePath.
+//     M/L/Q/C commands with relative zigzag-varint coordinates, and may
+//     open with a dictionary of repeated shapes that placements in the
+//     stream stamp by reference. See Version2, EncodePath and
+//     EncodeGroups.
 //
 // Coordinates are payload units, converted to machine units through
 // units-per-mm; stroke-width is the width the source device assumed, in
@@ -128,6 +130,24 @@ const maxRun = 4096
 
 var errStrokeTooLong = errors.New("stroke too long")
 
+// Hard parse bounds, a headroom multiple above the engraving caps. The
+// dictionary lets a 32 KB payload expand to millions of knots, so the
+// counting walk stops once no Validate outcome but rejection remains
+// possible; the multiple keeps Validate's gauge report intact for
+// honestly-over drawings, and only expansion bombs hit these.
+//
+// The segment bound backs the knot bound: degenerate zero-length
+// segments decode without yielding a knot, so a knot count alone would
+// let a placement bomb of degenerate filler walk millions of segments
+// on the device before erroring. Real drawings yield at least as many
+// knots as segments (the fitter samples at stroke width), so the same
+// headroom multiple applies.
+const (
+	parseMaxStrokes = 4 * MaxStrokes
+	parseMaxKnots   = 4 * MaxKnots
+	parseMaxSegs    = 4 * MaxKnots
+)
+
 // Drawing is a validated curves payload, ready for engraving.
 type Drawing struct {
 	// Strokes counts the engraved strokes.
@@ -143,9 +163,14 @@ type Drawing struct {
 
 	// Exactly one of path (v1 ASCII) and binary (v2 body) is set; run
 	// walks whichever is present. Both alias the payload, so a Drawing
-	// retains only the wire bytes, not a materialized geometry.
-	path   string
-	binary []byte
+	// retains only the wire bytes, not a materialized geometry. For v2,
+	// dict holds the byte ranges of the dictionary shapes and mainOff
+	// the offset where the main stream starts — the one small index a
+	// dictionary payload retains beyond the wire bytes.
+	path    string
+	binary  []byte
+	dict    [][2]int32
+	mainOff int
 	// wireBytes is the full payload length (header included), the figure
 	// Report.Bytes gauges against the NDEF cap for either format.
 	wireBytes int
@@ -204,13 +229,24 @@ func Parse(data []byte, params engrave.Params) (*Drawing, error) {
 		}
 		d.path = path
 	case Version2:
-		// The binary body streams through binaryIter; it needs only the
+		// An optional shape dictionary opens the body; its framing is
+		// validated here so run can jump between the shape byte ranges
+		// and the main stream. The streams themselves need only the
 		// leading-move guarantee up front, the rest is validated as run
-		// walks it (bad opcodes, truncated varints).
-		if len(body) == 0 || body[0] != 'M' {
+		// walks them (bad opcodes, truncated varints, bad placements).
+		dict, main, derr := scanDict(body)
+		if derr != nil {
+			return nil, fmt.Errorf("curves: %w", derr)
+		}
+		if main >= len(body) {
+			return nil, fmt.Errorf("curves: path data must begin with a move")
+		}
+		if b := body[main]; b != 'M' && (b != 'G' || dict == nil) {
 			return nil, fmt.Errorf("curves: path data must begin with a move")
 		}
 		d.binary = body
+		d.dict = dict
+		d.mainOff = main
 	default:
 		return nil, fmt.Errorf("curves: unsupported version %d", version)
 	}
@@ -220,6 +256,7 @@ func Parse(data []byte, params engrave.Params) (*Drawing, error) {
 		last     bezier.Point
 		eq       int
 		run      int
+		bomb     error
 	)
 	err := d.run(func(cmd engrave.Command) bool {
 		k, ok := cmd.AsKnot()
@@ -241,6 +278,10 @@ func Parse(data []byte, params engrave.Params) (*Drawing, error) {
 		} else {
 			engraved = false
 		}
+		if d.Strokes > parseMaxStrokes || d.Knots > parseMaxKnots {
+			bomb = fmt.Errorf("the drawing expands past %d strokes or %d knots", parseMaxStrokes, parseMaxKnots)
+			return false
+		}
 		if k.Knot == last && d.Knots > 1 {
 			eq++
 		} else {
@@ -256,6 +297,9 @@ func Parse(data []byte, params engrave.Params) (*Drawing, error) {
 		}
 		return true
 	})
+	if bomb != nil {
+		err = bomb
+	}
 	if err != nil {
 		return nil, fmt.Errorf("curves: %w", err)
 	}
@@ -294,7 +338,7 @@ func (d *Drawing) run(yield func(engrave.Command) bool) error {
 	}
 	var it segIter
 	if d.binary != nil {
-		it = newBinaryIter(d.binary, scale)
+		it = newBinaryIter(d.binary, d.dict, d.mainOff, scale)
 	} else {
 		it = svgpath.NewIter(d.path, 0, 0, scale)
 	}
@@ -302,11 +346,15 @@ func (d *Drawing) run(yield func(engrave.Command) bool) error {
 		pen   bezier.Point
 		out   bezier.Point
 		drawn bool
+		segs  int
 	)
 	for {
 		s, ok := it.Next()
 		if !ok {
 			break
+		}
+		if segs++; segs > parseMaxSegs {
+			return fmt.Errorf("the drawing expands past %d segments", parseMaxSegs)
 		}
 		if s.Op != svgpath.MoveTo && degenerate(s, pen) {
 			// Zero-length drawing segments carry no geometry, but

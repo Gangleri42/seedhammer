@@ -60,6 +60,48 @@ func Order(segs []svgpath.Segment) []svgpath.Segment {
 	return out
 }
 
+// OrderGroups reorders whole placed groups by the same greedy
+// nearest-entry heuristic as Order, for drawings headed into
+// EncodeGroups. Unlike Order it never reverses: a group is one shape
+// instance, and reversing some instances would fork one repeated
+// shape into two canonical forms, defeating the dictionary. Shape
+// contours are typically closed loops whose entry is their exit, so
+// reversal has nothing to win there anyway.
+func OrderGroups(groups []Group) []Group {
+	if len(groups) <= 1 {
+		return groups
+	}
+	entries := make([]bezier.Point, len(groups))
+	exits := make([]bezier.Point, len(groups))
+	for i, g := range groups {
+		if len(g.Segs) == 0 || g.Segs[0].Op != svgpath.MoveTo {
+			// Invalid input; return it unchanged so the encoder rejects
+			// it with its usual error.
+			return groups
+		}
+		entries[i] = g.At.Add(g.Segs[0].Args[0])
+		exits[i] = g.At.Add(groupExit(g.Segs))
+	}
+	used := make([]bool, len(groups))
+	out := make([]Group, 0, len(groups))
+	cur := bezier.Point{} // the planner clamps the head at the origin to start
+	for range groups {
+		best, bestD := -1, int64(-1)
+		for i := range groups {
+			if used[i] {
+				continue
+			}
+			if d := dist2(cur, entries[i]); bestD < 0 || d < bestD {
+				bestD, best = d, i
+			}
+		}
+		used[best] = true
+		out = append(out, groups[best])
+		cur = exits[best]
+	}
+	return out
+}
+
 // stroke is one contour: its leading MoveTo and draw commands, plus the
 // on-curve points (entry, then each segment's endpoint) reversal needs.
 type stroke struct {

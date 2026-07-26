@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"seedhammer.com/bezier"
 	"seedhammer.com/curves"
+	"seedhammer.com/richtext"
 	"seedhammer.com/svgpath"
 )
 
@@ -144,86 +144,14 @@ func TestSVGRoundTrip(t *testing.T) {
 	}
 }
 
-func TestRichTextHeaderIsLarger(t *testing.T) {
-	body, err := renderMarkdown("Hi", 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	head, err := renderMarkdown("# Hi", 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if groupsBounds(head).width() <= groupsBounds(body).width() {
-		t.Errorf("header (%.1f) should be wider than body (%.1f)",
-			groupsBounds(head).width(), groupsBounds(body).width())
-	}
-}
-
-func TestRichTextHeaderLevels(t *testing.T) {
-	// Every supported header level renders larger than body text, and
-	// the levels shrink monotonically as the '#' prefix grows.
-	body, err := renderMarkdown("Hi", 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bodyW := groupsBounds(body).width()
-	prev := 0.0
-	for lvl := 1; lvl <= maxHeaderLevel; lvl++ {
-		groups, err := renderMarkdown(strings.Repeat("#", lvl)+" Hi", 4)
-		if err != nil {
-			t.Fatalf("level %d: %v", lvl, err)
-		}
-		w := groupsBounds(groups).width()
-		if w <= bodyW {
-			t.Errorf("level %d width %.1f should exceed body %.1f", lvl, w, bodyW)
-		}
-		if prev != 0 && w >= prev {
-			t.Errorf("level %d width %.1f should be smaller than level %d width %.1f", lvl, w, lvl-1, prev)
-		}
-		prev = w
-	}
-}
-
 func TestRichTextValid(t *testing.T) {
 	const md = "# Title\n\nKeep *safe*.\n"
-	groups, err := renderMarkdown(md, 4)
+	groups, err := richtext.Render(md, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, _, _, err := finishGroups(groups, true); err != nil {
 		t.Fatalf("finishGroups: %v", err)
-	}
-}
-
-func TestRichTextUnderline(t *testing.T) {
-	// "_" underlines (distinct from "*" italic): the underlined run
-	// adds exactly one rule group over the same glyphs.
-	plain, err := renderMarkdown("a b c", 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	under, err := renderMarkdown("a _b_ c", 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(under) != len(plain)+1 {
-		t.Fatalf("underline should add one rule group: plain %d, under %d", len(plain), len(under))
-	}
-	// Somewhere there is a horizontal rule group: a MoveTo at the local
-	// origin and a LineTo rightward on the same line.
-	found := false
-	for _, g := range under {
-		if len(g.segs) != 2 {
-			continue
-		}
-		a, b := g.segs[0], g.segs[1]
-		if a.op == svgpath.MoveTo && b.op == svgpath.LineTo && a.p[0] == (fpt{}) && b.p[0].Y == 0 && b.p[0].X > 0 {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("no horizontal underline rule found")
 	}
 }
 
@@ -247,7 +175,7 @@ Verify addresses on two devices.
 Check the plates yearly.
 Keep away from the seed plates.
 `
-	groups, err := renderMarkdown(md, 4)
+	groups, err := richtext.Render(md, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,14 +184,12 @@ Keep away from the seed plates.
 		t.Fatalf("finishGroups: %v", err)
 	}
 	// The flat baseline: identical quantized geometry, no dictionary.
-	q := func(v float64) int { return int(math.Round(v * payloadUnitsPerMM)) }
 	var flatSegs []svgpath.Segment
-	for _, g := range groups {
-		at := fpt{X: g.at.X, Y: g.at.Y}
-		for _, s := range g.segs {
-			out := svgpath.Segment{Op: s.op}
-			for i := 0; i < s.npts(); i++ {
-				out.Args[i] = bezier.Pt(q(at.X)+q(s.p[i].X), q(at.Y)+q(s.p[i].Y))
+	for _, g := range richtext.Groups(groups, payloadUnitsPerMM) {
+		for _, s := range g.Segs {
+			out := svgpath.Segment{Op: s.Op}
+			for i := range s.Args {
+				out.Args[i] = s.Args[i].Add(g.At)
 			}
 			flatSegs = append(flatSegs, out)
 		}
@@ -306,30 +232,6 @@ func TestByteCapRejected(t *testing.T) {
 		r.Bytes, r.Strokes, r.Knots, r.MaxStrokeKnots, r.Seconds)
 	if err == nil || !strings.Contains(err.Error(), "NDEF cap") {
 		t.Fatalf("want NDEF cap rejection, got %v", err)
-	}
-}
-
-func TestProseNotTablified(t *testing.T) {
-	// A shell pipe in prose over a plain rule must not become a table:
-	// the delimiter row needs a pipe to count (GFM).
-	if isSeparatorRow("------------------------") {
-		t.Error("a pipe-less rule must not be a table separator")
-	}
-	if !isSeparatorRow("| --- | --- |") {
-		t.Error("a real pipe delimiter row should still match")
-	}
-	md := "Run: cat f | grep x\n------------------------\nDone.\n"
-	plain := "Run: cat f X grep x\n------------------------\nDone.\n"
-	withPipe, err := renderMarkdown(md, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	noPipe, _ := renderMarkdown(plain, 4)
-	// No spurious table rules, so the two render the same group count
-	// aside from the single glyph difference; a tablified version would
-	// add a group per table rule.
-	if len(withPipe) > len(noPipe)+2 {
-		t.Errorf("prose with a pipe tablified: %d vs %d groups", len(withPipe), len(noPipe))
 	}
 }
 

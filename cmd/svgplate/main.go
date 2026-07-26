@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"seedhammer.com/curves"
+	"seedhammer.com/richtext"
 )
 
 func main() {
@@ -59,7 +60,7 @@ func main() {
 		verr    error
 	)
 	if isText {
-		groups, err := renderMarkdown(string(src), *body)
+		groups, err := richtext.Render(string(src), *body)
 		// A rich-text miss is a warning, not a stop: the drawing minus
 		// the bad runes may still be worth engraving.
 		if err != nil {

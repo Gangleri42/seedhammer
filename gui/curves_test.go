@@ -9,13 +9,23 @@ import (
 	"strings"
 	"testing"
 
+	"math"
 	"seedhammer.com/curves"
+	"seedhammer.com/svgpath"
 )
 
 // curvesTestPayload is a payload in 100 units per mm, engravable
 // with the test params (0.3mm stroke = 30 units).
 func curvesTestPayload(path string) []byte {
-	return []byte("1 path 100 30\n" + path)
+	segs, err := svgpath.ParseData(path, 0, 0, func(v float64) int { return int(math.Round(v)) })
+	if err != nil {
+		panic(err)
+	}
+	payload, err := curves.EncodePath(100, 30, segs)
+	if err != nil {
+		panic(err)
+	}
+	return payload
 }
 
 func TestScanCurvesRecord(t *testing.T) {
@@ -73,7 +83,7 @@ func TestCurvesTextModeMatchesTextRecord(t *testing.T) {
 	// text-record path: same canonicalization, same layout, same
 	// engraving. This is the invariant the A/B bench checks.
 	const body = "IN CASE OF FIRE  \n\nBREAK GLASS"
-	payload := []byte("1 text\n" + body)
+	payload := []byte("2 text\n" + body)
 
 	mode, err := curves.Mode(payload)
 	if err != nil || mode != curves.ModeText {

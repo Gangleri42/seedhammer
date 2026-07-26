@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"os"
 	"strconv"
@@ -14,6 +13,7 @@ import (
 	"seedhammer.com/curves"
 	"seedhammer.com/engrave"
 	"seedhammer.com/font/sh"
+	"seedhammer.com/svgpath"
 )
 
 // TestGlyphsInSync fails if the committed glyphs.js has drifted from the
@@ -40,7 +40,6 @@ func TestCurvesRoundTrip(t *testing.T) {
 		strokeWidth := int(math.Round(0.3 * float64(unitsPerMM)))
 		margin := 3 * unitsPerMM
 		var b strings.Builder
-		fmt.Fprintf(&b, "%d %s %d %d\n", curves.Version, curves.ModePath, unitsPerMM, strokeWidth)
 		lines := []string{"IN CASE OF FIRE", "BREAK GLASS", "*@0Q9#8{}"}
 		for row, line := range lines {
 			for col, ch := range line {
@@ -52,7 +51,15 @@ func TestCurvesRoundTrip(t *testing.T) {
 				b.WriteString("\n")
 			}
 		}
-		drawing, err := curves.Parse([]byte(b.String()), params)
+		segs, err := svgpath.ParseData(b.String(), 0, 0, func(v float64) int { return int(math.Round(v)) })
+		if err != nil {
+			t.Fatalf("%.1fmm: %v", size, err)
+		}
+		payload, err := curves.EncodePath(unitsPerMM, strokeWidth, segs)
+		if err != nil {
+			t.Fatalf("%.1fmm: %v", size, err)
+		}
+		drawing, err := curves.Parse(payload, params)
 		if err != nil {
 			t.Fatalf("%.1fmm: %v", size, err)
 		}

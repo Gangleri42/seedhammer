@@ -9,11 +9,10 @@ import (
 	"seedhammer.com/svgpath"
 )
 
-// Version2 is the binary path payload format. It keeps v1's one-line
-// ASCII header — "2 path units-per-mm stroke-width\n" — so the leading
-// token still dispatches version and mode in one Atoi before any binary
-// parse. The body then replaces v1's ASCII SVG path with a compact
-// binary stream:
+// The binary path payload format. A one-line ASCII header — "2 path
+// units-per-mm stroke-width\n" — dispatches version and mode in one
+// Atoi before any binary parse, and stays greppable. The body is a
+// compact binary stream:
 //
 //   - One opcode byte per command, the v1 letters 'M' 'L' 'Q' 'C'.
 //   - Then the command's coordinate pairs, each a signed zigzag-varint
@@ -36,16 +35,13 @@ import (
 //     base, and the cursor continues from its placed exit point, so
 //     the next delta stays travel-sized.
 //
-// Coordinates are payload units (units-per-mm from the header), the same
-// quantization v1 uses, so a v2 payload decodes to geometry identical to
-// the v1 payload for the same points — only the encoding differs.
+// Coordinates are payload units (units-per-mm from the header).
 // Decoding is a stateful four-way switch that reads a fixed pair count
 // and accumulates the cursor, point by point, nothing materialized; a
 // placement redirects it into the shape's byte range and back, one
 // level deep, without allocating.
-const Version2 = 2
 
-// MaxDictShapes caps the dictionary of a Version2 payload. It bounds
+// MaxDictShapes caps the dictionary of a path payload. It bounds
 // the shape index a payload can make the device retain; no realistic
 // drawing needs more distinct shapes (the full engravable charset is
 // under a hundred), so the cap only denies a hostile payload a large
@@ -92,8 +88,8 @@ func opByte(op svgpath.SegmentOp) (byte, int) {
 	panic("curves: unknown segment op")
 }
 
-// EncodePath encodes absolute payload-unit segments as a Version2 binary
-// path payload. Each segs[i].Args holds the command's points in payload
+// EncodePath encodes absolute payload-unit segments as a binary path
+// payload. Each segs[i].Args holds the command's points in payload
 // units — integer coordinates at the given units-per-mm; the encoder
 // differences them into the wire's chained deltas. The first segment
 // must be a MoveTo, matching the decoder's requirement.
@@ -111,7 +107,7 @@ func EncodePath(unitsPerMM, strokeWidth int, segs []svgpath.Segment) ([]byte, er
 			}
 		}
 	}
-	b := []byte(fmt.Sprintf("%d %s %d %d\n", Version2, ModePath, unitsPerMM, strokeWidth))
+	b := []byte(fmt.Sprintf("%d %s %d %d\n", Version, ModePath, unitsPerMM, strokeWidth))
 	var cur bezier.Point
 	return appendSegs(b, segs, bezier.Point{}, &cur), nil
 }
@@ -133,7 +129,7 @@ func appendSegs(b []byte, segs []svgpath.Segment, off bezier.Point, cur *bezier.
 	return b
 }
 
-// scanDict reads the optional shape dictionary opening a Version2
+// scanDict reads the optional shape dictionary opening a path
 // body and validates its framing, so the decoder can jump into shape
 // byte ranges without bounds checks of its own. It returns each
 // shape's byte range and the offset of the main stream; a body not
@@ -171,19 +167,9 @@ func scanDict(body []byte) (shapes [][2]int32, main int, err error) {
 	return shapes, pos, nil
 }
 
-// segIter is the segment source run walks: v1's ASCII svgpath.Iter or
-// v2's binaryIter, both yielding scaled machine-unit segments so the
-// builder pipeline downstream is identical for either format.
-type segIter interface {
-	Next() (svgpath.Segment, bool)
-	Err() error
-}
-
-// binaryIter walks a Version2 binary body, yielding scaled machine-unit
-// segments — the same stream svgpath.NewIter yields for v1, so run's
-// builder pipeline is identical for both formats. scale converts an
-// accumulated payload-unit coordinate to machine units (and clamps to
-// maxCoord), exactly as v1's NewIter scale does.
+// binaryIter walks a binary path body, yielding scaled machine-unit
+// segments for run's builder pipeline. scale converts an accumulated
+// payload-unit coordinate to machine units, clamping to maxCoord.
 //
 // A placement redirects the iterator into its shape's byte range with
 // the placement base added to every shape-local coordinate, then back

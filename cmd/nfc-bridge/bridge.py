@@ -186,7 +186,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(n) or b"{}")
             # payloadB64 carries a binary v2 curves payload (arbitrary bytes,
             # which JSON cannot hold as a string); payload stays a plain string
-            # for text envelopes and v1 paths.
+            # for text envelopes.
             if data.get("payloadB64"):
                 payload = base64.b64decode(data["payloadB64"], validate=True)
             else:

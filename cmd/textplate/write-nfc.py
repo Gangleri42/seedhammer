@@ -100,24 +100,12 @@ def translate(d: str, dx: int, dy: int) -> str:
 
 
 def compile_curves(lines: list[str], size: dict, sh: dict) -> bytes:
-    """Compile a composition to a seedhammer.com:curves payload, with
-    glyphs laid out on the same grid the firmware engraves."""
-    units_per_mm = int(sh["height"] / size["mm"] + 0.5)
-    stroke_width = int(sh["strokeMM"] * units_per_mm + 0.5)
-    margin = sh["marginMM"] * units_per_mm
-    parts = [f"{sh['version']} path {units_per_mm} {stroke_width}"]
-    for row, line in enumerate(lines):
-        for col, ch in enumerate(line):
-            d = sh["glyphs"].get(ch, "")
-            if not d:
-                continue
-            dx = margin + col * sh["advance"]
-            dy = margin + row * sh["height"]
-            parts.append(translate(d, dx, dy))
-    payload = "\n".join(parts).encode()
-    if len(payload) > sh["payloadCap"]:
-        sys.exit(f"payload is {len(payload)} bytes, over the {sh['payloadCap']} byte cap")
-    return payload
+    """Retired: version 2 path bodies are binary (dictionary-compressed),
+    which this script does not emit. Vectorized text comes from
+    cmd/svgplate now; the text modes here cover the grid plate."""
+    sys.exit("--curves retired: the version 2 path body is binary. "
+             "Use 'go run seedhammer.com/cmd/svgplate -text' to vectorize, "
+             "or --curves-text for the firmware-rendered text mode.")
 
 
 def write(records: list) -> None:

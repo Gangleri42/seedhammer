@@ -29,9 +29,9 @@ func collect(e engrave.Engraving) []engrave.Command {
 	return out
 }
 
-// encodeV1 formats the same absolute payload-unit segments as a v1 ASCII
-// path payload: the reference the v2 binary body must decode identically
-// at the same units-per-mm.
+// encodeV1 formats segments as the retired version 1 ASCII path text —
+// no longer parseable, kept purely as the byte-size reference the
+// binary encoding is measured against.
 func encodeV1(unitsPerMM, strokeWidth int, segs []svgpath.Segment) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d %s %d %d\n", Version, ModePath, unitsPerMM, strokeWidth)
@@ -83,32 +83,23 @@ func TestEncodePathRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	d, err := Parse(v2, sh2)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if d.Strokes != 2 {
+		t.Errorf("strokes = %d, want 2 (contour + zigzag)", d.Strokes)
+	}
+	if d.Knots == 0 || d.MaxStrokeKnots == 0 {
+		t.Errorf("knot counts empty: %d total, %d max per stroke", d.Knots, d.MaxStrokeKnots)
+	}
+	// The retired ASCII text of the same drawing is the compaction
+	// reference at equal quantization.
 	v1 := encodeV1(unitsPerMM, strokeWidth, segs)
-
-	d1, err := Parse(v1, sh2)
-	if err != nil {
-		t.Fatalf("v1 parse: %v", err)
-	}
-	d2, err := Parse(v2, sh2)
-	if err != nil {
-		t.Fatalf("v2 parse: %v", err)
-	}
-
-	// Same points at the same quantization: the binary body must decode
-	// to the identical engraving, command for command.
-	c1, c2 := collect(d1.Engraving()), collect(d2.Engraving())
-	if !reflect.DeepEqual(c1, c2) {
-		t.Fatalf("command streams differ: v1 %d cmds, v2 %d cmds", len(c1), len(c2))
-	}
-	if d1.Bounds != d2.Bounds || d1.Strokes != d2.Strokes || d1.Knots != d2.Knots {
-		t.Errorf("summary differs: v1{strokes=%d knots=%d bounds=%v} v2{strokes=%d knots=%d bounds=%v}",
-			d1.Strokes, d1.Knots, d1.Bounds, d2.Strokes, d2.Knots, d2.Bounds)
-	}
-
 	if len(v2) >= len(v1) {
-		t.Errorf("v2 not smaller: v1 %d bytes, v2 %d bytes", len(v1), len(v2))
+		t.Errorf("binary not smaller: ASCII %d bytes, binary %d bytes", len(v1), len(v2))
 	}
-	t.Logf("size at equal quantization: v1 %d bytes, v2 %d bytes (%.2fx)",
+	t.Logf("size at equal quantization: ASCII %d bytes, binary %d bytes (%.2fx)",
 		len(v1), len(v2), float64(len(v1))/float64(len(v2)))
 }
 

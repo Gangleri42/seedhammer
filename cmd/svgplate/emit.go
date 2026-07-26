@@ -61,30 +61,92 @@ func emitPayload(segs []fseg, order bool) ([]byte, error) {
 	return curves.EncodePath(payloadUnitsPerMM, payloadStroke, out)
 }
 
+// emitGroups quantizes placed millimeter groups to payload units and
+// encodes them with the shape dictionary. A shape is quantized in its
+// local frame and its placement separately, so every instance of a
+// glyph lands byte-identical and dedups; the up-to-0.05mm placement
+// shift this costs is far below the 0.3mm needle.
+func emitGroups(groups []fgroup, order bool) ([]byte, error) {
+	q := func(v float64) int { return int(math.Round(v * payloadUnitsPerMM)) }
+	out := make([]curves.Group, len(groups))
+	strokes := 0
+	for i, g := range groups {
+		cg := curves.Group{
+			At:   bezier.Pt(q(g.at.X), q(g.at.Y)),
+			Segs: make([]svgpath.Segment, len(g.segs)),
+		}
+		for j, s := range g.segs {
+			cg.Segs[j].Op = s.op
+			for k := 0; k < s.npts(); k++ {
+				cg.Segs[j].Args[k] = bezier.Pt(q(s.p[k].X), q(s.p[k].Y))
+			}
+			if s.op == svgpath.MoveTo {
+				strokes++
+			}
+		}
+		out[i] = cg
+	}
+	// The same quadratic-ordering guard as emitPayload, on the same
+	// stroke count validation is about to reject anyway.
+	if order && strokes <= 2*curves.MaxStrokes {
+		out = curves.OrderGroups(out)
+	}
+	return curves.EncodeGroups(payloadUnitsPerMM, payloadStroke, out)
+}
+
 // finish emits, parses and validates a laid-out drawing. It returns
 // the payload bytes, the parsed drawing (for preview) and its gauge
 // report. A parse or cap failure is returned as an error with the
 // report still filled where possible.
-func finish(segs []fseg, order bool) (payload []byte, d *curves.Drawing, r curves.Report, err error) {
+func finish(segs []fseg, order bool) ([]byte, *curves.Drawing, curves.Report, error) {
 	// Guard the payload choke point: a non-finite coordinate (from a
 	// malformed source, a degenerate transform, or an arc edge case)
 	// would quantize to garbage and desync curves.Parse.
 	for _, s := range segs {
 		for i := 0; i < s.npts(); i++ {
-			if math.IsNaN(s.p[i].X) || math.IsInf(s.p[i].X, 0) || math.IsNaN(s.p[i].Y) || math.IsInf(s.p[i].Y, 0) {
+			if !finite(s.p[i]) {
 				return nil, nil, curves.Report{}, fmt.Errorf("curves: non-finite coordinate %v in geometry", s.p[i])
 			}
 		}
 	}
-	payload, err = emitPayload(segs, order)
+	payload, err := emitPayload(segs, order)
+	return validatePayload(payload, err)
+}
+
+// finishGroups is finish for the placed-group front-end.
+func finishGroups(groups []fgroup, order bool) ([]byte, *curves.Drawing, curves.Report, error) {
+	for _, g := range groups {
+		if !finite(g.at) {
+			return nil, nil, curves.Report{}, fmt.Errorf("curves: non-finite coordinate %v in geometry", g.at)
+		}
+		for _, s := range g.segs {
+			for i := 0; i < s.npts(); i++ {
+				if !finite(s.p[i]) {
+					return nil, nil, curves.Report{}, fmt.Errorf("curves: non-finite coordinate %v in geometry", s.p[i])
+				}
+			}
+		}
+	}
+	payload, err := emitGroups(groups, order)
+	return validatePayload(payload, err)
+}
+
+func finite(p fpt) bool {
+	return !math.IsNaN(p.X) && !math.IsInf(p.X, 0) && !math.IsNaN(p.Y) && !math.IsInf(p.Y, 0)
+}
+
+// validatePayload parses an emitted payload back and validates it
+// against the shared caps: the converter accepts exactly what the
+// device engraves.
+func validatePayload(payload []byte, err error) ([]byte, *curves.Drawing, curves.Report, error) {
 	if err != nil {
 		return payload, nil, curves.Report{Bytes: len(payload)}, err
 	}
-	d, err = curves.Parse(payload, sh2)
+	d, err := curves.Parse(payload, sh2)
 	if err != nil {
 		return payload, nil, curves.Report{Bytes: len(payload)}, err
 	}
-	r, err = d.Validate(sh2)
+	r, err := d.Validate(sh2)
 	// The NDEF file cap is independent of the drawing caps: a payload
 	// can fit every knot limit yet be too large to write to the tag.
 	if err == nil && len(payload) > payloadByteCap {

@@ -34,6 +34,15 @@ func (s fseg) npts() int {
 // end returns a segment's final point, its new pen position.
 func (s fseg) end() fpt { return s.p[s.npts()-1] }
 
+// fgroup is one placed shape: segments local to at, in millimeters.
+// The grouping is what the payload dictionary dedups on — every
+// instance of a glyph carries identical local geometry and only at
+// differs, so quantizing the two separately keeps repeats identical.
+type fgroup struct {
+	at   fpt
+	segs []fseg
+}
+
 // matrix is a 2x3 affine transform [a b c d e f] acting on column
 // vectors: x' = a*x + c*y + e, y' = b*x + d*y + f.
 type matrix [6]float64
@@ -104,6 +113,20 @@ func segsBounds(segs []fseg) bounds {
 	for _, s := range segs {
 		for i := 0; i < s.npts(); i++ {
 			b.add(s.p[i])
+		}
+	}
+	return b
+}
+
+// groupsBounds is segsBounds over placed groups, with each group's
+// local points offset by its position.
+func groupsBounds(groups []fgroup) bounds {
+	b := newBounds()
+	for _, g := range groups {
+		for _, s := range g.segs {
+			for i := 0; i < s.npts(); i++ {
+				b.add(fpt{X: g.at.X + s.p[i].X, Y: g.at.Y + s.p[i].Y})
+			}
 		}
 	}
 	return b

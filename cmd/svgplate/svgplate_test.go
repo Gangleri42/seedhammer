@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"seedhammer.com/bezier"
+	"seedhammer.com/curves"
 	"seedhammer.com/svgpath"
 )
 
@@ -151,9 +153,9 @@ func TestRichTextHeaderIsLarger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if segsBounds(head).width() <= segsBounds(body).width() {
+	if groupsBounds(head).width() <= groupsBounds(body).width() {
 		t.Errorf("header (%.1f) should be wider than body (%.1f)",
-			segsBounds(head).width(), segsBounds(body).width())
+			groupsBounds(head).width(), groupsBounds(body).width())
 	}
 }
 
@@ -164,14 +166,14 @@ func TestRichTextHeaderLevels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bodyW := segsBounds(body).width()
+	bodyW := groupsBounds(body).width()
 	prev := 0.0
 	for lvl := 1; lvl <= maxHeaderLevel; lvl++ {
-		segs, err := renderMarkdown(strings.Repeat("#", lvl)+" Hi", 4)
+		groups, err := renderMarkdown(strings.Repeat("#", lvl)+" Hi", 4)
 		if err != nil {
 			t.Fatalf("level %d: %v", lvl, err)
 		}
-		w := segsBounds(segs).width()
+		w := groupsBounds(groups).width()
 		if w <= bodyW {
 			t.Errorf("level %d width %.1f should exceed body %.1f", lvl, w, bodyW)
 		}
@@ -184,18 +186,18 @@ func TestRichTextHeaderLevels(t *testing.T) {
 
 func TestRichTextValid(t *testing.T) {
 	const md = "# Title\n\nKeep *safe*.\n"
-	segs, err := renderMarkdown(md, 4)
+	groups, err := renderMarkdown(md, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := finish(segs, true); err != nil {
-		t.Fatalf("finish: %v", err)
+	if _, _, _, err := finishGroups(groups, true); err != nil {
+		t.Fatalf("finishGroups: %v", err)
 	}
 }
 
 func TestRichTextUnderline(t *testing.T) {
 	// "_" underlines (distinct from "*" italic): the underlined run
-	// adds exactly one rule (a MoveTo+LineTo) over the same glyphs.
+	// adds exactly one rule group over the same glyphs.
 	plain, err := renderMarkdown("a b c", 4)
 	if err != nil {
 		t.Fatal(err)
@@ -204,20 +206,76 @@ func TestRichTextUnderline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(under) != len(plain)+2 {
-		t.Fatalf("underline should add one rule (2 segs): plain %d, under %d", len(plain), len(under))
+	if len(under) != len(plain)+1 {
+		t.Fatalf("underline should add one rule group: plain %d, under %d", len(plain), len(under))
 	}
-	// Somewhere there is a horizontal MoveTo->LineTo rule (the underline).
+	// Somewhere there is a horizontal rule group: a MoveTo at the local
+	// origin and a LineTo rightward on the same line.
 	found := false
-	for i := 0; i+1 < len(under); i++ {
-		a, b := under[i], under[i+1]
-		if a.op == svgpath.MoveTo && b.op == svgpath.LineTo && a.p[0].Y == b.p[0].Y && b.p[0].X > a.p[0].X {
+	for _, g := range under {
+		if len(g.segs) != 2 {
+			continue
+		}
+		a, b := g.segs[0], g.segs[1]
+		if a.op == svgpath.MoveTo && b.op == svgpath.LineTo && a.p[0] == (fpt{}) && b.p[0].Y == 0 && b.p[0].X > 0 {
 			found = true
 			break
 		}
 	}
 	if !found {
 		t.Error("no horizontal underline rule found")
+	}
+}
+
+// TestDictionaryCompaction logs the dictionary's win on a realistic
+// text plate: the same rendered groups encoded flat (every glyph
+// instance shipped) versus through the shape dictionary. Repeated
+// glyphs are the entire size problem for text-as-curves, so the dict
+// payload must come in well under the flat one and under the NDEF cap.
+func TestDictionaryCompaction(t *testing.T) {
+	const md = `# RECOVERY
+
+Wallet: *family vault* 2-of-3
+Verify addresses on two devices.
+
+| Slot | Device |
+| --- | --- |
+| 1 | SeedHammer |
+| 2 | Coldcard |
+| 3 | Passport |
+
+Check the plates yearly.
+Keep away from the seed plates.
+`
+	groups, err := renderMarkdown(md, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dict, _, r, err := finishGroups(groups, true)
+	if err != nil {
+		t.Fatalf("finishGroups: %v", err)
+	}
+	// The flat baseline: identical quantized geometry, no dictionary.
+	q := func(v float64) int { return int(math.Round(v * payloadUnitsPerMM)) }
+	var flatSegs []svgpath.Segment
+	for _, g := range groups {
+		at := fpt{X: g.at.X, Y: g.at.Y}
+		for _, s := range g.segs {
+			out := svgpath.Segment{Op: s.op}
+			for i := 0; i < s.npts(); i++ {
+				out.Args[i] = bezier.Pt(q(at.X)+q(s.p[i].X), q(at.Y)+q(s.p[i].Y))
+			}
+			flatSegs = append(flatSegs, out)
+		}
+	}
+	flat, err := curves.EncodePath(payloadUnitsPerMM, payloadStroke, flatSegs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("text plate: flat v2 %d bytes, dict v2 %d bytes (%.2fx), strokes=%d knots=%d",
+		len(flat), len(dict), float64(len(flat))/float64(len(dict)), r.Strokes, r.Knots)
+	if len(dict) >= len(flat) {
+		t.Errorf("dictionary payload (%d) not smaller than flat (%d)", len(dict), len(flat))
 	}
 }
 
@@ -267,11 +325,11 @@ func TestProseNotTablified(t *testing.T) {
 		t.Fatal(err)
 	}
 	noPipe, _ := renderMarkdown(plain, 4)
-	// No spurious table rules, so the two render the same stroke count
+	// No spurious table rules, so the two render the same group count
 	// aside from the single glyph difference; a tablified version would
-	// add many rule segments.
-	if len(withPipe) > len(noPipe)+40 {
-		t.Errorf("prose with a pipe tablified: %d vs %d segments", len(withPipe), len(noPipe))
+	// add a group per table rule.
+	if len(withPipe) > len(noPipe)+2 {
+		t.Errorf("prose with a pipe tablified: %d vs %d groups", len(withPipe), len(noPipe))
 	}
 }
 

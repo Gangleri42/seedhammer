@@ -29,10 +29,11 @@ const maxHeaderLevel = 5
 
 var headerScale = map[int]float64{1: 2.0, 2: 1.5, 3: 1.25, 4: 1.125, 5: 1.0625}
 
-// renderMarkdown lays out a markdown subset as plate geometry in
-// millimeters. bodyMM is the body-text cell height; headers scale off
-// it. It reports the used runes it could not engrave.
-func renderMarkdown(src string, bodyMM float64) ([]fseg, error) {
+// renderMarkdown lays out a markdown subset as placed shape groups in
+// millimeters — one group per glyph or rule, so repeated shapes dedup
+// through the payload dictionary. bodyMM is the body-text cell height;
+// headers scale off it. It reports the used runes it could not engrave.
+func renderMarkdown(src string, bodyMM float64) ([]fgroup, error) {
 	ascent, cellH := glyph.Metrics()
 	if cellH == 0 {
 		return nil, fmt.Errorf("richtext: font has no height")
@@ -66,16 +67,16 @@ func renderMarkdown(src string, bodyMM float64) ([]fseg, error) {
 		r.line(line, size)
 	}
 	if len(r.missing) > 0 {
-		return r.segs, fmt.Errorf("richtext: cannot engrave %s", strings.Join(r.missing, " "))
+		return r.groups, fmt.Errorf("richtext: cannot engrave %s", strings.Join(r.missing, " "))
 	}
-	return r.segs, nil
+	return r.groups, nil
 }
 
 type textRenderer struct {
 	ascent, cellH float64
 	bodyMM        float64
 	penY          float64
-	segs          []fseg
+	groups        []fgroup
 	missing       []string
 	seenMissing   map[rune]bool
 }
@@ -115,9 +116,7 @@ func (r *textRenderer) run(spans []span, x, y, sizeMM float64) float64 {
 		}
 		if sp.underline && x > x0 {
 			uy := y + r.ascent*scale + sizeMM*0.1
-			r.segs = append(r.segs,
-				fseg{op: svgpath.MoveTo, p: [3]fpt{{x0, uy}}},
-				fseg{op: svgpath.LineTo, p: [3]fpt{{x, uy}}})
+			r.rule(x0, uy, x-x0, 0)
 		}
 	}
 	return x
@@ -134,16 +133,24 @@ func (r *textRenderer) seen(ch rune) bool {
 	return false
 }
 
-// place emits one glyph's outline at (x, y) in mm, scaled and
-// optionally sheared for italic. Glyph coordinates are font units with
-// y=0 the cell top and the baseline at ascent.
+// place emits one glyph's outline as a group placed at (x, y) in mm,
+// scaled and optionally sheared for italic. Glyph coordinates are font
+// units with y=0 the cell top and the baseline at ascent. The group's
+// segments stay in the glyph's local frame — a function of the glyph,
+// scale and style only — so every instance is identical and dedups.
 func (r *textRenderer) place(segs []svgpath.Segment, x, y, scale float64, italic bool) {
+	if len(segs) == 0 {
+		// A glyph with no outline (the space) advances the pen but
+		// engraves nothing; an empty group would be rejected.
+		return
+	}
+	g := fgroup{at: fpt{X: x, Y: y}, segs: make([]fseg, 0, len(segs))}
 	tx := func(p fpt) fpt {
 		fx := p.X
 		if italic {
 			fx += italicShear * (r.ascent - p.Y)
 		}
-		return fpt{X: x + fx*scale, Y: y + p.Y*scale}
+		return fpt{X: fx * scale, Y: p.Y * scale}
 	}
 	for _, s := range segs {
 		out := fseg{op: s.Op}
@@ -155,8 +162,19 @@ func (r *textRenderer) place(segs []svgpath.Segment, x, y, scale float64, italic
 		case svgpath.CubeTo:
 			out.p[0], out.p[1], out.p[2] = tx(bpt(s.Args[0])), tx(bpt(s.Args[1])), tx(bpt(s.Args[2]))
 		}
-		r.segs = append(r.segs, out)
+		g.segs = append(g.segs, out)
 	}
+	r.groups = append(r.groups, g)
+}
+
+// rule emits a straight rule as a group placed at (x, y) with the
+// local extent (dx, dy). Rules of one length — a table's row and
+// column lines — share one dictionary shape.
+func (r *textRenderer) rule(x, y, dx, dy float64) {
+	r.groups = append(r.groups, fgroup{at: fpt{X: x, Y: y}, segs: []fseg{
+		{op: svgpath.MoveTo, p: [3]fpt{{0, 0}}},
+		{op: svgpath.LineTo, p: [3]fpt{{dx, dy}}},
+	}})
 }
 
 // measure returns the advance width of plain text at scale.
@@ -231,17 +249,11 @@ func (r *textRenderer) table(block []string) {
 }
 
 func (r *textRenderer) hline(x0, x1, y float64) {
-	r.segs = append(r.segs,
-		fseg{op: svgpath.MoveTo, p: [3]fpt{{x0, y}}},
-		fseg{op: svgpath.LineTo, p: [3]fpt{{x1, y}}},
-	)
+	r.rule(x0, y, x1-x0, 0)
 }
 
 func (r *textRenderer) vline(y0, y1, x float64) {
-	r.segs = append(r.segs,
-		fseg{op: svgpath.MoveTo, p: [3]fpt{{x, y0}}},
-		fseg{op: svgpath.LineTo, p: [3]fpt{{x, y1}}},
-	)
+	r.rule(x, y0, 0, y1-y0)
 }
 
 // header reports a line's header level (1-5) and its text, or 0.

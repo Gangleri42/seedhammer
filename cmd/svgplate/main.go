@@ -130,9 +130,10 @@ func report(name string, payload []byte, r curves.Report, warn, verr error) {
 	}
 	fmt.Fprintf(w, "  gauges:\n")
 	gauge("payload bytes", len(payload), payloadByteCap)
-	gauge("strokes", r.Strokes, curves.MaxStrokes)
-	gauge("knots", r.Knots, curves.MaxKnots)
-	gauge("knots/stroke", r.MaxStrokeKnots, curves.MaxStrokeKnots)
+	// strokes and knots are informational: the structural caps retired,
+	// the duration cap is the complexity gate.
+	fmt.Fprintf(w, "     %-16s %8d\n", "strokes", r.Strokes)
+	fmt.Fprintf(w, "     %-16s %8d (max %d/stroke)\n", "knots", r.Knots, r.MaxStrokeKnots)
 	gauge("seconds", r.Seconds, curves.MaxMinutes*60)
 	if !r.Bounds.Empty() {
 		fmt.Fprintf(w, "     %-16s %6.1f x %-6.1f mm   at (%.1f, %.1f)\n", "size",

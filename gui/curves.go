@@ -20,17 +20,12 @@ type curvesPayload []byte
 
 var errCurvesText = errors.New("The text cannot be engraved.")
 
-// Limits on curves payloads. The knot caps bound the planner's
-// per-stroke buffering and the time limit bounds unattended machine
-// time; none of them are reachable by drawings of sane complexity.
-// The curves package is the single source of these caps; see
-// curves.MaxStrokes and friends.
-const (
-	curvesMaxStrokes     = curves.MaxStrokes
-	curvesMaxKnots       = curves.MaxKnots
-	curvesMaxStrokeKnots = curves.MaxStrokeKnots
-	curvesMaxMinutes     = curves.MaxMinutes
-)
+// The one limit on curves payloads: the time cap bounds unattended
+// machine time. The curves package is its single source; hostile
+// structural blowups are already rejected by curves.Parse's own
+// bounds, and the planner streams, so complexity costs time, not
+// memory.
+const curvesMaxMinutes = curves.MaxMinutes
 
 // curvesFlow dispatches a seedhammer.com:curves record on its mode:
 // text is laid out and rendered from the firmware font like a text
@@ -87,12 +82,6 @@ func validateCurves(cs *CurvesScreen, payload []byte, params engrave.Params, dim
 	drawing, err := curves.Parse(payload, params)
 	if err != nil {
 		return Plate{}, err
-	}
-	switch {
-	case drawing.Strokes > curvesMaxStrokes:
-		return Plate{}, fmt.Errorf("The drawing has %d strokes; at most %d are supported.", drawing.Strokes, curvesMaxStrokes)
-	case drawing.Knots > curvesMaxKnots, drawing.MaxStrokeKnots > curvesMaxStrokeKnots:
-		return Plate{}, fmt.Errorf("The drawing is too detailed to engrave.")
 	}
 	// The planner measures engraved segments only; bound every knot,
 	// including travel, to keep the head on the plate.

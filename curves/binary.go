@@ -45,12 +45,12 @@ import (
 // level deep, without allocating.
 const Version2 = 2
 
-// MaxDictShapes caps the dictionary of a Version2 payload. Every
-// dictionary shape holds at least one stroke and must be placed at
-// least twice to pay off, so MaxStrokes distinct shapes could never
-// all be engraved; the cap only denies a hostile payload a large
-// shape index.
-const MaxDictShapes = MaxStrokes
+// MaxDictShapes caps the dictionary of a Version2 payload. It bounds
+// the shape index a payload can make the device retain; no realistic
+// drawing needs more distinct shapes (the full engravable charset is
+// under a hundred), so the cap only denies a hostile payload a large
+// allocation.
+const MaxDictShapes = 512
 
 // maxPayloadCoord bounds the accumulated cursor, in payload units, so a
 // hostile run of large deltas clamps out of the plate instead of

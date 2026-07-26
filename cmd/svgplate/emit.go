@@ -31,6 +31,10 @@ const (
 	payloadStroke     = 3
 )
 
+// orderMaxStrokes bounds the O(strokes^2) travel ordering; far above
+// any drawing the duration cap admits.
+const orderMaxStrokes = 4096
+
 // emitPayload quantizes millimeter segments to payload units and encodes
 // them as a Version2 binary curves path payload. Segments must already be
 // laid out on the plate with (0,0) at its top-left corner. When order is
@@ -46,16 +50,16 @@ func emitPayload(segs []fseg, order bool) ([]byte, error) {
 		}
 	}
 	if order {
-		// Ordering is quadratic in strokes. Skip it for inputs already far
-		// past the stroke cap: validation rejects them right after, and a
-		// pathological SVG must not grind for minutes first.
+		// Ordering is quadratic in strokes. Skip it for inputs no sane
+		// drawing reaches: a pathological SVG must not grind for minutes
+		// before validation rejects it on duration.
 		strokes := 0
 		for _, s := range out {
 			if s.Op == svgpath.MoveTo {
 				strokes++
 			}
 		}
-		if strokes <= 2*curves.MaxStrokes {
+		if strokes <= orderMaxStrokes {
 			out = curves.Order(out)
 		}
 	}
@@ -76,9 +80,8 @@ func emitGroups(groups []richtext.Group, order bool) ([]byte, error) {
 			}
 		}
 	}
-	// The same quadratic-ordering guard as emitPayload, on the same
-	// stroke count validation is about to reject anyway.
-	if order && strokes <= 2*curves.MaxStrokes {
+	// The same quadratic-ordering guard as emitPayload.
+	if order && strokes <= orderMaxStrokes {
 		out = curves.OrderGroups(out)
 	}
 	return curves.EncodeGroups(payloadUnitsPerMM, payloadStroke, out)

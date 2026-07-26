@@ -179,8 +179,24 @@ type Drawing struct {
 
 // Parse validates a path-mode curves payload against the engraver
 // parameters. Text-mode payloads are the caller's concern; see Mode
-// and Text.
+// and Text. Parse is Open followed by an unobserved Walk; callers
+// that consume the walk — the firmware feeds it straight into the
+// planner — use the two halves themselves.
 func Parse(data []byte, params engrave.Params) (*Drawing, error) {
+	d, err := Open(data, params)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.Walk(nil, nil); err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+// Open validates a path-mode payload's header and dictionary framing
+// against the engraver parameters, leaving the geometry unwalked:
+// the returned Drawing's stats stay zero until Walk fills them.
+func Open(data []byte, params engrave.Params) (*Drawing, error) {
 	// The header is ASCII up to the first newline; a v2 body is binary
 	// and may hold 0x0a, so split on the byte, never stringify past it.
 	nl := bytes.IndexByte(data, '\n')
@@ -232,6 +248,22 @@ func Parse(data []byte, params engrave.Params) (*Drawing, error) {
 	d.binary = body
 	d.dict = dict
 	d.mainOff = main
+	return d, nil
+}
+
+// ErrCanceled reports a walk stopped by its progress callback.
+var ErrCanceled = errors.New("curves: canceled")
+
+// Walk validates an opened drawing in one walk of its geometry,
+// filling in the stats and enforcing the expansion bounds. The
+// converted commands stream to yield — nil to validate without a
+// consumer — so a caller can feed the planner and measure, preview
+// and gauge the drawing during the same walk. progress, if not nil,
+// is called as the walk advances with the consumed and total byte
+// counts of the payload's main stream; returning false stops the
+// walk with ErrCanceled.
+func (d *Drawing) Walk(progress func(done, total int) bool, yield func(engrave.Command) bool) error {
+	d.Strokes, d.Knots, d.MaxStrokeKnots, d.Bounds = 0, 0, 0, bspline.Bounds{}
 	var (
 		first    = true
 		engraved = false
@@ -240,10 +272,10 @@ func Parse(data []byte, params engrave.Params) (*Drawing, error) {
 		run      int
 		bomb     error
 	)
-	err := d.run(func(cmd engrave.Command) bool {
+	err := d.run(progress, func(cmd engrave.Command) bool {
 		k, ok := cmd.AsKnot()
 		if !ok {
-			return true
+			return yield == nil || yield(cmd)
 		}
 		if first {
 			d.Bounds = bspline.Bounds{Min: k.Knot, Max: k.Knot}
@@ -277,35 +309,40 @@ func Parse(data []byte, params engrave.Params) (*Drawing, error) {
 			d.MaxStrokeKnots = max(d.MaxStrokeKnots, run)
 			run = 0
 		}
-		return true
+		return yield == nil || yield(cmd)
 	})
 	if bomb != nil {
 		err = bomb
 	}
 	if err != nil {
-		return nil, fmt.Errorf("curves: %w", err)
+		if errors.Is(err, ErrCanceled) {
+			return err
+		}
+		return fmt.Errorf("curves: %w", err)
 	}
 	d.MaxStrokeKnots = max(d.MaxStrokeKnots, run)
 	if d.Strokes == 0 {
-		return nil, fmt.Errorf("curves: empty drawing")
+		return fmt.Errorf("curves: empty drawing")
 	}
-	return d, nil
+	return nil
 }
 
 // Engraving returns the drawing as engraver commands. The returned
 // engraving is re-iterable and deterministic.
 func (d *Drawing) Engraving() engrave.Engraving {
 	return func(yield func(engrave.Command) bool) {
-		// The payload was fully validated by Parse; run cannot fail.
-		d.run(yield)
+		// The payload was fully validated by a Walk; run cannot fail.
+		d.run(nil, yield)
 	}
 }
 
 // run converts the path data to engraver commands: parse segments,
 // clamp sharp corners, sample and fit each smooth run to spline
 // knots. Closed smooth contours become periodic loops, paced by the
-// planner across their seam instead of against a clamp.
-func (d *Drawing) run(yield func(engrave.Command) bool) error {
+// planner across their seam instead of against a clamp. progress, if
+// not nil, observes the decoder's main-stream position per segment
+// and stops the walk with ErrCanceled by returning false.
+func (d *Drawing) run(progress func(done, total int) bool, yield func(engrave.Command) bool) error {
 	b := svgpath.NewBuilder(d.prec, true, svgpath.ControlFit(), func(k vector.Knot) bool {
 		if k.Periodic {
 			return yield(engrave.PeriodicPoint(k.Ctrl))
@@ -332,6 +369,9 @@ func (d *Drawing) run(yield func(engrave.Command) bool) error {
 		}
 		if segs++; segs > parseMaxSegs {
 			return fmt.Errorf("the drawing expands past %d segments", parseMaxSegs)
+		}
+		if progress != nil && !progress(it.mainPos()-d.mainOff, len(d.binary)-d.mainOff) {
+			return ErrCanceled
 		}
 		if s.Op != svgpath.MoveTo && degenerate(s, pen) {
 			// Zero-length drawing segments carry no geometry, but

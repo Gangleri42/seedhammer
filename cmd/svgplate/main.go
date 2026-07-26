@@ -47,33 +47,39 @@ func main() {
 		die(err)
 	}
 
+	// The two front-ends meet at the payload: rich text lays out placed
+	// glyph groups so repeated shapes dedup through the dictionary; an
+	// SVG is a flat stroke sequence with no repetition to mine.
 	isText := *text || strings.EqualFold(filepath.Ext(in), ".md")
-	var segs []fseg
+	var (
+		payload []byte
+		d       *curves.Drawing
+		r       curves.Report
+		warn    error
+		verr    error
+	)
 	if isText {
-		segs, err = renderMarkdown(string(src), *body)
-	} else {
-		var raw []fseg
-		raw, err = extractSVG(src)
-		if err == nil {
-			pl, perr := placementOf(*height, *rotate, *pos)
-			if perr != nil {
-				die(perr)
+		groups, err := renderMarkdown(string(src), *body)
+		// A rich-text miss is a warning, not a stop: the drawing minus
+		// the bad runes may still be worth engraving.
+		if err != nil {
+			if groups == nil {
+				die(err)
 			}
-			segs = layoutOnPlate(raw, pl)
-		}
-	}
-	// A rich-text miss is a warning, not a stop: the drawing minus the
-	// bad runes may still be worth engraving. SVG parse errors are fatal.
-	var warn error
-	if err != nil {
-		if isText && segs != nil {
 			warn = err
-		} else {
+		}
+		payload, d, r, verr = finishGroups(groups, !*noorder)
+	} else {
+		raw, err := extractSVG(src)
+		if err != nil {
 			die(err)
 		}
+		pl, perr := placementOf(*height, *rotate, *pos)
+		if perr != nil {
+			die(perr)
+		}
+		payload, d, r, verr = finish(layoutOnPlate(raw, pl), !*noorder)
 	}
-
-	payload, d, r, verr := finish(segs, !*noorder)
 	report(in, payload, r, warn, verr)
 
 	if *out == "" {

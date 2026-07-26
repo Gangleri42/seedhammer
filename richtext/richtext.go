@@ -1,16 +1,31 @@
-package main
+// Package richtext lays out a markdown subset as placed shape groups
+// ready for curves engraving: five header levels, italic via an oblique
+// shear, underline, and GFM pipe tables, rendered from the firmware's
+// own font. It is the single layout engine behind every rich-text
+// emitter — cmd/svgplate's -text mode and Studio's rich pane (through
+// the studio-core wasm) — so a markdown document engraves identically
+// wherever it was composed.
+//
+// Layout is in float millimeters; Groups quantizes the placed shapes to
+// integer payload units, shape-local frame and placement separately, so
+// every instance of a glyph lands byte-identical and dedups through the
+// curves payload dictionary.
+package richtext
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
+	"seedhammer.com/bezier"
+	"seedhammer.com/curves"
 	"seedhammer.com/font/glyph"
 	"seedhammer.com/svgpath"
 )
 
-// Rich-text layout constants, in millimeters or multiples of the body
-// size. The subset is deliberately small: five header levels, italic
-// via an oblique shear, and GFM pipe tables.
+// Layout constants, in millimeters or multiples of the body size. The
+// subset is deliberately small: five header levels, italic via an
+// oblique shear, and GFM pipe tables.
 const (
 	textMarginMM = 5.0  // top-left origin of the text block.
 	lineSpacing  = 1.18 // line advance as a multiple of cell height.
@@ -29,16 +44,50 @@ const maxHeaderLevel = 5
 
 var headerScale = map[int]float64{1: 2.0, 2: 1.5, 3: 1.25, 4: 1.125, 5: 1.0625}
 
-// renderMarkdown lays out a markdown subset as placed shape groups in
-// millimeters — one group per glyph or rule, so repeated shapes dedup
-// through the payload dictionary. bodyMM is the body-text cell height;
-// headers scale off it. It reports the used runes it could not engrave.
-func renderMarkdown(src string, bodyMM float64) ([]fgroup, error) {
+// Point is a floating-point plate coordinate in millimeters.
+type Point struct{ X, Y float64 }
+
+// Seg is a path segment in float coordinates: a MoveTo or LineTo (one
+// point), QuadTo (two) or CubeTo (three), the same op set the payload
+// carries.
+type Seg struct {
+	Op svgpath.SegmentOp
+	P  [3]Point
+}
+
+// NPts is the number of points Op carries.
+func (s Seg) NPts() int {
+	switch s.Op {
+	case svgpath.MoveTo, svgpath.LineTo:
+		return 1
+	case svgpath.QuadTo:
+		return 2
+	case svgpath.CubeTo:
+		return 3
+	}
+	return 0
+}
+
+// Group is one placed shape: segments local to At, in millimeters.
+// The grouping is what the payload dictionary dedups on — every
+// instance of a glyph carries identical local geometry and only At
+// differs, so quantizing the two separately keeps repeats identical.
+type Group struct {
+	At   Point
+	Segs []Seg
+}
+
+// Render lays out the markdown subset as placed shape groups in
+// millimeters — one group per glyph or rule. bodyMM is the body-text
+// cell height; headers scale off it. It reports the used runes it
+// could not engrave; the groups laid out so far are still returned, so
+// a caller may treat the error as a warning.
+func Render(src string, bodyMM float64) ([]Group, error) {
 	ascent, cellH := glyph.Metrics()
 	if cellH == 0 {
 		return nil, fmt.Errorf("richtext: font has no height")
 	}
-	r := &textRenderer{ascent: float64(ascent), cellH: float64(cellH), bodyMM: bodyMM}
+	r := &renderer{ascent: float64(ascent), cellH: float64(cellH), bodyMM: bodyMM}
 	lines := strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n")
 	r.penY = textMarginMM
 	for i := 0; i < len(lines); i++ {
@@ -72,17 +121,41 @@ func renderMarkdown(src string, bodyMM float64) ([]fgroup, error) {
 	return r.groups, nil
 }
 
-type textRenderer struct {
+// Groups quantizes placed millimeter groups to payload units at
+// units-per-mm, ready for curves.EncodeGroups. The shape is quantized
+// in its local frame and the placement separately, so every instance
+// of a glyph lands byte-identical and dedups; the up-to-half-unit
+// placement shift this costs is far below the needle.
+func Groups(groups []Group, unitsPerMM int) []curves.Group {
+	q := func(v float64) int { return int(math.Round(v * float64(unitsPerMM))) }
+	out := make([]curves.Group, len(groups))
+	for i, g := range groups {
+		cg := curves.Group{
+			At:   bezier.Pt(q(g.At.X), q(g.At.Y)),
+			Segs: make([]svgpath.Segment, len(g.Segs)),
+		}
+		for j, s := range g.Segs {
+			cg.Segs[j].Op = s.Op
+			for k := 0; k < s.NPts(); k++ {
+				cg.Segs[j].Args[k] = bezier.Pt(q(s.P[k].X), q(s.P[k].Y))
+			}
+		}
+		out[i] = cg
+	}
+	return out
+}
+
+type renderer struct {
 	ascent, cellH float64
 	bodyMM        float64
 	penY          float64
-	groups        []fgroup
+	groups        []Group
 	missing       []string
 	seenMissing   map[rune]bool
 }
 
 // line renders a single text line with inline italic and advances penY.
-func (r *textRenderer) line(text string, sizeMM float64) {
+func (r *renderer) line(text string, sizeMM float64) {
 	r.run(splitFormat(text), textMarginMM, r.penY, sizeMM)
 	r.penY += sizeMM * lineSpacing
 }
@@ -96,7 +169,7 @@ type span struct {
 
 // run draws styled spans left to right from (x, y) and returns the
 // pen's end x. Underlined spans get a rule just below the baseline.
-func (r *textRenderer) run(spans []span, x, y, sizeMM float64) float64 {
+func (r *renderer) run(spans []span, x, y, sizeMM float64) float64 {
 	scale := sizeMM / r.cellH
 	for _, sp := range spans {
 		x0 := x
@@ -122,7 +195,7 @@ func (r *textRenderer) run(spans []span, x, y, sizeMM float64) float64 {
 	return x
 }
 
-func (r *textRenderer) seen(ch rune) bool {
+func (r *renderer) seen(ch rune) bool {
 	if r.seenMissing == nil {
 		r.seenMissing = map[rune]bool{}
 	}
@@ -138,31 +211,31 @@ func (r *textRenderer) seen(ch rune) bool {
 // units with y=0 the cell top and the baseline at ascent. The group's
 // segments stay in the glyph's local frame — a function of the glyph,
 // scale and style only — so every instance is identical and dedups.
-func (r *textRenderer) place(segs []svgpath.Segment, x, y, scale float64, italic bool) {
+func (r *renderer) place(segs []svgpath.Segment, x, y, scale float64, italic bool) {
 	if len(segs) == 0 {
 		// A glyph with no outline (the space) advances the pen but
 		// engraves nothing; an empty group would be rejected.
 		return
 	}
-	g := fgroup{at: fpt{X: x, Y: y}, segs: make([]fseg, 0, len(segs))}
-	tx := func(p fpt) fpt {
-		fx := p.X
+	g := Group{At: Point{X: x, Y: y}, Segs: make([]Seg, 0, len(segs))}
+	tx := func(p bezier.Point) Point {
+		fx := float64(p.X)
 		if italic {
-			fx += italicShear * (r.ascent - p.Y)
+			fx += italicShear * (r.ascent - float64(p.Y))
 		}
-		return fpt{X: fx * scale, Y: p.Y * scale}
+		return Point{X: fx * scale, Y: float64(p.Y) * scale}
 	}
 	for _, s := range segs {
-		out := fseg{op: s.Op}
+		out := Seg{Op: s.Op}
 		switch s.Op {
 		case svgpath.MoveTo, svgpath.LineTo:
-			out.p[0] = tx(bpt(s.Args[0]))
+			out.P[0] = tx(s.Args[0])
 		case svgpath.QuadTo:
-			out.p[0], out.p[1] = tx(bpt(s.Args[0])), tx(bpt(s.Args[1]))
+			out.P[0], out.P[1] = tx(s.Args[0]), tx(s.Args[1])
 		case svgpath.CubeTo:
-			out.p[0], out.p[1], out.p[2] = tx(bpt(s.Args[0])), tx(bpt(s.Args[1])), tx(bpt(s.Args[2]))
+			out.P[0], out.P[1], out.P[2] = tx(s.Args[0]), tx(s.Args[1]), tx(s.Args[2])
 		}
-		g.segs = append(g.segs, out)
+		g.Segs = append(g.Segs, out)
 	}
 	r.groups = append(r.groups, g)
 }
@@ -170,15 +243,15 @@ func (r *textRenderer) place(segs []svgpath.Segment, x, y, scale float64, italic
 // rule emits a straight rule as a group placed at (x, y) with the
 // local extent (dx, dy). Rules of one length — a table's row and
 // column lines — share one dictionary shape.
-func (r *textRenderer) rule(x, y, dx, dy float64) {
-	r.groups = append(r.groups, fgroup{at: fpt{X: x, Y: y}, segs: []fseg{
-		{op: svgpath.MoveTo, p: [3]fpt{{0, 0}}},
-		{op: svgpath.LineTo, p: [3]fpt{{dx, dy}}},
+func (r *renderer) rule(x, y, dx, dy float64) {
+	r.groups = append(r.groups, Group{At: Point{X: x, Y: y}, Segs: []Seg{
+		{Op: svgpath.MoveTo, P: [3]Point{{0, 0}}},
+		{Op: svgpath.LineTo, P: [3]Point{{dx, dy}}},
 	}})
 }
 
 // measure returns the advance width of plain text at scale.
-func (r *textRenderer) measure(text string, scale float64) float64 {
+func (r *renderer) measure(text string, scale float64) float64 {
 	w := 0.0
 	for _, ch := range text {
 		_, adv, ok := glyph.Segments(ch)
@@ -191,7 +264,7 @@ func (r *textRenderer) measure(text string, scale float64) float64 {
 }
 
 // table lays out a GFM pipe table: column rules plus each cell's text.
-func (r *textRenderer) table(block []string) {
+func (r *renderer) table(block []string) {
 	scale := r.bodyMM / r.cellH
 	var rows [][]string
 	for i, line := range block {
@@ -224,13 +297,13 @@ func (r *textRenderer) table(block []string) {
 	// Rules: horizontal at every row boundary, vertical at every column.
 	for i := 0; i <= len(rows); i++ {
 		y := y0 + float64(i)*rowH
-		r.hline(x0, x0+tableW, y)
+		r.rule(x0, y, tableW, 0)
 	}
 	x := x0
-	r.vline(y0, y0+tableH, x)
+	r.rule(x, y0, 0, tableH)
 	for _, w := range widths {
 		x += w
-		r.vline(y0, y0+tableH, x)
+		r.rule(x, y0, 0, tableH)
 	}
 	// Cell text, left-aligned with padding, baseline within the row.
 	for ri, row := range rows {
@@ -246,14 +319,6 @@ func (r *textRenderer) table(block []string) {
 		}
 	}
 	r.penY = y0 + tableH + r.bodyMM*lineSpacing*0.5
-}
-
-func (r *textRenderer) hline(x0, x1, y float64) {
-	r.rule(x0, y, x1-x0, 0)
-}
-
-func (r *textRenderer) vline(y0, y1, x float64) {
-	r.rule(x, y0, 0, y1-y0)
 }
 
 // header reports a line's header level (1-5) and its text, or 0.

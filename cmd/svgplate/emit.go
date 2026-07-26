@@ -8,6 +8,7 @@ import (
 	"seedhammer.com/curves"
 	"seedhammer.com/engrave"
 	"seedhammer.com/nfc/type4"
+	"seedhammer.com/richtext"
 	"seedhammer.com/svgpath"
 )
 
@@ -61,30 +62,19 @@ func emitPayload(segs []fseg, order bool) ([]byte, error) {
 	return curves.EncodePath(payloadUnitsPerMM, payloadStroke, out)
 }
 
-// emitGroups quantizes placed millimeter groups to payload units and
-// encodes them with the shape dictionary. A shape is quantized in its
-// local frame and its placement separately, so every instance of a
-// glyph lands byte-identical and dedups; the up-to-0.05mm placement
-// shift this costs is far below the 0.3mm needle.
-func emitGroups(groups []fgroup, order bool) ([]byte, error) {
-	q := func(v float64) int { return int(math.Round(v * payloadUnitsPerMM)) }
-	out := make([]curves.Group, len(groups))
+// emitGroups encodes placed millimeter groups with the shape
+// dictionary: richtext.Groups quantizes local frame and placement
+// separately (the contract that keeps glyph instances byte-identical),
+// then the ordered groups encode.
+func emitGroups(groups []richtext.Group, order bool) ([]byte, error) {
+	out := richtext.Groups(groups, payloadUnitsPerMM)
 	strokes := 0
-	for i, g := range groups {
-		cg := curves.Group{
-			At:   bezier.Pt(q(g.at.X), q(g.at.Y)),
-			Segs: make([]svgpath.Segment, len(g.segs)),
-		}
-		for j, s := range g.segs {
-			cg.Segs[j].Op = s.op
-			for k := 0; k < s.npts(); k++ {
-				cg.Segs[j].Args[k] = bezier.Pt(q(s.p[k].X), q(s.p[k].Y))
-			}
-			if s.op == svgpath.MoveTo {
+	for _, g := range out {
+		for _, s := range g.Segs {
+			if s.Op == svgpath.MoveTo {
 				strokes++
 			}
 		}
-		out[i] = cg
 	}
 	// The same quadratic-ordering guard as emitPayload, on the same
 	// stroke count validation is about to reject anyway.
@@ -104,7 +94,7 @@ func finish(segs []fseg, order bool) ([]byte, *curves.Drawing, curves.Report, er
 	// would quantize to garbage and desync curves.Parse.
 	for _, s := range segs {
 		for i := 0; i < s.npts(); i++ {
-			if !finite(s.p[i]) {
+			if !finite(s.p[i].X, s.p[i].Y) {
 				return nil, nil, curves.Report{}, fmt.Errorf("curves: non-finite coordinate %v in geometry", s.p[i])
 			}
 		}
@@ -114,15 +104,15 @@ func finish(segs []fseg, order bool) ([]byte, *curves.Drawing, curves.Report, er
 }
 
 // finishGroups is finish for the placed-group front-end.
-func finishGroups(groups []fgroup, order bool) ([]byte, *curves.Drawing, curves.Report, error) {
+func finishGroups(groups []richtext.Group, order bool) ([]byte, *curves.Drawing, curves.Report, error) {
 	for _, g := range groups {
-		if !finite(g.at) {
-			return nil, nil, curves.Report{}, fmt.Errorf("curves: non-finite coordinate %v in geometry", g.at)
+		if !finite(g.At.X, g.At.Y) {
+			return nil, nil, curves.Report{}, fmt.Errorf("curves: non-finite coordinate %v in geometry", g.At)
 		}
-		for _, s := range g.segs {
-			for i := 0; i < s.npts(); i++ {
-				if !finite(s.p[i]) {
-					return nil, nil, curves.Report{}, fmt.Errorf("curves: non-finite coordinate %v in geometry", s.p[i])
+		for _, s := range g.Segs {
+			for i := 0; i < s.NPts(); i++ {
+				if !finite(s.P[i].X, s.P[i].Y) {
+					return nil, nil, curves.Report{}, fmt.Errorf("curves: non-finite coordinate %v in geometry", s.P[i])
 				}
 			}
 		}
@@ -131,8 +121,8 @@ func finishGroups(groups []fgroup, order bool) ([]byte, *curves.Drawing, curves.
 	return validatePayload(payload, err)
 }
 
-func finite(p fpt) bool {
-	return !math.IsNaN(p.X) && !math.IsInf(p.X, 0) && !math.IsNaN(p.Y) && !math.IsInf(p.Y, 0)
+func finite(x, y float64) bool {
+	return !math.IsNaN(x) && !math.IsInf(x, 0) && !math.IsNaN(y) && !math.IsInf(y, 0)
 }
 
 // validatePayload parses an emitted payload back and validates it

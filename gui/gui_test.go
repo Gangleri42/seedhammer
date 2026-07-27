@@ -13,13 +13,13 @@ import (
 	"slices"
 	"strings"
 
-	qr "github.com/seedhammer/kortschak-qr"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/btcsuite/btcd/btcutil/v2/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg/v2"
+	qr "github.com/seedhammer/kortschak-qr"
 	"seedhammer.com/backup"
 	"seedhammer.com/bip32"
 	"seedhammer.com/bip380"
@@ -153,7 +153,7 @@ func newTestEngraveScreen(t *testing.T, ctx *Context) *EngraveScreen {
 	}
 
 	params := ctx.Platform.EngraverParams()
-	_, texts, err := fitDescriptor(params, desc, nil)
+	_, texts, _, err := fitDescriptor(params, desc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestValidateDescriptorFallback(t *testing.T) {
 		{4, 6, []string{"TEXT ONLY", "QR ONLY"}},
 	}
 	for _, test := range tests {
-		labels, texts, err := fitDescriptor(engraverParams, multisig(test.threshold, test.nkeys), nil)
+		labels, texts, qrText, err := fitDescriptor(engraverParams, multisig(test.threshold, test.nkeys), nil)
 		if err != nil {
 			t.Fatalf("%d-of-%d: %v", test.threshold, test.nkeys, err)
 		}
@@ -200,15 +200,27 @@ func TestValidateDescriptorFallback(t *testing.T) {
 			t.Errorf("%d-of-%d: %d engravings for %d labels", test.threshold, test.nkeys, len(texts), len(labels))
 		}
 		// The fit verdict must agree with the planner: every offered
-		// variant plans inside the plate.
+		// variant plans inside the plate with the real code swapped in
+		// for the fit's stand-in, the same substitution
+		// planDescriptorPlate makes after the choice.
 		for i, txt := range texts {
+			if p := &txt.Paragraphs[0]; p.QR != nil {
+				qrc, err := qr.Encode(qrText, qr.L)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if qrc.Size != p.QR.Size {
+					t.Errorf("%d-of-%d %s: stand-in code size %d, real code size %d", test.threshold, test.nkeys, labels[i], p.QR.Size, qrc.Size)
+				}
+				p.QR = qrc
+			}
 			if _, err := toPlate(backup.EngraveText(engraverParams, txt), engraverParams); err != nil {
 				t.Errorf("%d-of-%d %s: fit accepted but planning rejects: %v", test.threshold, test.nkeys, labels[i], err)
 			}
 		}
 	}
 	// Beyond the largest QR code that fits the plate.
-	if _, _, err := fitDescriptor(engraverParams, multisig(9, 16), nil); !errors.Is(err, ErrTooLarge) {
+	if _, _, _, err := fitDescriptor(engraverParams, multisig(9, 16), nil); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("16-key descriptor: got %v, want ErrTooLarge", err)
 	}
 
@@ -221,6 +233,13 @@ func TestValidateDescriptorFallback(t *testing.T) {
 		qrc, err := qr.Encode(desc.EncodeNoChecksum(), qr.L)
 		if err != nil {
 			t.Fatal(err)
+		}
+		// The all-dark stand-in the fit measures with must match the
+		// real code in size and in every ladder verdict, or the menu
+		// would drift from what the real engraving needs.
+		syn := darkCode(qrc.Size)
+		if sz, err := qr.MinSize(desc.EncodeNoChecksum(), qr.L); err != nil || sz != qrc.Size {
+			t.Errorf("%d-of-%d: MinSize %d (err %v), Encode size %d", cfg[0], cfg[1], sz, err, qrc.Size)
 		}
 		for _, p := range []backup.Paragraph{
 			{Text: enc, QR: qrc},
@@ -241,6 +260,19 @@ func TestValidateDescriptorFallback(t *testing.T) {
 					if fits != (perr == nil) {
 						t.Errorf("%d-of-%d qr=%v text=%v scale=%d size=%v: fit says %v, planner says %v",
 							cfg[0], cfg[1], p.QR != nil, p.Text != "", scale, size, fits, perr)
+					}
+					if p.QR != nil {
+						ps := p
+						ps.QR = syn
+						plan := backup.EngraveText(engraverParams, backup.Text{
+							Paragraphs: []backup.Paragraph{ps},
+							Font:       sh.Font,
+							FontSize:   size,
+						})
+						if sfits := layoutFits(plan, engraverParams); sfits != fits {
+							t.Errorf("%d-of-%d text=%v scale=%d size=%v: stand-in fit %v, real fit %v",
+								cfg[0], cfg[1], p.Text != "", scale, size, sfits, fits)
+						}
 					}
 				}
 			}

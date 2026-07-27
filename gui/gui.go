@@ -405,14 +405,28 @@ func NewErrorScreen(err error) *ErrorScreen {
 // which on a dense multisig descriptor churned megabytes of planner
 // state through the device heap before the choice screen could
 // appear. The chosen variant is planned after the operator picks it;
-// see planPlate. pump, if not nil, observes the ladder attempts and
-// cancels by returning false.
-func fitDescriptor(params engrave.Params, desc *bip380.Descriptor, pump func(done, total int) bool) ([]string, []backup.Text, error) {
+// see planDescriptorPlate. The QR variants carry an all-dark
+// stand-in of the code's exact size: a real code's finder patterns
+// pin its hull to the full square, so the stand-in measures
+// identically, and the fit skips the encoder's transient churn,
+// which exhausted the device heap before the first progress frame
+// (the stand-in costs a bitmap; encoding churns megabytes to build
+// one). qrText is the string the stand-in sized, for the real
+// encode after the choice. pump, if not nil, observes the ladder
+// attempts and cancels by returning false.
+func fitDescriptor(params engrave.Params, desc *bip380.Descriptor, pump func(done, total int) bool) (labels []string, texts []backup.Text, qrText string, err error) {
 	enc := desc.Encode()
-	qrc, err := qr.Encode(desc.EncodeNoChecksum(), qr.L)
-	if err != nil {
-		return nil, nil, err
+	// The bare encoding is the checksummed one minus the "#xxxxxxxx"
+	// suffix; strip it instead of encoding the descriptor twice.
+	qrText = enc
+	if i := strings.LastIndexByte(enc, '#'); i >= 0 {
+		qrText = enc[:i]
 	}
+	qrSize, err := qr.MinSize(qrText, qr.L)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	qrc := darkCode(qrSize)
 	type textEngraving struct {
 		Label     string
 		Paragraph backup.Paragraph
@@ -464,7 +478,7 @@ func fitDescriptor(params engrave.Params, desc *bip380.Descriptor, pump func(don
 		for si, scale := range scales {
 			for zi, size := range sizes {
 				if attempts++; pump != nil && !pump(attempts, total) {
-					return nil, nil, errPlanCanceled
+					return nil, nil, "", errPlanCanceled
 				}
 				p := e.Paragraph
 				p.QRScale = scale
@@ -482,16 +496,51 @@ func fitDescriptor(params engrave.Params, desc *bip380.Descriptor, pump func(don
 				// gauge reaches its total instead of ending mid-scale.
 				attempts += len(scales)*len(sizes) - (si*len(sizes) + zi + 1)
 				if pump != nil && !pump(attempts, total) {
-					return nil, nil, errPlanCanceled
+					return nil, nil, "", errPlanCanceled
 				}
 				break search
 			}
 		}
 	}
 	if len(validTexts) == 0 {
-		return nil, nil, ErrTooLarge
+		return nil, nil, "", ErrTooLarge
 	}
-	return validLabels, validTexts, nil
+	return validLabels, validTexts, qrText, nil
+}
+
+// darkCode is an all-dark stand-in for a QR code of the given size,
+// for measuring the space a code occupies without encoding one. A
+// real code's finder patterns pin its hull to the full square, so
+// layouts measure the same against either.
+func darkCode(size int) *qr.Code {
+	stride := (size + 7) / 8
+	bitmap := make([]byte, stride*size)
+	for i := range bitmap {
+		bitmap[i] = 0xff
+	}
+	return &qr.Code{Bitmap: bitmap, Size: size, Stride: stride}
+}
+
+// planDescriptorPlate plans a variant chosen from fitDescriptor's
+// ladder, first swapping the fit's stand-in code for the real
+// encoding of qrText. The encode runs in the plan's worker, behind
+// the progress screen: the heap-heaviest step of the whole flow,
+// deferred to the one variant the operator picked.
+func planDescriptorPlate(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Point) op.Op, params engrave.Params, txt backup.Text, qrText string) (Plate, error) {
+	return runJob(ctx, th, func(pump func(done, total int) bool) (Plate, error) {
+		if p := &txt.Paragraphs[0]; p.QR != nil {
+			// The fit walk leaves the heap strewn with collectable
+			// garbage; reclaim it before the encoder's contiguous
+			// allocations, which a fragmented heap cannot satisfy.
+			runtime.GC()
+			qrc, err := qr.Encode(qrText, qr.L)
+			if err != nil {
+				return Plate{}, err
+			}
+			p.QR = qrc
+		}
+		return planPlateWalk(backup.EngraveText(params, txt), params, pump)
+	}, planFrame(ctx, th, draw))
 }
 
 // fitText chooses the largest font size whose character grid holds
@@ -2438,10 +2487,11 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (Plate, bool) {
 		type fitResult struct {
 			labels []string
 			texts  []backup.Text
+			qrText string
 		}
 		fit, err := runJob(ctx, th, func(pump func(done, total int) bool) (fitResult, error) {
-			labels, texts, err := fitDescriptor(params, s.Descriptor, pump)
-			return fitResult{labels, texts}, err
+			labels, texts, qrText, err := fitDescriptor(params, s.Descriptor, pump)
+			return fitResult{labels, texts, qrText}, err
 		}, planFrame(ctx, th, s.Draw))
 		labels, texts := fit.labels, fit.texts
 		if err != nil {
@@ -2459,7 +2509,7 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (Plate, bool) {
 		if !ok {
 			return Plate{}, false, nil
 		}
-		plate, err := planPlate(ctx, th, s.Draw, backup.EngraveText(params, texts[choice]), params)
+		plate, err := planDescriptorPlate(ctx, th, s.Draw, params, texts[choice], fit.qrText)
 		if err != nil {
 			if errors.Is(err, errPlanCanceled) {
 				return Plate{}, false, nil

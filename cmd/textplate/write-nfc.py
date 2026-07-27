@@ -21,10 +21,17 @@ parameters are read from the glyphs.js next to this script,
 generated from the firmware sources by
 "go run seedhammer.com/cmd/textplate".
 
+With --raw the payload is written as a Text record without the plate
+grid checks: the firmware's scanner decides what it is (descriptor,
+codex32, seed phrase, free text). The grid checks assume plate text,
+so they would refuse a one-line descriptor the device happily parses
+and wraps itself.
+
 Usage:
     write-nfc.py plate.txt            # or - for stdin
     write-nfc.py --curves-text plate.txt
     write-nfc.py --curves plate.txt
+    write-nfc.py --raw descriptor.txt
     echo "IN CASE OF FIRE" | write-nfc.py -
 
 Requires: pip install nfcpy ndeflib
@@ -144,12 +151,18 @@ def main():
     args = sys.argv[1:]
     as_curves = "--curves" in args
     as_curves_text = "--curves-text" in args
-    args = [a for a in args if a not in ("--curves", "--curves-text")]
-    if len(args) != 1 or (as_curves and as_curves_text):
+    as_raw = "--raw" in args
+    args = [a for a in args if a not in ("--curves", "--curves-text", "--raw")]
+    if len(args) != 1 or (as_curves + as_curves_text + as_raw) > 1:
         sys.exit(__doc__.strip())
     src = sys.stdin if args[0] == "-" else open(args[0], encoding="utf-8")
     with src:
         lines = canonical(src.read())
+    if as_raw:
+        # No grid gate: the record carries whatever the firmware's
+        # scanner can make of it.
+        write([ndef.TextRecord("\n".join(lines), language="en")])
+        return
     sh = font_data()
     size = validate(lines, sh)
     print(

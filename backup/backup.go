@@ -313,6 +313,11 @@ func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 		width := plateDims.X - 2*margin
 		charPerLine := CharsPerLine(params, fnt, fontMM)
 		offy := params.I(outerMargin)
+		// One line command reused across the whole layout; its glyph
+		// buffers grow once. A dense plate lays out thousands of
+		// glyphs, and per-line allocation is what crowds the device
+		// heap when a fit ladder walks many candidate layouts.
+		var str engrave.StringCmd
 		// Serpentine rows: a row engraves right to left when its right
 		// end is nearer the previous row's exit, so the head enters
 		// each row where the last one ended instead of returning
@@ -360,7 +365,7 @@ func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 					s := seg[:n]
 					seg = seg[n:]
 					t.Offset(margin, offy+lineno*fontSize)
-					str := engrave.String(fnt, fontSize, s)
+					str.Reset(fnt, fontSize, s)
 					rightX := margin + len(s)*charWidth
 					if s != "" && abs(exitX-rightX) < abs(exitX-margin) {
 						str.Reversed()

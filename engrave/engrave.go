@@ -1860,12 +1860,20 @@ func (c *ConstantStringer) paddedString(yield func(Command) bool, txt string, sh
 }
 
 func String(face *vector.Face, em int, txt string) *StringCmd {
-	return &StringCmd{
-		LineHeight: 1,
-		face:       face,
-		em:         em,
-		txt:        txt,
-	}
+	return new(StringCmd).Reset(face, em, txt)
+}
+
+// Reset re-targets the command at new text, keeping the glyph decode
+// buffers, so a caller laying out many lines pays their growth once
+// instead of per line.
+func (s *StringCmd) Reset(face *vector.Face, em int, txt string) *StringCmd {
+	s.LineHeight = 1
+	s.face = face
+	s.em = em
+	s.txt = txt
+	s.keepOrder = false
+	s.reversed = false
+	return s
 }
 
 type StringCmd struct {
@@ -2269,7 +2277,10 @@ func (s *StringCmd) orderStrokes() {
 	if n < 2 {
 		return
 	}
-	strokes, order := s.spans[:n], s.spans[n:]
+	// The chained order builds in the spans buffer's tail; grow it
+	// once so the appends below never allocate per glyph.
+	s.spans = slices.Grow(s.spans, n)
+	strokes, order := s.spans[:n], s.spans[n:n]
 	baked := 0
 	for i := 1; i < n; i++ {
 		baked += ManhattanDist(strokes[i-1].to, strokes[i].from)

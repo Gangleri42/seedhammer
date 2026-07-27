@@ -3,6 +3,7 @@ package gui
 
 import (
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -494,11 +495,16 @@ func fitDescriptor(params engrave.Params, desc *bip380.Descriptor, pump func(don
 	return validLabels, validTexts, nil
 }
 
-// fitText chooses the largest font size whose character grid holds
-// the text without re-wrapping any line, so an engraving matches the
-// composed layout. The returned slice descends from that size for
-// the fallback ladder.
-func fitText(params engrave.Params, text string) ([]float32, error) {
+// fitText chooses the largest font size that holds the text. A size
+// whose character grid holds it without re-wrapping any line wins
+// first, so an engraving matches the composed layout; when no grid
+// does — a one-line payload longer than any row — the fit maps the
+// wrapped grid per size and takes the largest font whose grid holds
+// the text wrapped, the same chunking the layout engine engraves.
+// The returned slice descends from the chosen size for the fallback
+// ladder; wrapped reports that the wrap tier chose it, so a caller
+// can warn that the engraved layout re-breaks the composed lines.
+func fitText(params engrave.Params, text string) (sizes []float32, wrapped bool, err error) {
 	maxLine, lines, n := 0, 1, 0
 	for i := 0; i < len(text); i++ {
 		if text[i] == '\n' {
@@ -514,16 +520,40 @@ func fitText(params engrave.Params, text string) ([]float32, error) {
 			lines > backup.LinesPerPlate(params, size) {
 			continue
 		}
-		return backup.FontSizes[i:], nil
+		return backup.FontSizes[i:], false, nil
 	}
-	return nil, ErrTooLarge
+	for i, size := range backup.FontSizes {
+		if wrappedLines(params, text, size) <= backup.LinesPerPlate(params, size) {
+			return backup.FontSizes[i:], true, nil
+		}
+	}
+	return nil, false, ErrTooLarge
+}
+
+// wrappedLines counts the plate lines text occupies at the given
+// size when lines longer than the grid row wrap, mirroring
+// EngraveText's own chunking.
+func wrappedLines(params engrave.Params, text string, size float32) int {
+	cpl := max(1, backup.CharsPerLine(params, sh.Font, size))
+	lines := 0
+	for len(text) > 0 {
+		seg := text
+		if i := strings.IndexByte(text, '\n'); i >= 0 {
+			seg = text[:i]
+			text = text[i+1:]
+		} else {
+			text = ""
+		}
+		lines += max(1, (len(seg)+cpl-1)/cpl)
+	}
+	return lines
 }
 
 // validateText builds a plate from free-form text at the largest
 // fitting size; planText is its progress-screen twin for the device
 // flow — a fit change in one must land in the other.
 func validateText(params engrave.Params, text string) (Plate, error) {
-	sizes, err := fitText(params, text)
+	sizes, _, err := fitText(params, text)
 	if err != nil {
 		return Plate{}, err
 	}
@@ -548,7 +578,7 @@ func validateText(params engrave.Params, text string) (Plate, error) {
 // same ladder, but the plan walk runs in the background with draw
 // underneath and the back button canceling.
 func planText(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Point) op.Op, params engrave.Params, text string) (Plate, error) {
-	sizes, err := fitText(params, text)
+	sizes, _, err := fitText(params, text)
 	if err != nil {
 		return Plate{}, err
 	}
@@ -1944,6 +1974,18 @@ func textFlow(ctx *Context, th *Colors, txt plainText) {
 	ts := &TextScreen{
 		Text:   string(txt),
 		Notice: textNotice(string(txt)),
+	}
+	// The confirm screen wraps at the display width, not the plate
+	// grid; when the plate fit will re-break the composed lines, say
+	// so, with the size, before steel is spent on a layout the
+	// operator has not seen.
+	if sizes, wrapped, err := fitText(ctx.Platform.EngraverParams(), ts.Text); err == nil && wrapped {
+		warn := fmt.Sprintf("Long lines wrap on the plate at %.1fmm text.", sizes[0])
+		if ts.Notice != "" {
+			ts.Notice += " " + warn
+		} else {
+			ts.Notice = warn
+		}
 	}
 	for {
 		plate, ok := ts.Confirm(ctx, th)

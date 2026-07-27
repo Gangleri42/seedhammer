@@ -23,9 +23,12 @@ generated from the firmware sources by
 
 With --raw the payload is written as a Text record without the plate
 grid checks: the firmware's scanner decides what it is (descriptor,
-codex32, seed phrase, free text). The grid checks assume plate text,
-so they would refuse a one-line descriptor the device happily parses
-and wraps itself.
+codex32, seed phrase, free text). The default mode gates on the
+plate grid, wrapping overlong lines like the firmware's text fit;
+structured one-line records pass that gate too, but the firmware
+parses them as records, not text plates, so the reported plate size
+does not apply to them. Prefer --raw for anything that is not plate
+text.
 
 Usage:
     write-nfc.py plate.txt            # or - for stdin
@@ -80,7 +83,14 @@ def validate(lines: list[str], sh: dict) -> dict:
     cols = max(len(line) for line in lines)
     for size in sh["sizes"]:
         if cols <= size["cols"] and len(lines) <= size["rows"]:
-            return size
+            return size, False
+    # No grid holds the composition unwrapped; overlong lines wrap on
+    # the plate like the firmware's layout engine, so take the largest
+    # size whose grid holds the wrapped line count.
+    for size in sh["sizes"]:
+        wrapped = sum(max(1, -(-len(line) // size["cols"])) for line in lines)
+        if wrapped <= size["rows"]:
+            return size, True
     largest = sh["sizes"][-1]
     sys.exit(
         f"does not fit any plate size: {cols}x{len(lines)}, "
@@ -164,12 +174,22 @@ def main():
         write([ndef.TextRecord("\n".join(lines), language="en")])
         return
     sh = font_data()
-    size = validate(lines, sh)
-    print(
-        f"{max(len(l) for l in lines)}x{len(lines)} characters, "
-        f"engraves at {size['mm']}mm",
-        file=sys.stderr,
-    )
+    size, wrapped = validate(lines, sh)
+    if wrapped:
+        # The size only applies if the firmware engraves the payload
+        # as a text plate; a one-line record (descriptor, key) is
+        # parsed as a record instead.
+        print(
+            f"{max(len(l) for l in lines)}x{len(lines)} characters, "
+            f"wraps at {size['mm']}mm if engraved as plate text",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"{max(len(l) for l in lines)}x{len(lines)} characters, "
+            f"engraves at {size['mm']}mm",
+            file=sys.stderr,
+        )
     ext = "urn:nfc:ext:" + sh["recordType"]
     if as_curves:
         payload = compile_curves(lines, size, sh)

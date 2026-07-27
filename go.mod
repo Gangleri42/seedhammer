@@ -26,3 +26,5 @@ require (
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 )
+
+replace github.com/seedhammer/kortschak-qr => github.com/Gangleri42/kortschak-qr v0.3.3

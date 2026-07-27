@@ -1,3 +1,5 @@
+github.com/Gangleri42/kortschak-qr v0.3.3 h1:yVJT1CvOmFdxnAjRsjyan92/akBGob+mk+XR+47ogKQ=
+github.com/Gangleri42/kortschak-qr v0.3.3/go.mod h1:zapN/iP6EUgPZCGPRI1SXZqUOgaw1/7nWIJVlunN8VQ=
 github.com/btcsuite/btcd/address/v2 v2.0.0 h1:UVu8Hal6Siu4XastFe+JX5JkeBYONbDUIY5E+SVTs6I=
 github.com/btcsuite/btcd/address/v2 v2.0.0/go.mod h1:htJK1AtaeK3bKNfZY63ep2oN8LbrI6qvmPGe1vekb3I=
 github.com/btcsuite/btcd/btcec/v2 v2.4.0 h1:9JgnRkOL8J1UKuGlpJs7oL5tFRgrBgyM/uhwfS+cUiI=
@@ -26,8 +28,6 @@ github.com/fxamacker/cbor/v2 v2.9.0 h1:NpKPmjDBgUfBms6tr6JZkTHtfFGcMKsw3eGcmD/sa
 github.com/fxamacker/cbor/v2 v2.9.0/go.mod h1:vM4b+DJCtHn+zz7h3FFp/hDAI9WNWCsZj23V5ytsSxQ=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/seedhammer/kortschak-qr v0.3.2 h1:wH4doJU08wDGQgdOY/U2FtN4bxl+oUa6n86R9ND05+M=
-github.com/seedhammer/kortschak-qr v0.3.2/go.mod h1:zapN/iP6EUgPZCGPRI1SXZqUOgaw1/7nWIJVlunN8VQ=
 github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOfJA=
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=

@@ -397,7 +397,17 @@ func NewErrorScreen(err error) *ErrorScreen {
 	}
 }
 
-func validateDescriptor(params engrave.Params, desc *bip380.Descriptor) ([]string, []Plate, error) {
+// fitDescriptor selects the descriptor engravings that fit the
+// plate, without planning any of them: each candidate layout is
+// walked for the hull of its engraved marks, the figure the
+// planner's measure would report, and rejected on the plate margin
+// alone. The brute-force ladder used to plan every failing attempt,
+// which on a dense multisig descriptor churned megabytes of planner
+// state through the device heap before the choice screen could
+// appear. The chosen variant is planned after the operator picks it;
+// see planPlate. pump, if not nil, observes the ladder attempts and
+// cancels by returning false.
+func fitDescriptor(params engrave.Params, desc *bip380.Descriptor, pump func(done, total int) bool) ([]string, []backup.Text, error) {
 	enc := desc.Encode()
 	qrc, err := qr.Encode(desc.EncodeNoChecksum(), qr.L)
 	if err != nil {
@@ -429,10 +439,9 @@ func validateDescriptor(params engrave.Params, desc *bip380.Descriptor) ([]strin
 	fontSizes := backup.FontSizes
 	qrScales := []int{3, 2}
 	var validLabels []string
-	var validEngravings []Plate
+	var validTexts []backup.Text
 
-	var lastErr error
-	for _, e := range engravings {
+	ladder := func(e textEngraving) ([]int, []float32) {
 		sizes := fontSizes
 		if e.Paragraph.Text == "" {
 			// The text size doesn't affect a lone QR.
@@ -442,9 +451,21 @@ func validateDescriptor(params engrave.Params, desc *bip380.Descriptor) ([]strin
 		if e.Paragraph.QR == nil {
 			scales = qrScales[:1]
 		}
+		return scales, sizes
+	}
+	attempts, total := 0, 0
+	for _, e := range engravings {
+		scales, sizes := ladder(e)
+		total += len(scales) * len(sizes)
+	}
+	for _, e := range engravings {
+		scales, sizes := ladder(e)
 	search:
-		for _, scale := range scales {
-			for _, size := range sizes {
+		for si, scale := range scales {
+			for zi, size := range sizes {
+				if attempts++; pump != nil && !pump(attempts, total) {
+					return nil, nil, errPlanCanceled
+				}
 				p := e.Paragraph
 				p.QRScale = scale
 				descPlate := backup.Text{
@@ -452,28 +473,32 @@ func validateDescriptor(params engrave.Params, desc *bip380.Descriptor) ([]strin
 					Font:       sh.Font,
 					FontSize:   size,
 				}
-				plan := backup.EngraveText(params, descPlate)
-				plate, err := toPlate(plan, params)
-				if err != nil {
-					lastErr = err
+				if !layoutFits(backup.EngraveText(params, descPlate), params) {
 					continue
 				}
 				validLabels = append(validLabels, e.Label)
-				validEngravings = append(validEngravings, plate)
+				validTexts = append(validTexts, descPlate)
+				// Credit the ladder cells the accept skips, so the
+				// gauge reaches its total instead of ending mid-scale.
+				attempts += len(scales)*len(sizes) - (si*len(sizes) + zi + 1)
+				if pump != nil && !pump(attempts, total) {
+					return nil, nil, errPlanCanceled
+				}
 				break search
 			}
 		}
 	}
-	if len(validEngravings) == 0 {
-		return nil, nil, lastErr
+	if len(validTexts) == 0 {
+		return nil, nil, ErrTooLarge
 	}
-	return validLabels, validEngravings, nil
+	return validLabels, validTexts, nil
 }
 
-// validateText builds a plate from free-form text, choosing the
-// largest font size whose character grid holds the text without
-// re-wrapping any line, so an engraving matches the composed layout.
-func validateText(params engrave.Params, text string) (Plate, error) {
+// fitText chooses the largest font size whose character grid holds
+// the text without re-wrapping any line, so an engraving matches the
+// composed layout. The returned slice descends from that size for
+// the fallback ladder.
+func fitText(params engrave.Params, text string) ([]float32, error) {
 	maxLine, lines, n := 0, 1, 0
 	for i := 0; i < len(text); i++ {
 		if text[i] == '\n' {
@@ -484,13 +509,26 @@ func validateText(params engrave.Params, text string) (Plate, error) {
 		n++
 		maxLine = max(maxLine, n)
 	}
-	var lastErr error
-	for _, size := range backup.FontSizes {
+	for i, size := range backup.FontSizes {
 		if maxLine > backup.CharsPerLine(params, sh.Font, size) ||
 			lines > backup.LinesPerPlate(params, size) {
-			lastErr = ErrTooLarge
 			continue
 		}
+		return backup.FontSizes[i:], nil
+	}
+	return nil, ErrTooLarge
+}
+
+// validateText builds a plate from free-form text at the largest
+// fitting size; planText is its progress-screen twin for the device
+// flow — a fit change in one must land in the other.
+func validateText(params engrave.Params, text string) (Plate, error) {
+	sizes, err := fitText(params, text)
+	if err != nil {
+		return Plate{}, err
+	}
+	var lastErr error
+	for _, size := range sizes {
 		plan := backup.EngraveText(params, backup.Text{
 			Paragraphs: []backup.Paragraph{{Text: text}},
 			Font:       sh.Font,
@@ -498,6 +536,34 @@ func validateText(params engrave.Params, text string) (Plate, error) {
 		})
 		plate, err := toPlate(plan, params)
 		if err != nil {
+			lastErr = err
+			continue
+		}
+		return plate, nil
+	}
+	return Plate{}, lastErr
+}
+
+// planText is validateText behind the progress screen: same fit,
+// same ladder, but the plan walk runs in the background with draw
+// underneath and the back button canceling.
+func planText(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Point) op.Op, params engrave.Params, text string) (Plate, error) {
+	sizes, err := fitText(params, text)
+	if err != nil {
+		return Plate{}, err
+	}
+	var lastErr error
+	for _, size := range sizes {
+		plan := backup.EngraveText(params, backup.Text{
+			Paragraphs: []backup.Paragraph{{Text: text}},
+			Font:       sh.Font,
+			FontSize:   size,
+		})
+		plate, err := planPlate(ctx, th, draw, plan, params)
+		if err != nil {
+			if errors.Is(err, errPlanCanceled) {
+				return Plate{}, err
+			}
 			lastErr = err
 			continue
 		}
@@ -2368,8 +2434,20 @@ func confirmScreen(ctx *Context, th *Colors, draw func(*Context, *Colors, image.
 
 func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (Plate, bool) {
 	return confirmScreen(ctx, th, s.Draw, func() (Plate, bool, error) {
-		labels, engravings, err := validateDescriptor(ctx.Platform.EngraverParams(), s.Descriptor)
+		params := ctx.Platform.EngraverParams()
+		type fitResult struct {
+			labels []string
+			texts  []backup.Text
+		}
+		fit, err := runJob(ctx, th, func(pump func(done, total int) bool) (fitResult, error) {
+			labels, texts, err := fitDescriptor(params, s.Descriptor, pump)
+			return fitResult{labels, texts}, err
+		}, planFrame(ctx, th, s.Draw))
+		labels, texts := fit.labels, fit.texts
 		if err != nil {
+			if errors.Is(err, errPlanCanceled) {
+				return Plate{}, false, nil
+			}
 			return Plate{}, false, err
 		}
 		cs := &ChoiceScreen{
@@ -2381,7 +2459,14 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (Plate, bool) {
 		if !ok {
 			return Plate{}, false, nil
 		}
-		return engravings[choice], true, nil
+		plate, err := planPlate(ctx, th, s.Draw, backup.EngraveText(params, texts[choice]), params)
+		if err != nil {
+			if errors.Is(err, errPlanCanceled) {
+				return Plate{}, false, nil
+			}
+			return Plate{}, false, err
+		}
+		return plate, true, nil
 	})
 }
 
@@ -2483,7 +2568,10 @@ func textNotice(text string) string {
 
 func (s *TextScreen) Confirm(ctx *Context, th *Colors) (Plate, bool) {
 	return confirmScreen(ctx, th, s.Draw, func() (Plate, bool, error) {
-		plate, err := validateText(ctx.Platform.EngraverParams(), s.Text)
+		plate, err := planText(ctx, th, s.Draw, ctx.Platform.EngraverParams(), s.Text)
+		if errors.Is(err, errPlanCanceled) {
+			return Plate{}, false, nil
+		}
 		return plate, err == nil, err
 	})
 }
@@ -2876,6 +2964,199 @@ func toPlate(plan engrave.Engraving, params engrave.Params) (Plate, error) {
 		Duration: attrs.Duration,
 		Spline:   spline,
 	}, nil
+}
+
+// measureLayout walks an engraving without planning it. The returned
+// bounds are the hull of its engraved marks, measured with the same
+// windowing the planner's measure applies, so a layout can be
+// rejected on the plate margin at glyph-replay cost; knots counts
+// the commands the planner would consume, the denominator for a
+// plan's progress gauge.
+func measureLayout(plan engrave.Engraving) (bspline.Bounds, int) {
+	knots := 0
+	attrs := bspline.Measure(func(yield func(bspline.Knot) bool) {
+		for cmd := range plan {
+			k, ok := cmd.AsKnot()
+			if !ok {
+				continue
+			}
+			if knots++; knots%256 == 0 {
+				// The fit ladder walks whole layouts between progress
+				// pumps; yield inside the walk too, or the cooperative
+				// scheduler starves the frame loop for a walk at a
+				// time.
+				runtime.Gosched()
+			}
+			// Clamped commands repeat their knot in the planned
+			// spline; mirror the repetition so the measure windows
+			// pad out exactly like the planner's.
+			for m := 0; m < k.Multiplicity; m++ {
+				if !yield(bspline.Knot{Ctrl: k.Knot, T: 1, Engrave: k.Engrave}) {
+					return
+				}
+			}
+		}
+	})
+	return attrs.Bounds, knots
+}
+
+// plateBounds is the engravable region inside the safety margin.
+func plateBounds(params engrave.Params) bspline.Bounds {
+	sz := SquarePlate.Dims(params.Millimeter)
+	m := bezier.Pt(safetyMargin*params.Millimeter, safetyMargin*params.Millimeter)
+	return bspline.Bounds{Min: m, Max: sz.Sub(m)}
+}
+
+// layoutFits reports whether an engraving's marks stay inside the
+// plate's safety margin, without planning it.
+func layoutFits(plan engrave.Engraving, params engrave.Params) bool {
+	bounds, _ := measureLayout(plan)
+	return bounds.In(plateBounds(params))
+}
+
+// planPlateWalk is planPlate's compute, callable without a screen: a
+// counting walk sizes the progress gauge, then one planning walk
+// produces the plate, with toPlate's margin check and figures. pump,
+// if not nil, observes the planner's consumption of the layout and
+// cancels with errPlanCanceled by returning false.
+func planPlateWalk(plan engrave.Engraving, params engrave.Params, pump func(done, total int) bool) (Plate, error) {
+	bounds, total := measureLayout(plan)
+	if !bounds.In(plateBounds(params)) {
+		return Plate{}, ErrTooLarge
+	}
+	fed := 0
+	canceled := false
+	src := func(yield func(engrave.Command) bool) {
+		for cmd := range plan {
+			if _, ok := cmd.AsKnot(); ok {
+				fed++
+				if pump != nil && !pump(fed, total) {
+					canceled = true
+					return
+				}
+			}
+			if !yield(cmd) {
+				return
+			}
+		}
+	}
+	attrs := bspline.Measure(engrave.PlanEngraving(params.StepperConfig, src))
+	if canceled {
+		return Plate{}, errPlanCanceled
+	}
+	if !attrs.Bounds.In(plateBounds(params)) {
+		return Plate{}, ErrTooLarge
+	}
+	return Plate{
+		Duration: attrs.Duration,
+		// A fresh plan for the engraver's own re-iterations.
+		Spline: engrave.PlanEngraving(params.StepperConfig, plan),
+	}, nil
+}
+
+// planRefresh is the redraw cadence of the progress screen while a
+// plate plans in the background.
+const planRefresh = time.Second / 4
+
+// errPlanCanceled reports a planning job stopped by the back button
+// or shutdown.
+var errPlanCanceled = errors.New("gui: plan canceled")
+
+// runJob runs work in a worker goroutine while the flow redraws
+// frame with the walked percentage; the back button or shutdown
+// cancels with errPlanCanceled.
+//
+// The worker exists for its stack, not for parallelism: the walk
+// pipeline and the frame rasterizer each fill a good share of a
+// fixed 16KB TinyGo stack, so the walk keeps its own. The tasks
+// scheduler is cooperative; the walk yields to the frame loop from
+// its pump callback.
+func runJob[T any](ctx *Context, th *Colors, work func(pump func(done, total int) bool) (T, error), frame func(pct int) op.Op) (T, error) {
+	type result struct {
+		val T
+		err error
+	}
+	res := make(chan result, 1)
+	progress := make(chan [2]int, 1)
+	quit := make(chan struct{})
+	go func() {
+		defer ctx.Platform.Wakeup()
+		val, err := work(func(done, total int) bool {
+			select {
+			case <-progress:
+			default:
+			}
+			select {
+			case progress <- [2]int{done, total}:
+			default:
+			}
+			runtime.Gosched()
+			select {
+			case <-quit:
+				return false
+			default:
+				return true
+			}
+		})
+		res <- result{val, err}
+	}()
+	// The worker aliases flow state; every return drains res so
+	// nothing outlives the walk.
+	backBtn := &Clickable{Button: Button1}
+	pct := 0
+	for !ctx.Done {
+		// The cancel outranks a racing completion: a click pending
+		// from the previous frame must not be swallowed by a walk
+		// that finished in the same window.
+		if backBtn.Clicked(ctx) {
+			break
+		}
+		select {
+		case r := <-res:
+			return r.val, r.err
+		default:
+		}
+		select {
+		case p := <-progress:
+			if p[1] > 0 {
+				pct = p[0] * 100 / p[1]
+			}
+		default:
+		}
+		dims := ctx.Platform.DisplaySize()
+		nav, _ := layoutNavigation(&ctx.B, th, dims,
+			NavButton{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack},
+		)
+		ctx.WakeupAt(time.Now().Add(planRefresh))
+		ctx.Frame(op.Layer(nav, frame(pct)))
+	}
+	close(quit)
+	<-res
+	var zero T
+	return zero, errPlanCanceled
+}
+
+// planPlate plans an engraving into a Plate behind the progress
+// screen: draw underneath, the planned fraction at the foot, and the
+// back button canceling with errPlanCanceled. planPlateWalk rejects
+// out-of-plate layouts inside the worker, before any planning, so an
+// oversized layout costs one measuring walk behind the progress
+// screen instead of a frameless stall on the flow goroutine.
+func planPlate(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Point) op.Op, plan engrave.Engraving, params engrave.Params) (Plate, error) {
+	return runJob(ctx, th, func(pump func(done, total int) bool) (Plate, error) {
+		return planPlateWalk(plan, params, pump)
+	}, planFrame(ctx, th, draw))
+}
+
+// planFrame overlays the walked percentage on a screen's draw for a
+// runJob progress loop.
+func planFrame(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Point) op.Op) func(pct int) op.Op {
+	return func(pct int) op.Op {
+		dims := ctx.Platform.DisplaySize()
+		label, lsz := widget.Labelwf(&ctx.B, ctx.Styles.subtitle, 300, th.Text, "Preparing %d%%", pct)
+		r := layout.Rectangle{Max: dims}
+		return op.Layer(label.Offset(r.S(lsz).Sub(image.Pt(0, 16))), draw(ctx, th, dims))
+	}
 }
 
 type PlateSize int

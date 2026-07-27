@@ -12,6 +12,8 @@ import (
 	"os"
 	"slices"
 	"strings"
+
+	qr "github.com/seedhammer/kortschak-qr"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -150,13 +152,18 @@ func newTestEngraveScreen(t *testing.T, ctx *Context) *EngraveScreen {
 		},
 	}
 
-	_, engravings, err := validateDescriptor(ctx.Platform.EngraverParams(), desc)
+	params := ctx.Platform.EngraverParams()
+	_, texts, err := fitDescriptor(params, desc, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plate, err := toPlate(backup.EngraveText(params, texts[0]), params)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return NewEngraveScreen(
 		ctx,
-		engravings[0],
+		plate,
 	)
 }
 
@@ -182,20 +189,110 @@ func TestValidateDescriptorFallback(t *testing.T) {
 		{4, 6, []string{"TEXT ONLY", "QR ONLY"}},
 	}
 	for _, test := range tests {
-		labels, engravings, err := validateDescriptor(engraverParams, multisig(test.threshold, test.nkeys))
+		labels, texts, err := fitDescriptor(engraverParams, multisig(test.threshold, test.nkeys), nil)
 		if err != nil {
 			t.Fatalf("%d-of-%d: %v", test.threshold, test.nkeys, err)
 		}
 		if !slices.Equal(labels, test.want) {
 			t.Errorf("%d-of-%d: got engravings %q, want %q", test.threshold, test.nkeys, labels, test.want)
 		}
-		if len(engravings) != len(labels) {
-			t.Errorf("%d-of-%d: %d engravings for %d labels", test.threshold, test.nkeys, len(engravings), len(labels))
+		if len(texts) != len(labels) {
+			t.Errorf("%d-of-%d: %d engravings for %d labels", test.threshold, test.nkeys, len(texts), len(labels))
+		}
+		// The fit verdict must agree with the planner: every offered
+		// variant plans inside the plate.
+		for i, txt := range texts {
+			if _, err := toPlate(backup.EngraveText(engraverParams, txt), engraverParams); err != nil {
+				t.Errorf("%d-of-%d %s: fit accepted but planning rejects: %v", test.threshold, test.nkeys, labels[i], err)
+			}
 		}
 	}
 	// Beyond the largest QR code that fits the plate.
-	if _, _, err := validateDescriptor(engraverParams, multisig(9, 16)); !errors.Is(err, ErrTooLarge) {
+	if _, _, err := fitDescriptor(engraverParams, multisig(9, 16), nil); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("16-key descriptor: got %v, want ErrTooLarge", err)
+	}
+
+	// The mark-hull fit verdict must agree with the planner's own
+	// bounds verdict on every ladder combination, or fitDescriptor's
+	// menu would drift from what planning accepts.
+	for _, cfg := range [][2]int{{2, 3}, {4, 6}, {5, 7}} {
+		desc := multisig(cfg[0], cfg[1])
+		enc := desc.Encode()
+		qrc, err := qr.Encode(desc.EncodeNoChecksum(), qr.L)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range []backup.Paragraph{
+			{Text: enc, QR: qrc},
+			{Text: enc},
+			{QR: qrc},
+		} {
+			for _, scale := range []int{3, 2} {
+				for _, size := range backup.FontSizes {
+					p := p
+					p.QRScale = scale
+					plan := backup.EngraveText(engraverParams, backup.Text{
+						Paragraphs: []backup.Paragraph{p},
+						Font:       sh.Font,
+						FontSize:   size,
+					})
+					fits := layoutFits(plan, engraverParams)
+					_, perr := toPlate(plan, engraverParams)
+					if fits != (perr == nil) {
+						t.Errorf("%d-of-%d qr=%v text=%v scale=%d size=%v: fit says %v, planner says %v",
+							cfg[0], cfg[1], p.QR != nil, p.Text != "", scale, size, fits, perr)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestPlanPlateWalk(t *testing.T) {
+	plate := backup.Text{
+		Paragraphs: []backup.Paragraph{{Text: "IN CASE OF FIRE\nBREAK GLASS"}},
+		Font:       sh.Font,
+		FontSize:   3.8,
+	}
+	plan := backup.EngraveText(engraverParams, plate)
+	ref, err := toPlate(plan, engraverParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, lastDone, total := 0, -1, 0
+	got, err := planPlateWalk(plan, engraverParams, func(done, tot int) bool {
+		calls++
+		if done < lastDone {
+			t.Fatalf("pump went backwards: %d after %d", done, lastDone)
+		}
+		lastDone, total = done, tot
+		return true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Duration != ref.Duration {
+		t.Errorf("planned duration %d, toPlate %d", got.Duration, ref.Duration)
+	}
+	if calls == 0 || total == 0 || lastDone != total {
+		t.Errorf("pump: %d calls, final %d/%d, want a full walk", calls, lastDone, total)
+	}
+
+	// A pump returning false abandons the plan.
+	if _, err := planPlateWalk(plan, engraverParams, func(done, tot int) bool {
+		return false
+	}); !errors.Is(err, errPlanCanceled) {
+		t.Errorf("cancelled plan: %v, want errPlanCanceled", err)
+	}
+
+	// Oversized layouts are rejected without planning.
+	big := backup.EngraveText(engraverParams, backup.Text{
+		Paragraphs: []backup.Paragraph{{Text: strings.Repeat("W", 2000)}},
+		Font:       sh.Font,
+		FontSize:   6.0,
+	})
+	if _, err := planPlateWalk(big, engraverParams, nil); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("oversized layout: %v, want ErrTooLarge", err)
 	}
 }
 

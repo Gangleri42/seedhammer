@@ -5,14 +5,11 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"runtime"
-	"time"
 
 	"seedhammer.com/bezier"
 	"seedhammer.com/bspline"
 	"seedhammer.com/curves"
 	"seedhammer.com/engrave"
-	"seedhammer.com/gui/assets"
 	"seedhammer.com/gui/op"
 	"seedhammer.com/gui/widget"
 )
@@ -62,7 +59,7 @@ func curvesPathFlow(ctx *Context, th *Colors, payload curvesPayload) {
 	cs := &CurvesScreen{}
 	plate, err := scanCurves(ctx, th, cs, payload, params)
 	if err != nil {
-		if errors.Is(err, curves.ErrCanceled) {
+		if errors.Is(err, errPlanCanceled) {
 			return
 		}
 		cs.info = ""
@@ -81,85 +78,18 @@ func curvesPathFlow(ctx *Context, th *Colors, payload curvesPayload) {
 	}
 }
 
-// scanRefresh is the progress screen's redraw cadence while a scanned
-// drawing walks through validateCurves.
-const scanRefresh = time.Second / 4
-
-// scanCurves validates the payload in a worker goroutine while the
-// flow animates the screen: the preview raster fills stroke by stroke
-// as the walk streams and the info line carries the walked fraction.
-// The back button abandons the scan with curves.ErrCanceled.
-//
-// The worker exists for its stack, not for parallelism: the fused
-// walk pipeline and the frame rasterizer are each about as deep as a
-// goroutine's fixed 16KB stack comfortably carries, so the walk keeps
-// its own. The tasks scheduler is cooperative; the walk yields to the
-// frame loop from its progress callback.
+// scanCurves validates the payload behind the progress screen: the
+// preview raster fills stroke by stroke as the walk streams and the
+// info line carries the walked fraction; the back button abandons
+// the scan.
 func scanCurves(ctx *Context, th *Colors, cs *CurvesScreen, payload []byte, params engrave.Params) (Plate, error) {
-	type result struct {
-		plate Plate
-		err   error
-	}
-	res := make(chan result, 1)
-	progress := make(chan [2]int, 1)
-	quit := make(chan struct{})
-	go func() {
-		defer ctx.Platform.Wakeup()
-		plate, err := validateCurves(cs, payload, params, ctx.Platform.DisplaySize(), func(done, total int) bool {
-			select {
-			case <-progress:
-			default:
-			}
-			select {
-			case progress <- [2]int{done, total}:
-			default:
-			}
-			runtime.Gosched()
-			select {
-			case <-quit:
-				return false
-			default:
-				return true
-			}
-		})
-		res <- result{plate, err}
-	}()
-	// The worker aliases the payload and the screen's preview; every
-	// return drains res so neither outlives the walk.
-	backBtn := &Clickable{Button: Button1}
-	for !ctx.Done {
-		// The cancel outranks a racing completion: a click pending from
-		// the previous frame must not be swallowed by a plate that
-		// finished in the same window.
-		if backBtn.Clicked(ctx) {
-			break
-		}
-		select {
-		case r := <-res:
-			return r.plate, r.err
-		default:
-		}
-		select {
-		case p := <-progress:
-			if p[1] > 0 {
-				cs.info = fmt.Sprintf("Preparing %d%%", p[0]*100/p[1])
-			}
-		default:
-		}
-		dims := ctx.Platform.DisplaySize()
-		nav, _ := layoutNavigation(&ctx.B, th, dims,
-			NavButton{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack},
-		)
-		ctx.WakeupAt(time.Now().Add(scanRefresh))
-		ctx.Frame(op.Layer(nav, cs.Draw(ctx, th, dims)))
-	}
-	close(quit)
-	r := <-res
-	if r.err == nil {
-		// The walk outran the cancel; the operator still asked out.
-		return Plate{}, curves.ErrCanceled
-	}
-	return Plate{}, r.err
+	dims := ctx.Platform.DisplaySize()
+	return runJob(ctx, th, func(pump func(done, total int) bool) (Plate, error) {
+		return validateCurves(cs, payload, params, dims, pump)
+	}, func(pct int) op.Op {
+		cs.info = fmt.Sprintf("Preparing %d%%", pct)
+		return cs.Draw(ctx, th, dims)
+	})
 }
 
 // validateCurves parses and validates a curves payload and fills in

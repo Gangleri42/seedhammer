@@ -365,6 +365,15 @@ func TestValidateText(t *testing.T) {
 		{"tall compositions fall back", grid(1, 26), 3.0},
 		{"full 3.0mm grid", grid(44, 26), 3.0},
 		{"descenders on the last row", grid(34, 19) + "\ngjpqy([])", 3.8},
+		// Overflowing lines wrap at the largest size whose grid holds
+		// the wrapped text, instead of failing outright.
+		{"one-liner wraps at the largest size", line, 6.0},
+		{"long one-liner wraps mid-ladder", strings.Repeat("W", 500), 4.4},
+		{"descriptor-length one-liner wraps at 3.0mm", strings.Repeat("W", 973), 3.0},
+		// A composition that fits some grid unwrapped keeps that fit,
+		// even when wrapping would allow a larger font: the engraving
+		// must match the composed layout.
+		{"composed lines never re-wrap", grid(30, 2), 4.4},
 	}
 	for _, test := range fits {
 		plate, err := validateText(engraverParams, test.text)
@@ -379,8 +388,8 @@ func TestValidateText(t *testing.T) {
 		name string
 		text string
 	}{
-		{"too wide", line},
 		{"too tall", grid(1, 27)},
+		{"too long to wrap", strings.Repeat("W", 44*26+1)},
 	}
 	for _, test := range tooLarge {
 		if _, err := validateText(engraverParams, test.text); !errors.Is(err, ErrTooLarge) {

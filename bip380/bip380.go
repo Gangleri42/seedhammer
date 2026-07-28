@@ -246,16 +246,19 @@ func (d *Descriptor) encode(compact bool) string {
 func (d Derivation) Encode() string {
 	res := new(strings.Builder)
 	res.WriteByte('/')
+	// Indexes format through uint64: Itoa's int is 32 bits on the
+	// device, where an index at or above 2^31, representable in a
+	// UR keypath component, would print negative.
 	switch d.Type {
 	case ChildDerivation:
-		res.WriteString(strconv.Itoa(int(d.Index)))
+		res.WriteString(strconv.FormatUint(uint64(d.Index), 10))
 	case WildcardDerivation:
 		res.WriteByte('*')
 	case RangeDerivation:
 		res.WriteByte('<')
-		res.WriteString(strconv.Itoa(int(d.Index)))
+		res.WriteString(strconv.FormatUint(uint64(d.Index), 10))
 		res.WriteByte(';')
-		res.WriteString(strconv.Itoa(int(d.End)))
+		res.WriteString(strconv.FormatUint(uint64(d.End), 10))
 		res.WriteByte('>')
 	default:
 		panic("invalid derivation")

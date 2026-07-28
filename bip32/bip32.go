@@ -72,15 +72,21 @@ func ParsePathElement(p string) (uint32, error) {
 		offset = hdkeychain.HardenedKeyStart
 		p = p[:len(p)-1]
 	}
-	idx, err := strconv.ParseInt(p, 10, 0)
+	// The element range is [0, 2^31) on every platform. Parsing with
+	// the platform int accepted [2^31, 2^63) on 64-bit hosts, aliasing
+	// the first half of it with the hardening offset, while the 32-bit
+	// device rejected the same elements.
+	idx, err := strconv.ParseUint(p, 10, 32)
 	if err != nil {
+		if errors.Is(err, strconv.ErrRange) {
+			return 0, fmt.Errorf("bip32: path element out of range: %q", p)
+		}
 		return 0, fmt.Errorf("bip32: invalid path element: %q", p)
 	}
-	iu32 := uint32(idx)
-	if int64(iu32) != idx || iu32+offset < iu32 {
+	if idx >= hdkeychain.HardenedKeyStart {
 		return 0, fmt.Errorf("bip32: path element out of range: %q", p)
 	}
-	return iu32 + offset, nil
+	return uint32(idx) + offset, nil
 }
 
 func ParsePath(path string) (Path, error) {

@@ -3,7 +3,6 @@ package gui
 
 import (
 	"errors"
-	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -553,7 +552,7 @@ func planDescriptorPlate(ctx *Context, th *Colors, draw func(*Context, *Colors, 
 			}
 			p.QR = qrc
 		}
-		return planPlateWalk(backup.EngraveText(params, txt), params, pump)
+		return planPlateWalk(backup.EngraveText(params, txt), params, pump, nil)
 	}, planFrame(ctx, th, draw))
 }
 
@@ -654,13 +653,18 @@ func validateText(params engrave.Params, text string) (Plate, error) {
 }
 
 // planText is validateText behind the progress screen: same fit,
-// same ladder, but the plan walk runs in the background with draw
-// underneath and the back button canceling.
-func planText(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Point) op.Op, params engrave.Params, text string) (Plate, error) {
+// same ladder, but the plan walk runs in the background and the back
+// button cancels. The preview rasterizer rides the walk — the plate
+// fills stroke by stroke under the progress label, the same raster
+// path scanned curves drawings get — and the returned screen carries
+// the finished layout for the plate confirm.
+func planText(ctx *Context, th *Colors, params engrave.Params, text string) (Plate, *CurvesScreen, error) {
 	sizes, _, err := fitText(params, text)
 	if err != nil {
-		return Plate{}, err
+		return Plate{}, nil, err
 	}
+	dims := ctx.Platform.DisplaySize()
+	cs := &CurvesScreen{title: "Engrave Text"}
 	var lastErr error
 	for _, size := range sizes {
 		plan := backup.EngraveText(params, backup.Text{
@@ -668,17 +672,22 @@ func planText(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Point
 			Font:       sh.Font,
 			FontSize:   size,
 		})
-		plate, err := planPlate(ctx, th, draw, plan, params)
+		// A fresh raster per ladder size: a failed larger fit must not
+		// leave its strokes in the preview.
+		r := newSplineRasterizer(previewSide(dims), params)
+		cs.preview = r.preview
+		plate, err := planPlate(ctx, th, cs.Draw, plan, params, r.knot)
 		if err != nil {
 			if errors.Is(err, errPlanCanceled) {
-				return Plate{}, err
+				return Plate{}, nil, err
 			}
 			lastErr = err
 			continue
 		}
-		return plate, nil
+		cs.initText(plate, r, params)
+		return plate, cs, nil
 	}
-	return Plate{}, lastErr
+	return Plate{}, nil, lastErr
 }
 
 type Plate struct {
@@ -2050,30 +2059,36 @@ func descriptorFlow(ctx *Context, th *Colors, desc *bip380.Descriptor) {
 }
 
 func textFlow(ctx *Context, th *Colors, txt plainText) {
-	ts := &TextScreen{
-		Text:   string(txt),
-		Notice: textNotice(string(txt)),
-	}
-	// The confirm screen wraps at the display width, not the plate
-	// grid; when the plate fit will re-break the composed lines, say
-	// so, with the size, before steel is spent on a layout the
-	// operator has not seen.
-	if sizes, wrapped, err := fitText(ctx.Platform.EngraverParams(), ts.Text); err == nil && wrapped {
-		warn := fmt.Sprintf("Long lines wrap on the plate at %.1fmm text.", sizes[0])
-		if ts.Notice != "" {
-			ts.Notice += " " + warn
-		} else {
-			ts.Notice = warn
-		}
-	}
-	for {
-		plate, ok := ts.Confirm(ctx, th)
-		if !ok {
-			break
-		}
-		completed := NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme)
-		if completed {
+	// Text plates confirm exactly like scanned drawings: the plan walk
+	// fills the plate preview behind the progress label, then one
+	// layout confirm shows the engraved grid — the composed lines at
+	// the fitted size, wraps and all — with its dimensions and
+	// duration. What the operator approves is the plate, not a
+	// display-width rendering of the text.
+	plate, preview, err := planText(ctx, th, ctx.Platform.EngraverParams(), string(txt))
+	if err != nil {
+		if errors.Is(err, errPlanCanceled) {
 			return
+		}
+		showError(ctx, th, err, blankScreen)
+		return
+	}
+	preview.notice = textNotice(string(txt))
+	engraveConfirmed(ctx, th, preview, plate)
+}
+
+// engraveConfirmed runs the plate-layout confirm and the engrave
+// screen as one unit: back on the confirm reports false, an aborted
+// engrave re-shows the confirm with the planned plate in hand (no
+// replanning), a completed engrave reports true.
+func engraveConfirmed(ctx *Context, th *Colors, preview *CurvesScreen, plate Plate) bool {
+	for {
+		plate, ok := preview.Confirm(ctx, th, plate)
+		if !ok {
+			return false
+		}
+		if NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme) {
+			return true
 		}
 	}
 }
@@ -2640,17 +2655,6 @@ func (s *DescriptorScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.O
 	)
 }
 
-type TextScreen struct {
-	Text string
-	// Notice warns about content that resembles a corrupted
-	// structured backup. See textNotice.
-	Notice string
-
-	scroll  int
-	txtclip int
-	inp     InputTracker
-}
-
 // textNotice warns when a text payload resembles a corrupted wallet
 // backup, so an operator does not engrave a broken descriptor or seed
 // phrase believing it still works. Intact backups never reach the
@@ -2686,63 +2690,6 @@ func textNotice(text string) string {
 		}
 	}
 	return ""
-}
-
-func (s *TextScreen) Confirm(ctx *Context, th *Colors) (Plate, bool) {
-	return confirmScreen(ctx, th, s.Draw, func() (Plate, bool, error) {
-		plate, err := planText(ctx, th, s.Draw, ctx.Platform.EngraverParams(), s.Text)
-		if errors.Is(err, errPlanCanceled) {
-			return Plate{}, false, nil
-		}
-		return plate, err == nil, err
-	})
-}
-
-func (s *TextScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {
-	// Scroll with the up/down buttons so every line can be reviewed
-	// before engraving.
-	for {
-		e, ok := s.inp.Next(ctx, ButtonFilter(Up), ButtonFilter(Down))
-		if !ok {
-			break
-		}
-		if e, ok := e.AsButton(); ok && e.Pressed {
-			switch e.Button {
-			case Up:
-				s.scroll -= s.txtclip / 2
-			case Down:
-				s.scroll += s.txtclip / 2
-			}
-		}
-	}
-	btnw := assets.NavBtnPrimary.Bounds().Dx()
-	bodyTop := leadingSize
-	var notice op.Op
-	if s.Notice != "" {
-		var sz image.Point
-		notice, sz = widget.Labelw(&ctx.B, ctx.Styles.subtitle, dims.X-2*btnw, th.Text, s.Notice)
-		notice = notice.Offset(image.Pt(btnw, bodyTop))
-		bodyTop += sz.Y
-	}
-	bodyClip := image.Rectangle{
-		Min: image.Pt(btnw, bodyTop),
-		Max: image.Pt(dims.X-btnw, dims.Y),
-	}
-	body, bodysz := widget.Labelw(&ctx.B, ctx.Styles.body, bodyClip.Dx(), th.Text, s.Text)
-	s.txtclip = bodyClip.Dy()
-	maxScroll := bodysz.Y - (bodyClip.Dy() - 2*scrollFadeDist)
-	s.scroll = min(s.scroll, maxScroll)
-	s.scroll = max(s.scroll, 0)
-	body = body.Offset(image.Pt(bodyClip.Min.X, bodyClip.Min.Y+scrollFadeDist-s.scroll))
-	body = fadeClip(&ctx.B, body, bodyClip)
-
-	title, _ := layoutTitle(ctx, dims.X, th.Text, "Engrave Text")
-	return op.Layer(
-		body,
-		notice,
-		title,
-		op.Color(&ctx.B, th.Background),
-	)
 }
 
 // plateRecorder is an optional Platform capability: a platform that wants a
@@ -3140,8 +3087,11 @@ func layoutFits(plan engrave.Engraving, params engrave.Params) bool {
 // counting walk sizes the progress gauge, then one planning walk
 // produces the plate, with toPlate's margin check and figures. pump,
 // if not nil, observes the planner's consumption of the layout and
-// cancels with errPlanCanceled by returning false.
-func planPlateWalk(plan engrave.Engraving, params engrave.Params, pump func(done, total int) bool) (Plate, error) {
+// cancels with errPlanCanceled by returning false. tee, if not nil,
+// sees every planned knot as the measuring walk streams by — the
+// preview rasterizer rides the walk instead of costing one of its
+// own.
+func planPlateWalk(plan engrave.Engraving, params engrave.Params, pump func(done, total int) bool, tee func(bspline.Knot)) (Plate, error) {
 	bounds, total := measureLayout(plan)
 	if !bounds.In(plateBounds(params)) {
 		return Plate{}, ErrTooLarge
@@ -3162,7 +3112,19 @@ func planPlateWalk(plan engrave.Engraving, params engrave.Params, pump func(done
 			}
 		}
 	}
-	attrs := bspline.Measure(engrave.PlanEngraving(params.StepperConfig, src))
+	spline := engrave.PlanEngraving(params.StepperConfig, src)
+	if tee != nil {
+		inner := spline
+		spline = func(yield func(bspline.Knot) bool) {
+			for k := range inner {
+				tee(k)
+				if !yield(k) {
+					return
+				}
+			}
+		}
+	}
+	attrs := bspline.Measure(spline)
 	if canceled {
 		return Plate{}, errPlanCanceled
 	}
@@ -3278,9 +3240,9 @@ func runJob[T any](ctx *Context, th *Colors, work func(pump func(done, total int
 // out-of-plate layouts inside the worker, before any planning, so an
 // oversized layout costs one measuring walk behind the progress
 // screen instead of a frameless stall on the flow goroutine.
-func planPlate(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Point) op.Op, plan engrave.Engraving, params engrave.Params) (Plate, error) {
+func planPlate(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Point) op.Op, plan engrave.Engraving, params engrave.Params, tee func(bspline.Knot)) (Plate, error) {
 	return runJob(ctx, th, func(pump func(done, total int) bool) (Plate, error) {
-		return planPlateWalk(plan, params, pump)
+		return planPlateWalk(plan, params, pump, tee)
 	}, planFrame(ctx, th, draw))
 }
 

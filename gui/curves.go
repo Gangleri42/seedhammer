@@ -10,6 +10,7 @@ import (
 	"seedhammer.com/bspline"
 	"seedhammer.com/curves"
 	"seedhammer.com/engrave"
+	"seedhammer.com/gui/assets"
 	"seedhammer.com/gui/op"
 	"seedhammer.com/gui/widget"
 )
@@ -56,7 +57,7 @@ func blankScreen(ctx *Context, th *Colors, dims image.Point) op.Op {
 
 func curvesPathFlow(ctx *Context, th *Colors, payload curvesPayload) {
 	params := ctx.Platform.EngraverParams()
-	cs := &CurvesScreen{}
+	cs := &CurvesScreen{title: "Engrave Curves"}
 	plate, err := scanCurves(ctx, th, cs, payload, params)
 	if err != nil {
 		if errors.Is(err, errPlanCanceled) {
@@ -66,16 +67,7 @@ func curvesPathFlow(ctx *Context, th *Colors, payload curvesPayload) {
 		showError(ctx, th, err, cs.Draw)
 		return
 	}
-	for {
-		plate, ok := cs.Confirm(ctx, th, plate)
-		if !ok {
-			return
-		}
-		completed := NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme)
-		if completed {
-			return
-		}
-	}
+	engraveConfirmed(ctx, th, cs, plate)
 }
 
 // scanCurves validates the payload behind the progress screen: the
@@ -146,12 +138,32 @@ func validateCurves(cs *CurvesScreen, payload []byte, params engrave.Params, dim
 type CurvesScreen struct {
 	preview *curvesPreview
 	info    string
+	title   string
+	// notice warns about content that resembles a corrupted structured
+	// backup (the text flow; see textNotice).
+	notice string
 }
 
 func (s *CurvesScreen) init(plate Plate, drawing *curves.Drawing, params engrave.Params) {
 	mm := params.Millimeter
 	w := (drawing.Bounds.Dx() + mm/2) / mm
 	h := (drawing.Bounds.Dy() + mm/2) / mm
+	secs := (plate.Duration + params.TicksPerSecond - 1) / params.TicksPerSecond
+	s.info = fmt.Sprintf("%d x %d mm   %d:%.2d", w, h, secs/60, secs%60)
+}
+
+// initText fills the info line from the planned plate and the
+// rasterizer's engraved hull — the text flow's stand-in for a curves
+// drawing's measured bounds. The hull comes from the raster's samples,
+// spaced at a third of a preview pixel, well inside the line's
+// whole-millimeter rounding.
+func (s *CurvesScreen) initText(plate Plate, r *splineRasterizer, params engrave.Params) {
+	mm := params.Millimeter
+	w, h := 0, 0
+	if r.any {
+		w = (r.max.X - r.min.X + mm/2) / mm
+		h = (r.max.Y - r.min.Y + mm/2) / mm
+	}
 	secs := (plate.Duration + params.TicksPerSecond - 1) / params.TicksPerSecond
 	s.info = fmt.Sprintf("%d x %d mm   %d:%.2d", w, h, secs/60, secs%60)
 }
@@ -169,7 +181,7 @@ func previewSide(dims image.Point) int {
 }
 
 func (s *CurvesScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {
-	title, _ := layoutTitle(ctx, dims.X, th.Text, "Engrave Curves")
+	title, _ := layoutTitle(ctx, dims.X, th.Text, s.title)
 	content := op.Layer(
 		title,
 		op.Color(&ctx.B, th.Background),
@@ -190,11 +202,29 @@ func (s *CurvesScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {
 		op.Mask(&ctx.B, s.preview).Offset(pos),
 	)
 	info, infosz := widget.Label(&ctx.B, ctx.Styles.subtitle, th.Text, s.info)
-	info = info.Offset(image.Pt((dims.X-infosz.X)/2, pos.Y+side+(dims.Y-pos.Y-side-infosz.Y)/2))
+	space := dims.Y - pos.Y - side
+	if s.notice == "" {
+		info = info.Offset(image.Pt((dims.X-infosz.X)/2, pos.Y+side+(space-infosz.Y)/2))
+		return op.Layer(
+			drawing,
+			outline,
+			info,
+			content,
+		)
+	}
+	// The corruption notice shares the foot with the info line, kept
+	// clear of the nav buttons in the corners.
+	btnw := assets.NavBtnPrimary.Bounds().Dx()
+	notice, nsz := widget.Labelw(&ctx.B, ctx.Styles.subtitle, dims.X-2*btnw, th.Text, s.notice)
+	total := infosz.Y + 4 + nsz.Y
+	y0 := pos.Y + side + (space-total)/2
+	info = info.Offset(image.Pt((dims.X-infosz.X)/2, y0))
+	notice = notice.Offset(image.Pt((dims.X-nsz.X)/2, y0+infosz.Y+4))
 	return op.Layer(
 		drawing,
 		outline,
 		info,
+		notice,
 		content,
 	)
 }
@@ -214,6 +244,11 @@ type splineRasterizer struct {
 	samples []bezier.Point
 	plate   int
 	spacing int
+
+	// The engraved-sample hull, for an info line when no measured
+	// drawing bounds exist (the text flow).
+	min, max bezier.Point
+	any      bool
 }
 
 func newSplineRasterizer(side int, params engrave.Params) *splineRasterizer {
@@ -240,6 +275,14 @@ func (r *splineRasterizer) knot(k bspline.Knot) {
 	side := r.preview.sz.X
 	for _, pt := range r.samples {
 		r.preview.set(pt.X*side/r.plate, pt.Y*side/r.plate)
+		if !r.any {
+			r.min, r.max, r.any = pt, pt, true
+			continue
+		}
+		r.min.X = min(r.min.X, pt.X)
+		r.min.Y = min(r.min.Y, pt.Y)
+		r.max.X = max(r.max.X, pt.X)
+		r.max.Y = max(r.max.Y, pt.Y)
 	}
 }
 

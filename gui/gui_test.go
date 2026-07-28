@@ -302,7 +302,7 @@ func TestPlanPlateWalk(t *testing.T) {
 		}
 		lastDone, total = done, tot
 		return true
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestPlanPlateWalk(t *testing.T) {
 	// A pump returning false abandons the plan.
 	if _, err := planPlateWalk(plan, engraverParams, func(done, tot int) bool {
 		return false
-	}); !errors.Is(err, errPlanCanceled) {
+	}, nil); !errors.Is(err, errPlanCanceled) {
 		t.Errorf("cancelled plan: %v, want errPlanCanceled", err)
 	}
 
@@ -326,7 +326,7 @@ func TestPlanPlateWalk(t *testing.T) {
 		Font:       sh.Font,
 		FontSize:   6.0,
 	})
-	if _, err := planPlateWalk(big, engraverParams, nil); !errors.Is(err, ErrTooLarge) {
+	if _, err := planPlateWalk(big, engraverParams, nil, nil); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("oversized layout: %v, want ErrTooLarge", err)
 	}
 }

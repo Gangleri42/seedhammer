@@ -13,7 +13,11 @@ var generator = []uint64{0xf5dee51989, 0xa9fdca3312, 0x1bab10e32d, 0x3706b1677a,
 // if one of more characters are outside the alphabet.
 func checksumExpand(s string) ([]byte, bool) {
 	groups := make([]byte, 0, 3)
-	syms := make([]byte, 0, len(s)*4/3)
+	// One symbol per character, a group symbol per three characters
+	// rounded up, and the eight checksum symbols both callers
+	// append; anything less and the append of the nearly complete
+	// slice reallocates it.
+	syms := make([]byte, 0, len(s)+(len(s)+2)/3+8)
 	for i := range len(s) {
 		c := s[i]
 		idx := strings.IndexByte(alphabet, c)

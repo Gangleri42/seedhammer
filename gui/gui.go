@@ -557,36 +557,53 @@ func planDescriptorPlate(ctx *Context, th *Colors, draw func(*Context, *Colors, 
 	}, planFrame(ctx, th, draw))
 }
 
-// fitText chooses the largest font size that holds the text. A size
-// whose character grid holds it without re-wrapping any line wins
-// first, so an engraving matches the composed layout; when no grid
-// does — a one-line payload longer than any row — the fit maps the
-// wrapped grid per size and takes the largest font whose grid holds
-// the text wrapped, the same chunking the layout engine engraves.
-// The returned slice descends from the chosen size for the fallback
-// ladder; wrapped reports that the wrap tier chose it, so a caller
-// can warn that the engraved layout re-breaks the composed lines.
+// fitText chooses the largest font size that holds the text without
+// re-breaking any line the composition deliberately sized. Every
+// line caps the fit at the largest ladder size whose columns hold
+// it unwrapped, and the smallest cap over the composition is the
+// ceiling: a line composed one short of a grid's columns pins the
+// plate to that grid, so a later overflowing line wraps at the
+// anchored size instead of re-flowing the whole plate into a bigger
+// font. Lines longer than every grid cap nothing — they wrap at
+// whatever size wins, so a lone overlong payload still engraves at
+// the largest size whose grid holds it wrapped. A composition that
+// fits some grid unwrapped keeps exactly the old fit: with every
+// line capped, nothing wraps at or under the ceiling and the search
+// reduces to the grid check. The returned slice descends from the
+// chosen size for the fallback ladder; wrapped reports that the
+// engraved layout re-breaks the composed lines, so a caller can
+// warn.
 func fitText(params engrave.Params, text string) (sizes []float32, wrapped bool, err error) {
-	maxLine, lines, n := 0, 1, 0
-	for i := 0; i < len(text); i++ {
-		if text[i] == '\n' {
-			lines++
-			n = 0
-			continue
-		}
-		n++
-		maxLine = max(maxLine, n)
-	}
+	cpls := make([]int, len(backup.FontSizes))
 	for i, size := range backup.FontSizes {
-		if maxLine > backup.CharsPerLine(params, sh.Font, size) ||
-			lines > backup.LinesPerPlate(params, size) {
-			continue
-		}
-		return backup.FontSizes[i:], false, nil
+		cpls[i] = backup.CharsPerLine(params, sh.Font, size)
 	}
-	for i, size := range backup.FontSizes {
+	// FontSizes descends, so the smallest cap is the largest index.
+	ceiling := 0
+	for start := 0; start <= len(text); {
+		end := start
+		for end < len(text) && text[end] != '\n' {
+			end++
+		}
+		n := end - start
+		c := -1
+		for i := range cpls {
+			if n <= cpls[i] {
+				c = i
+				break
+			}
+		}
+		if c < 0 {
+			wrapped = true // longer than every grid: wraps at any size, binds nothing
+		} else {
+			ceiling = max(ceiling, c)
+		}
+		start = end + 1
+	}
+	for i := ceiling; i < len(backup.FontSizes); i++ {
+		size := backup.FontSizes[i]
 		if wrappedLines(params, text, size) <= backup.LinesPerPlate(params, size) {
-			return backup.FontSizes[i:], true, nil
+			return backup.FontSizes[i:], wrapped, nil
 		}
 	}
 	return nil, false, ErrTooLarge

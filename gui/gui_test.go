@@ -377,6 +377,12 @@ func TestValidateText(t *testing.T) {
 		// even when wrapping would allow a larger font: the engraving
 		// must match the composed layout.
 		{"composed lines never re-wrap", grid(30, 2), 4.4},
+		// A line composed one short of a grid's columns anchors the
+		// fit: an overflowing line added after it wraps at the
+		// anchored size instead of re-flowing the whole plate (and
+		// the anchored line) into a bigger font.
+		{"anchored 3.0mm line pins the fit", grid(43, 1) + "\n" + strings.Repeat("W", 60), 3.0},
+		{"mid-ladder anchor pins the fit", grid(30, 1) + "\n" + strings.Repeat("W", 60), 4.4},
 	}
 	for _, test := range fits {
 		plate, err := validateText(engraverParams, test.text)

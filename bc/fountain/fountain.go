@@ -39,7 +39,7 @@ func Encode(message []byte, seqNum, seqLen int) []byte {
 	fragments := chooseFragments(sn32, seqLen, checksum)
 	for _, idx := range fragments {
 		start := idx * n
-		if start > len(message) {
+		if start < 0 || start > len(message) {
 			continue
 		}
 		frag := message[start:]
@@ -240,7 +240,11 @@ func SeqNumFor(seqLen int, checksum uint32, fragments []int) int {
 
 func chooseFragments(seqNum uint32, seqLen int, checksum uint32) []int {
 	if seqNum <= uint32(seqLen) {
-		return []int{int(seqNum - 1)}
+		// Subtract in int: the uint32 difference for the invalid
+		// seqNum 0 truncates to -1 only where int is 32 bits,
+		// diverging from 64-bit hosts. In int it is -1 everywhere,
+		// and Encode skips the fragment on every platform.
+		return []int{int(seqNum) - 1}
 	} else {
 		seed := binary.BigEndian.AppendUint32(nil, seqNum)
 		seed = binary.BigEndian.AppendUint32(seed, checksum)

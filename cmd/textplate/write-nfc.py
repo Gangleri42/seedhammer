@@ -81,16 +81,22 @@ def validate(lines: list[str], sh: dict) -> dict:
     if lines[0].startswith("command: "):
         sys.exit('the firmware reads a leading "command: " as a debug command')
     cols = max(len(line) for line in lines)
-    for size in sh["sizes"]:
-        if cols <= size["cols"] and len(lines) <= size["rows"]:
-            return size, False
-    # No grid holds the composition unwrapped; overlong lines wrap on
-    # the plate like the firmware's layout engine, so take the largest
-    # size whose grid holds the wrapped line count.
-    for size in sh["sizes"]:
+    # The firmware's anchored fit (gui.fitText): every line caps the
+    # fit at the largest ladder size whose columns hold it unwrapped,
+    # the smallest cap is the ceiling, and the chosen size is the
+    # largest at or under the ceiling whose grid holds the composition
+    # with overlong lines wrapped. A line longer than every grid caps
+    # nothing and wraps at whatever size wins.
+    ceiling = 0
+    for line in lines:
+        for i, size in enumerate(sh["sizes"]):
+            if len(line) <= size["cols"]:
+                ceiling = max(ceiling, i)
+                break
+    for size in sh["sizes"][ceiling:]:
         wrapped = sum(max(1, -(-len(line) // size["cols"])) for line in lines)
         if wrapped <= size["rows"]:
-            return size, True
+            return size, wrapped > len(lines)
     largest = sh["sizes"][-1]
     sys.exit(
         f"does not fit any plate size: {cols}x{len(lines)}, "

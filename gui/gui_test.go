@@ -840,3 +840,67 @@ func TestFitDescriptorScaleFilter(t *testing.T) {
 		t.Error("no scale dropped across the corpus; the filter went unexercised")
 	}
 }
+
+func TestRunJobCancel(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := NewContext(newPlatform())
+		var jobErr error
+		done := make(chan struct{})
+		pumped := make(chan struct{})
+		frame, quit := runUI(ctx, func() {
+			defer close(done)
+			_, jobErr = runJob(ctx, &engraveTheme, func(pump func(done, total int) bool) (struct{}, error) {
+				for i := 1; pump(i, 100); i++ {
+					if i == 1 {
+						close(pumped)
+					}
+					// A long stretch between pumps: the window in
+					// which a cancel must keep the screen alive.
+					time.Sleep(time.Minute)
+				}
+				return struct{}{}, errPlanCanceled
+			}, func(pct int) op.Op {
+				return op.Op{}
+			})
+		})
+		defer quit()
+
+		if _, ok := frame(); !ok {
+			t.Fatal("runJob exited before the cancel")
+		}
+		// Wait out the worker's first pump, so the cancel lands
+		// mid-stretch instead of before it: an early cancel would
+		// be acknowledged without any stretch to survive.
+		<-pumped
+		click(&ctx.Router, Button1)
+		// The worker sleeps deep in its stretch; the canceled loop
+		// must keep producing frames until a pump observes quit.
+		for i := range 8 {
+			if _, ok := frame(); !ok {
+				t.Fatalf("runJob exited before the worker acknowledged the cancel (frame %d, jobErr %v)", i, jobErr)
+			}
+		}
+		select {
+		case <-done:
+			t.Fatal("runJob returned while the worker was mid-stretch")
+		default:
+		}
+		// Let the stretch elapse so the next pump unwinds the
+		// worker; one drawn frame may still be in flight.
+		time.Sleep(2 * time.Minute)
+		exited := false
+		for range 3 {
+			if _, ok := frame(); !ok {
+				exited = true
+				break
+			}
+		}
+		if !exited {
+			t.Fatal("runJob kept drawing after the worker acknowledged the cancel")
+		}
+		<-done
+		if !errors.Is(jobErr, errPlanCanceled) {
+			t.Errorf("runJob returned %v, want errPlanCanceled", jobErr)
+		}
+	})
+}

@@ -3209,15 +3209,29 @@ func runJob[T any](ctx *Context, th *Colors, work func(pump func(done, total int
 	// nothing outlives the walk.
 	backBtn := &Clickable{Button: Button1}
 	pct := 0
+	canceled := false
+	cancel := func() {
+		if !canceled {
+			canceled = true
+			close(quit)
+		}
+	}
 	for !ctx.Done {
 		// The cancel outranks a racing completion: a click pending
 		// from the previous frame must not be swallowed by a walk
-		// that finished in the same window.
+		// that finished in the same window. The loop keeps drawing
+		// while the worker unwinds; draining res here instead would
+		// hold the pressed frame on screen for as long as the walk
+		// runs between two pumps.
 		if backBtn.Clicked(ctx) {
-			break
+			cancel()
 		}
 		select {
 		case r := <-res:
+			if canceled {
+				var zero T
+				return zero, errPlanCanceled
+			}
 			return r.val, r.err
 		default:
 		}
@@ -3235,7 +3249,7 @@ func runJob[T any](ctx *Context, th *Colors, work func(pump func(done, total int
 		ctx.WakeupAt(time.Now().Add(planRefresh))
 		ctx.Frame(op.Layer(nav, frame(pct)))
 	}
-	close(quit)
+	cancel()
 	<-res
 	var zero T
 	return zero, errPlanCanceled

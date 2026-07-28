@@ -207,3 +207,24 @@ func TestDescriptors(t *testing.T) {
 		}
 	}
 }
+
+func TestDerivationEncode(t *testing.T) {
+	tests := []struct {
+		d    Derivation
+		want string
+	}{
+		{Derivation{Type: ChildDerivation, Index: 0}, "/0"},
+		{Derivation{Type: ChildDerivation, Index: 5, Hardened: true}, "/5h"},
+		{Derivation{Type: WildcardDerivation}, "/*"},
+		{Derivation{Type: RangeDerivation, Index: 0, End: 1}, "/<0;1>"},
+		// UR keypath components carry any uint32; the encoding must
+		// not wrap negative where int is 32 bits.
+		{Derivation{Type: ChildDerivation, Index: 1 << 31}, "/2147483648"},
+		{Derivation{Type: RangeDerivation, Index: 1<<32 - 2, End: 1<<32 - 1}, "/<4294967294;4294967295>"},
+	}
+	for _, test := range tests {
+		if got := test.d.Encode(); got != test.want {
+			t.Errorf("Encode(%#v) = %q, want %q", test.d, got, test.want)
+		}
+	}
+}

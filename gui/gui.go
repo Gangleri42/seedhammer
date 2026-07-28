@@ -453,6 +453,19 @@ func fitDescriptor(params engrave.Params, desc *bip380.Descriptor, pump func(don
 	// element to scan.
 	fontSizes := backup.FontSizes
 	qrScales := []int{3, 2}
+	// A scale whose lone code spans more than the engravable box
+	// fails every ladder cell that carries it. The code's dot
+	// centers span (modules·scale-1)·stroke, a floor under any
+	// variant's measured hull, so a scale dropped here only skips
+	// full layout walks the margin check was going to reject.
+	box := plateBounds(params)
+	span := min(box.Max.X-box.Min.X, box.Max.Y-box.Min.Y)
+	fitScales := make([]int, 0, len(qrScales))
+	for _, s := range qrScales {
+		if (qrSize*s-1)*params.StrokeWidth <= span {
+			fitScales = append(fitScales, s)
+		}
+	}
 	var validLabels []string
 	var validTexts []backup.Text
 
@@ -462,7 +475,7 @@ func fitDescriptor(params engrave.Params, desc *bip380.Descriptor, pump func(don
 			// The text size doesn't affect a lone QR.
 			sizes = fontSizes[:1]
 		}
-		scales := qrScales
+		scales := fitScales
 		if e.Paragraph.QR == nil {
 			scales = qrScales[:1]
 		}

@@ -187,6 +187,9 @@ func TestValidateDescriptorFallback(t *testing.T) {
 		{2, 3, []string{"TEXT + QR", "TEXT ONLY", "QR ONLY"}},
 		// Too long for text wrapped around a QR at any fallback.
 		{4, 6, []string{"TEXT ONLY", "QR ONLY"}},
+		// Densest supported: the scale-3 code alone overflows the
+		// engravable box, so the ladder drops the scale up front.
+		{5, 7, []string{"TEXT ONLY", "QR ONLY"}},
 	}
 	for _, test := range tests {
 		labels, texts, qrText, err := fitDescriptor(engraverParams, multisig(test.threshold, test.nkeys), nil)
@@ -784,5 +787,56 @@ func TestSeedColumns(t *testing.T) {
 			t.Errorf("%d words: %d rows (%dpx) exceed the list height %dpx",
 				test.words, rows, h, list.Dy())
 		}
+	}
+}
+
+func TestFitDescriptorScaleFilter(t *testing.T) {
+	// fitDescriptor drops a QR scale when the lone code's dot
+	// centers span more than the engravable box, skipping the
+	// scale's whole ladder row. The bound must stay a floor under
+	// the measured hull: every skipped cell must be one the walk
+	// would reject, or the variant menu would change.
+	multisig := func(threshold, nkeys int) *bip380.Descriptor {
+		desc := &bip380.Descriptor{
+			Script:    bip380.P2WSH,
+			Threshold: threshold,
+			Type:      bip380.SortedMulti,
+			Keys:      make([]bip380.Key, nkeys),
+		}
+		fillDescriptor(t, desc, desc.Script.DerivationPath(), 12, 0)
+		return desc
+	}
+	box := plateBounds(engraverParams)
+	span := min(box.Max.X-box.Min.X, box.Max.Y-box.Min.Y)
+	droppedAny := false
+	for _, cfg := range [][2]int{{2, 3}, {4, 6}, {5, 7}, {9, 16}} {
+		desc := multisig(cfg[0], cfg[1])
+		qrSize, err := qr.MinSize(desc.EncodeNoChecksum(), qr.L)
+		if err != nil {
+			t.Fatal(err)
+		}
+		qrc := darkCode(qrSize)
+		for _, scale := range []int{3, 2} {
+			if (qrSize*scale-1)*engraverParams.StrokeWidth <= span {
+				continue
+			}
+			droppedAny = true
+			for _, text := range []string{desc.Encode(), ""} {
+				for _, size := range backup.FontSizes {
+					plan := backup.EngraveText(engraverParams, backup.Text{
+						Paragraphs: []backup.Paragraph{{Text: text, QR: qrc, QRScale: scale}},
+						Font:       sh.Font,
+						FontSize:   size,
+					})
+					if layoutFits(plan, engraverParams) {
+						t.Errorf("%d-of-%d scale %d text=%v size %v: dropped scale fits the plate",
+							cfg[0], cfg[1], scale, text != "", size)
+					}
+				}
+			}
+		}
+	}
+	if !droppedAny {
+		t.Error("no scale dropped across the corpus; the filter went unexercised")
 	}
 }

@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"strconv"
 	"strings"
@@ -10,42 +13,81 @@ import (
 	"seedhammer.com/svgpath"
 )
 
+// node is one element of a parsed SVG document. The tree is retained
+// whole because <use> may reference an id the document only defines
+// further down, which a single pass over the token stream cannot
+// resolve.
+type node struct {
+	el       xml.StartElement
+	children []*node
+}
+
+// nonRendering elements describe templates, not drawings: they are
+// painted only where a <use> references them. Walking into one
+// directly would engrave the template as well as every instance.
+var nonRendering = map[string]bool{
+	"defs":     true,
+	"symbol":   true,
+	"clipPath": true,
+	"mask":     true,
+	"marker":   true,
+	"pattern":  true,
+}
+
+// maxUseDepth bounds <use> nesting, so a document whose references form
+// a cycle fails with an error instead of expanding until it exhausts
+// memory.
+const maxUseDepth = 16
+
 // extractSVG walks an SVG document and returns every visible shape as
 // path segments in the document's user coordinate space, with element
 // and ancestor transforms flattened in. Layout onto the plate is the
 // caller's job. Invisible subtrees (display:none, visibility:hidden)
-// and <defs> are skipped.
+// and template subtrees are skipped, and every <use> is expanded into
+// the geometry it stamps.
 func extractSVG(data []byte) ([]fseg, error) {
-	dec := xml.NewDecoder(strings.NewReader(string(data)))
-	type frame struct {
-		m    matrix
-		skip bool
+	root, ids, err := parseSVG(data)
+	if err != nil {
+		return nil, err
 	}
-	stack := []frame{{m: identity()}}
 	var out []fseg
+	for _, c := range root.children {
+		if err := walkSVG(c, ids, identity(), 0, &out); err != nil {
+			return nil, err
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("svg: no visible geometry found")
+	}
+	return out, nil
+}
+
+// parseSVG reads the document into a tree under a synthetic root and
+// indexes every id along the way. The first definition of a duplicate
+// id wins, matching how a renderer resolves the reference.
+func parseSVG(data []byte) (*node, map[string]*node, error) {
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	root := &node{}
+	stack := []*node{root}
+	ids := make(map[string]*node)
 	for {
 		tok, err := dec.Token()
+		if errors.Is(err, io.EOF) {
+			break
+		}
 		if err != nil {
-			if err.Error() == "EOF" {
-				break
-			}
-			return nil, fmt.Errorf("svg: %w", err)
+			return nil, nil, fmt.Errorf("svg: %w", err)
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
+			n := &node{el: t.Copy()}
 			top := stack[len(stack)-1]
-			local, _ := parseTransform(attr(t, "transform"))
-			f := frame{m: top.m.mul(local), skip: top.skip || invisible(t) || t.Name.Local == "defs"}
-			stack = append(stack, f)
-			if f.skip {
-				continue
-			}
-			segs, err := shapeSegments(t)
-			if err != nil {
-				return nil, err
-			}
-			for _, s := range segs {
-				out = append(out, s.transform(f.m))
+			top.children = append(top.children, n)
+			stack = append(stack, n)
+			if id := attr(t, "id"); id != "" {
+				if _, dup := ids[id]; !dup {
+					ids[id] = n
+				}
 			}
 		case xml.EndElement:
 			if len(stack) > 1 {
@@ -53,10 +95,74 @@ func extractSVG(data []byte) ([]fseg, error) {
 			}
 		}
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("svg: no visible geometry found")
+	return root, ids, nil
+}
+
+// walkSVG emits n's subtree under the accumulated transform m.
+func walkSVG(n *node, ids map[string]*node, m matrix, depth int, out *[]fseg) error {
+	if invisible(n.el) {
+		return nil
 	}
-	return out, nil
+	local, _ := parseTransform(attr(n.el, "transform"))
+	m = m.mul(local)
+	if n.el.Name.Local == "use" {
+		return expandUse(n, ids, m, depth, out)
+	}
+	if nonRendering[n.el.Name.Local] {
+		return nil
+	}
+	segs, err := shapeSegments(n.el)
+	if err != nil {
+		return err
+	}
+	for _, s := range segs {
+		*out = append(*out, s.transform(m))
+	}
+	for _, c := range n.children {
+		if err := walkSVG(c, ids, m, depth, out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// expandUse stamps the subtree a <use> references, offset by its x/y
+// and drawn under its transform. Only the target's own transform
+// applies: the clone is placed by the reference, not by wherever the
+// definition happens to sit in the tree.
+//
+// An unresolvable reference is an error. Ignoring it the way a renderer
+// does would engrave a drawing quietly missing whatever the <use> was
+// there to stamp, and the gauge report would still call it fine.
+func expandUse(n *node, ids map[string]*node, m matrix, depth int, out *[]fseg) error {
+	if depth >= maxUseDepth {
+		return fmt.Errorf("svg: <use> nested past %d levels, or referencing itself", maxUseDepth)
+	}
+	// attr matches on the local name, so this finds both href and the
+	// legacy xlink:href without resolving the namespace.
+	ref := strings.TrimSpace(attr(n.el, "href"))
+	id, ok := strings.CutPrefix(ref, "#")
+	if !ok || id == "" {
+		return fmt.Errorf("svg: <use> href %q is not a reference to an id in this document", ref)
+	}
+	target := ids[id]
+	if target == nil {
+		return fmt.Errorf("svg: <use> references unknown id %q", id)
+	}
+	m = m.mul(translateM(num(attr(n.el, "x")), num(attr(n.el, "y"))))
+	// Being referenced is exactly what makes a template render, so the
+	// guard is lifted for the target itself but not for its subtree.
+	if nonRendering[target.el.Name.Local] {
+		local, _ := parseTransform(attr(target.el, "transform"))
+		m = m.mul(local)
+		for _, c := range target.children {
+			if err := walkSVG(c, ids, m, depth+1, out); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return walkSVG(target, ids, m, depth+1, out)
 }
 
 func attr(e xml.StartElement, name string) string {
@@ -92,6 +198,9 @@ func shapeSegments(e xml.StartElement) ([]fseg, error) {
 		w, h := num(attr(e, "width")), num(attr(e, "height"))
 		if w <= 0 || h <= 0 {
 			return nil, nil
+		}
+		if rx, ry := rectRadii(attr(e, "rx"), attr(e, "ry"), w, h); rx > 0 && ry > 0 {
+			return roundRect(x, y, w, h, rx, ry), nil
 		}
 		return polygon([]fpt{{x, y}, {x + w, y}, {x + w, y + h}, {x, y + h}}, true), nil
 	case "line":
@@ -138,13 +247,61 @@ func polyPoints(s string, closed bool) ([]fseg, error) {
 	return polygon(pts, closed), nil
 }
 
+// kappa is the cubic control offset, as a fraction of the radius, that
+// approximates a quarter ellipse: 4/3*(sqrt(2)-1).
+const kappa = 0.5522847498307936
+
+// rectRadii resolves a rect's corner radii against its size. Either
+// attribute alone sets both axes, and each clamps to half its side,
+// per SVG's rect geometry rules. Absent, "auto" and negative all mean
+// no radius on that axis.
+func rectRadii(rxs, rys string, w, h float64) (float64, float64) {
+	rx, hasX := radius(rxs)
+	ry, hasY := radius(rys)
+	switch {
+	case !hasX && !hasY:
+		return 0, 0
+	case !hasX:
+		rx = ry
+	case !hasY:
+		ry = rx
+	}
+	return math.Min(rx, w/2), math.Min(ry, h/2)
+}
+
+func radius(s string) (float64, bool) {
+	if s = strings.TrimSpace(s); s == "" || s == "auto" {
+		return 0, false
+	}
+	v := num(s)
+	return v, v > 0
+}
+
+// roundRect outlines a rect with elliptical corners, as four sides and
+// four cubic quarter-arcs. It runs in polygon's direction so a rect
+// keeps the same winding whether or not it has radii.
+func roundRect(x, y, w, h, rx, ry float64) []fseg {
+	ox, oy := rx*kappa, ry*kappa
+	x1, y1 := x+w, y+h
+	return []fseg{
+		{op: svgpath.MoveTo, p: [3]fpt{{x + rx, y}}},
+		{op: svgpath.LineTo, p: [3]fpt{{x1 - rx, y}}},
+		{op: svgpath.CubeTo, p: [3]fpt{{x1 - rx + ox, y}, {x1, y + ry - oy}, {x1, y + ry}}},
+		{op: svgpath.LineTo, p: [3]fpt{{x1, y1 - ry}}},
+		{op: svgpath.CubeTo, p: [3]fpt{{x1, y1 - ry + oy}, {x1 - rx + ox, y1}, {x1 - rx, y1}}},
+		{op: svgpath.LineTo, p: [3]fpt{{x + rx, y1}}},
+		{op: svgpath.CubeTo, p: [3]fpt{{x + rx - ox, y1}, {x, y1 - ry + oy}, {x, y1 - ry}}},
+		{op: svgpath.LineTo, p: [3]fpt{{x, y + ry}}},
+		{op: svgpath.CubeTo, p: [3]fpt{{x, y + ry - oy}, {x + rx - ox, y}, {x + rx, y}}},
+	}
+}
+
 // ellipse approximates an axis-aligned ellipse with four cubic beziers.
 func ellipse(cx, cy, rx, ry float64) []fseg {
 	if rx <= 0 || ry <= 0 {
 		return nil
 	}
-	const k = 0.5522847498307936 // 4/3*(sqrt(2)-1)
-	ox, oy := rx*k, ry*k
+	ox, oy := rx*kappa, ry*kappa
 	return []fseg{
 		{op: svgpath.MoveTo, p: [3]fpt{{cx + rx, cy}}},
 		{op: svgpath.CubeTo, p: [3]fpt{{cx + rx, cy + oy}, {cx + ox, cy + ry}, {cx, cy + ry}}},

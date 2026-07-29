@@ -59,6 +59,13 @@ func (m matrix) apply(p fpt) fpt {
 	}
 }
 
+// split separates m into its linear part and its translation, the two
+// halves a placed shape needs: the linear part reshapes the outline,
+// the translation moves the instance.
+func (m matrix) split() (matrix, fpt) {
+	return matrix{m[0], m[1], m[2], m[3], 0, 0}, fpt{m[4], m[5]}
+}
+
 func translateM(x, y float64) matrix { return matrix{1, 0, 0, 1, x, y} }
 func scaleM(sx, sy float64) matrix   { return matrix{sx, 0, 0, sy, 0, 0} }
 
@@ -98,6 +105,73 @@ func (b *bounds) add(p fpt) {
 	b.min.X, b.min.Y = math.Min(b.min.X, p.X), math.Min(b.min.Y, p.Y)
 	b.max.X, b.max.Y = math.Max(b.max.X, p.X), math.Max(b.max.Y, p.Y)
 }
+
+// drawing holds geometry in instanced form: every distinct outline
+// once in shapes, and one entry in groups for each place it is
+// stamped. Carrying the instancing through layout to the emitter is
+// what lets a repeated shape reach the payload a single time.
+type drawing struct {
+	shapes [][]fseg
+	groups []fgroup
+}
+
+// fgroup places shapes[shape] at at. A point of the shape lands at
+// at + p, so a placement is a translation and nothing else.
+type fgroup struct {
+	shape int
+	at    fpt
+}
+
+// addShape files an outline and returns its index.
+func (d *drawing) addShape(segs []fseg) int {
+	d.shapes = append(d.shapes, segs)
+	return len(d.shapes) - 1
+}
+
+// place stamps a filed shape.
+func (d *drawing) place(shape int, at fpt) {
+	d.groups = append(d.groups, fgroup{shape: shape, at: at})
+}
+
+// transform maps a drawing through m without flattening it. The linear
+// part reshapes each outline once and the full transform moves each
+// placement, which lands the geometry exactly where transforming the
+// flattened drawing would: M(at+p) = M(at) + L(p).
+func (d *drawing) transform(m matrix) *drawing {
+	lin, _ := m.split()
+	out := &drawing{
+		shapes: make([][]fseg, len(d.shapes)),
+		groups: make([]fgroup, len(d.groups)),
+	}
+	for i, shape := range d.shapes {
+		segs := make([]fseg, len(shape))
+		for j, s := range shape {
+			segs[j] = s.transform(lin)
+		}
+		out.shapes[i] = segs
+	}
+	for i, g := range d.groups {
+		out.groups[i] = fgroup{shape: g.shape, at: m.apply(g.at)}
+	}
+	return out
+}
+
+// flatten returns every placement's geometry in absolute coordinates.
+func (d *drawing) flatten() []fseg {
+	var out []fseg
+	for _, g := range d.groups {
+		for _, s := range d.shapes[g.shape] {
+			moved := fseg{op: s.op}
+			for i := 0; i < s.npts(); i++ {
+				moved.p[i] = fpt{X: s.p[i].X + g.at.X, Y: s.p[i].Y + g.at.Y}
+			}
+			out = append(out, moved)
+		}
+	}
+	return out
+}
+
+func (d *drawing) bounds() bounds { return segsBounds(d.flatten()) }
 
 func segsBounds(segs []fseg) bounds {
 	b := newBounds()

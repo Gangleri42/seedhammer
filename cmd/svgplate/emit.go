@@ -35,37 +35,6 @@ const (
 // any drawing the duration cap admits.
 const orderMaxStrokes = 4096
 
-// emitPayload quantizes millimeter segments to payload units and encodes
-// them as a binary curves path payload. Segments must already be
-// laid out on the plate with (0,0) at its top-left corner. When order is
-// set the strokes are resequenced to shorten head travel; the drawing is
-// non-secret art, so this only saves time, never leaks content.
-func emitPayload(segs []fseg, order bool) ([]byte, error) {
-	q := func(v float64) int { return int(math.Round(v * payloadUnitsPerMM)) }
-	out := make([]svgpath.Segment, len(segs))
-	for i, s := range segs {
-		out[i].Op = s.op
-		for j := 0; j < s.npts(); j++ {
-			out[i].Args[j] = bezier.Pt(q(s.p[j].X), q(s.p[j].Y))
-		}
-	}
-	if order {
-		// Ordering is quadratic in strokes. Skip it for inputs no sane
-		// drawing reaches: a pathological SVG must not grind for minutes
-		// before validation rejects it on duration.
-		strokes := 0
-		for _, s := range out {
-			if s.Op == svgpath.MoveTo {
-				strokes++
-			}
-		}
-		if strokes <= orderMaxStrokes {
-			out = curves.Order(out)
-		}
-	}
-	return curves.EncodePath(payloadUnitsPerMM, payloadStroke, out)
-}
-
 // emitGroups encodes placed millimeter groups with the shape
 // dictionary: richtext.Groups quantizes local frame and placement
 // separately (the contract that keeps glyph instances byte-identical),
@@ -80,33 +49,82 @@ func emitGroups(groups []richtext.Group, order bool) ([]byte, error) {
 			}
 		}
 	}
-	// The same quadratic-ordering guard as emitPayload.
+	// Ordering is quadratic in strokes; skip it for inputs no sane
+	// drawing reaches.
 	if order && strokes <= orderMaxStrokes {
 		out = curves.OrderGroups(out)
 	}
 	return curves.EncodeGroups(payloadUnitsPerMM, payloadStroke, out)
 }
 
-// finish emits, parses and validates a laid-out drawing. It returns
-// the payload bytes, the parsed drawing (for preview) and its gauge
-// report. A parse or cap failure is returned as an error with the
-// report still filled where possible.
-func finish(segs []fseg, order bool) ([]byte, *curves.Drawing, curves.Report, error) {
-	// Guard the payload choke point: a non-finite coordinate (from a
-	// malformed source, a degenerate transform, or an arc edge case)
-	// would quantize to garbage and desync curves.Parse.
-	for _, s := range segs {
-		for i := 0; i < s.npts(); i++ {
-			if !finite(s.p[i].X, s.p[i].Y) {
-				return nil, nil, curves.Report{}, fmt.Errorf("curves: non-finite coordinate %v in geometry", s.p[i])
+// emitDrawing quantizes an instanced drawing and encodes it through
+// the shape dictionary. Each outline quantizes once in its own frame
+// and every placement quantizes on its own, which is the contract
+// EncodeGroups needs: rounding a shape afresh at each position leaves
+// the instances differing by a unit here and there, and nothing to
+// deduplicate.
+func emitDrawing(d *drawing, order bool) ([]byte, error) {
+	q := func(v float64) int { return int(math.Round(v * payloadUnitsPerMM)) }
+	shapes := make([][]svgpath.Segment, len(d.shapes))
+	strokes := make([]int, len(d.shapes))
+	for i, shape := range d.shapes {
+		segs := make([]svgpath.Segment, len(shape))
+		for j, s := range shape {
+			segs[j].Op = s.op
+			for k := 0; k < s.npts(); k++ {
+				segs[j].Args[k] = bezier.Pt(q(s.p[k].X), q(s.p[k].Y))
+			}
+			if s.op == svgpath.MoveTo {
+				strokes[i]++
+			}
+		}
+		shapes[i] = segs
+	}
+	groups := make([]curves.Group, len(d.groups))
+	total := 0
+	for i, g := range d.groups {
+		groups[i] = curves.Group{At: bezier.Pt(q(g.at.X), q(g.at.Y)), Segs: shapes[g.shape]}
+		total += strokes[g.shape]
+	}
+	// Resequencing shortens head travel; a drawing is non-secret art,
+	// so it only saves time and never leaks content. Ordering is
+	// quadratic in strokes, so it is skipped past a count no sane
+	// drawing reaches: a pathological SVG must not grind for minutes
+	// before validation rejects it on duration.
+	if order && total <= orderMaxStrokes {
+		groups = curves.OrderGroups(groups)
+	}
+	return curves.EncodeGroups(payloadUnitsPerMM, payloadStroke, groups)
+}
+
+// finishDrawing emits, parses and validates a laid-out drawing.
+// It returns the payload bytes, the parsed drawing (for preview)
+// and its gauge report. A parse or cap failure is returned as an
+// error with the report still filled where possible.
+//
+// The non-finite guard covers the payload choke point: a coordinate
+// from a malformed source, a degenerate transform or an arc edge
+// case would quantize to garbage and desync curves.Parse.
+func finishDrawing(d *drawing, order bool) ([]byte, *curves.Drawing, curves.Report, error) {
+	for _, g := range d.groups {
+		if !finite(g.at.X, g.at.Y) {
+			return nil, nil, curves.Report{}, fmt.Errorf("curves: non-finite coordinate %v in geometry", g.at)
+		}
+	}
+	for _, shape := range d.shapes {
+		for _, s := range shape {
+			for i := 0; i < s.npts(); i++ {
+				if !finite(s.p[i].X, s.p[i].Y) {
+					return nil, nil, curves.Report{}, fmt.Errorf("curves: non-finite coordinate %v in geometry", s.p[i])
+				}
 			}
 		}
 	}
-	payload, err := emitPayload(segs, order)
+	payload, err := emitDrawing(d, order)
 	return validatePayload(payload, err)
 }
 
-// finishGroups is finish for the placed-group front-end.
+// finishGroups is finishDrawing for the rich-text front-end.
 func finishGroups(groups []richtext.Group, order bool) ([]byte, *curves.Drawing, curves.Report, error) {
 	for _, g := range groups {
 		if !finite(g.At.X, g.At.Y) {

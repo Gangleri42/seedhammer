@@ -79,7 +79,7 @@ func main() {
 		if perr != nil {
 			die(perr)
 		}
-		payload, d, r, verr = finish(layoutOnPlate(raw, pl), !*noorder)
+		payload, d, r, verr = finishDrawing(layoutOnPlate(raw, pl), !*noorder)
 	}
 	report(in, payload, r, warn, verr)
 

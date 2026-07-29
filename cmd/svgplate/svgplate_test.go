@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/xml"
+	"fmt"
 	"math"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"seedhammer.com/bezier"
 	"seedhammer.com/curves"
 	"seedhammer.com/richtext"
 	"seedhammer.com/svgpath"
@@ -24,6 +26,33 @@ func endpoints(segs []fseg) []fpt {
 }
 
 func approx(a, b, eps float64) bool { return math.Abs(a-b) <= eps }
+
+// flatEncode is the baseline the shape dictionary has to beat: the
+// same quantization with every instance inlined and no dictionary.
+// Tests keep their own copy so the comparison stays independent of
+// whatever the emitter does.
+func flatEncode(segs []fseg, order bool) ([]byte, error) {
+	q := func(v float64) int { return int(math.Round(v * payloadUnitsPerMM)) }
+	out := make([]svgpath.Segment, len(segs))
+	for i, s := range segs {
+		out[i].Op = s.op
+		for j := 0; j < s.npts(); j++ {
+			out[i].Args[j] = bezier.Pt(q(s.p[j].X), q(s.p[j].Y))
+		}
+	}
+	if order {
+		out = curves.Order(out)
+	}
+	return curves.EncodePath(payloadUnitsPerMM, payloadStroke, out)
+}
+
+// flatDrawing wraps raw segments as a single unrepeated placement, for
+// tests that build geometry directly rather than from a document.
+func flatDrawing(segs []fseg) *drawing {
+	d := &drawing{}
+	d.place(d.addShape(segs), fpt{})
+	return d
+}
 
 // startEl builds an element from name and alternating attribute
 // name/value pairs, for the shape helpers that take one directly.
@@ -145,10 +174,10 @@ func TestSVGRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	segs := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
-	_, _, r, err := finish(segs, true)
+	d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
+	_, _, r, err := finishDrawing(d, true)
 	if err != nil {
-		t.Fatalf("finish: %v", err)
+		t.Fatalf("finishDrawing: %v", err)
 	}
 	if r.Strokes != 2 {
 		t.Errorf("want 2 strokes (circle + rect; hidden path skipped), got %d", r.Strokes)
@@ -238,7 +267,7 @@ func TestByteCapRejected(t *testing.T) {
 			x += step
 		}
 	}
-	_, _, r, err := finish(segs, true)
+	_, _, r, err := finishDrawing(flatDrawing(segs), true)
 	t.Logf("gauges: bytes=%d strokes=%d knots=%d knots/stroke=%d secs=%d",
 		r.Bytes, r.Strokes, r.Knots, r.MaxStrokeKnots, r.Seconds)
 	if err == nil || !strings.Contains(err.Error(), "NDEF cap") {
@@ -279,7 +308,7 @@ func TestNonFiniteRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range raw {
+	for _, s := range raw.flatten() {
 		for i := 0; i < s.npts(); i++ {
 			if math.IsNaN(s.p[i].X) || math.IsNaN(s.p[i].Y) {
 				t.Fatalf("NaN reached geometry: %v", s.p[i])
@@ -288,8 +317,8 @@ func TestNonFiniteRejected(t *testing.T) {
 	}
 	// The guard itself rejects a hand-built non-finite segment.
 	bad := []fseg{{op: svgpath.MoveTo, p: [3]fpt{{math.Inf(1), 0}}}}
-	if _, _, _, err := finish(bad, true); err == nil {
-		t.Error("finish accepted a non-finite coordinate")
+	if _, _, _, err := finishDrawing(flatDrawing(bad), true); err == nil {
+		t.Error("finishDrawing accepted a non-finite coordinate")
 	}
 }
 
@@ -316,7 +345,7 @@ func TestUseStampsTheReferencedShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := moves(segs)
+	got := moves(segs.flatten())
 	want := []fpt{{10, 10}, {60, 20}}
 	if len(got) != len(want) {
 		t.Fatalf("want %d stamps, got %d", len(want), len(got))
@@ -340,7 +369,7 @@ func TestUseComposesTransformWithOffset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := moves(segs)
+	got := moves(segs.flatten())
 	if len(got) != 1 {
 		t.Fatalf("want 1 stamp, got %d", len(got))
 	}
@@ -359,7 +388,7 @@ func TestUseThroughLegacyXlinkHref(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := moves(segs); len(got) != 1 || !approx(got[0].X, 20, 1e-9) || !approx(got[0].Y, 30, 1e-9) {
+	if got := moves(segs.flatten()); len(got) != 1 || !approx(got[0].X, 20, 1e-9) || !approx(got[0].Y, 30, 1e-9) {
 		t.Errorf("got %v, want one stamp at (20,30)", got)
 	}
 }
@@ -375,7 +404,7 @@ func TestUseOfSymbolRenders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := moves(segs); len(got) != 1 || !approx(got[0].X, 40, 1e-9) {
+	if got := moves(segs.flatten()); len(got) != 1 || !approx(got[0].X, 40, 1e-9) {
 		t.Errorf("got %v, want one stamp at (40,40)", got)
 	}
 }
@@ -470,6 +499,178 @@ func TestRoundedRectCorners(t *testing.T) {
 	}
 }
 
+// stampedDoc builds a document that defines one rounded pill and
+// stamps it n times on a grid, the shape a logo built from repeated
+// glyphs has.
+func stampedDoc(n int) string {
+	var b strings.Builder
+	b.WriteString(`<svg viewBox="0 0 400 400">` +
+		`<defs><rect id="p" x="-10" y="-15" width="20" height="30" rx="8"/></defs>`)
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, `<use href="#p" x="%d" y="%d"/>`, 40+(i%6)*60, 40+(i/6)*90)
+	}
+	b.WriteString(`</svg>`)
+	return b.String()
+}
+
+func TestUseKeepsOneShapePerDefinition(t *testing.T) {
+	d, err := extractSVG([]byte(stampedDoc(24)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.shapes) != 1 {
+		t.Errorf("want 1 shape for 24 stamps of one definition, got %d", len(d.shapes))
+	}
+	if len(d.groups) != 24 {
+		t.Errorf("want 24 placements, got %d", len(d.groups))
+	}
+}
+
+func TestUseUnderDifferentScalesAreDifferentShapes(t *testing.T) {
+	// Only translation is a placement. A stamp under its own scale is
+	// a different outline and must not share a dictionary entry.
+	const doc = `<svg viewBox="0 0 100 100">
+	  <defs><rect id="p" width="10" height="10"/></defs>
+	  <use href="#p" x="10" y="10"/>
+	  <use href="#p" x="40" y="10"/>
+	  <use href="#p" transform="scale(2)" x="10" y="30"/>
+	</svg>`
+	d, err := extractSVG([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.shapes) != 2 {
+		t.Errorf("want 2 shapes (one per scale), got %d", len(d.shapes))
+	}
+	if len(d.groups) != 3 {
+		t.Errorf("want 3 placements, got %d", len(d.groups))
+	}
+}
+
+func TestCopiedShapesShareADictionaryEntry(t *testing.T) {
+	// Most drawings repeat geometry by copying it, not with <use>: the
+	// copies carry their position inside their own coordinates. They
+	// still describe one outline, so the payload must ship one.
+	var b strings.Builder
+	b.WriteString(`<svg viewBox="0 0 400 400">`)
+	for i := 0; i < 16; i++ {
+		fmt.Fprintf(&b, `<rect x="%d" y="%d" width="20" height="30" rx="8"/>`,
+			30+(i%4)*80, 30+(i/4)*80)
+	}
+	b.WriteString(`</svg>`)
+	raw, err := extractSVG([]byte(b.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
+	dict, _, r, err := finishDrawing(d, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat, err := flatEncode(d.flatten(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("16 copies: flat %d bytes, dict %d bytes (%.2fx)",
+		len(flat), len(dict), float64(len(flat))/float64(len(dict)))
+	if r.Strokes != 16 {
+		t.Errorf("want 16 strokes, got %d", r.Strokes)
+	}
+	if len(dict)*2 > len(flat) {
+		t.Errorf("copied shapes did not collapse: dict %d against flat %d", len(dict), len(flat))
+	}
+}
+
+// TestSVGDictionaryCompaction is the SVG front-end's version of
+// TestDictionaryCompaction: a stamped drawing must ship its shape
+// once. Quantizing each stamp at its own absolute position instead
+// would leave the instances differing by a unit here and there, and
+// the dictionary with nothing to match, so this guards the
+// quantize-once contract rather than the encoder.
+func TestSVGDictionaryCompaction(t *testing.T) {
+	raw, err := extractSVG([]byte(stampedDoc(24)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
+	dict, _, r, err := finishDrawing(d, true)
+	if err != nil {
+		t.Fatalf("finishDrawing: %v", err)
+	}
+	// The flat baseline: the same geometry with every stamp inlined.
+	flat, err := flatEncode(d.flatten(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("24 stamps: flat %d bytes, dict %d bytes (%.2fx), strokes=%d",
+		len(flat), len(dict), float64(len(flat))/float64(len(dict)), r.Strokes)
+	if r.Strokes != 24 {
+		t.Errorf("want 24 strokes engraved, got %d", r.Strokes)
+	}
+	// One shape and 24 placements against 24 inlined outlines: the win
+	// is structural, so anything short of half is a broken contract.
+	if len(dict)*2 > len(flat) {
+		t.Errorf("dictionary payload %d not meaningfully under flat %d", len(dict), len(flat))
+	}
+}
+
+func TestPlacedGeometryMatchesFlat(t *testing.T) {
+	// Quantizing the outline and the placement separately costs at
+	// most one unit on each axis over rounding the absolute point, so
+	// the placed drawing must land within 0.1mm of the flat one.
+	for _, pl := range []placement{
+		{posX: math.NaN(), posY: math.NaN()},
+		{rotate: 30, posX: math.NaN(), posY: math.NaN()},
+		{heightMM: 40, rotate: -17, posX: 5, posY: 8},
+	} {
+		t.Run(fmt.Sprintf("rotate%g", pl.rotate), func(t *testing.T) {
+			placedMatchesFlat(t, pl)
+		})
+	}
+}
+
+func placedMatchesFlat(t *testing.T, pl placement) {
+	t.Helper()
+	raw, err := extractSVG([]byte(stampedDoc(12)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := layoutOnPlate(raw, pl)
+	dict, parsed, _, err := finishDrawing(d, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flatPayload, err := flatEncode(d.flatten(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat, err := curves.Parse(flatPayload, sh2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flat.Validate(sh2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parsed.Validate(sh2); err != nil {
+		t.Fatal(err)
+	}
+	const tolMM = 0.1
+	tol := int(tolMM * float64(sh2.Millimeter))
+	fb, db := flat.Bounds, parsed.Bounds
+	for _, c := range []struct {
+		name      string
+		got, want int
+	}{
+		{"min x", db.Min.X, fb.Min.X}, {"min y", db.Min.Y, fb.Min.Y},
+		{"max x", db.Max.X, fb.Max.X}, {"max y", db.Max.Y, fb.Max.Y},
+	} {
+		if diff := c.got - c.want; diff > tol || diff < -tol {
+			t.Errorf("%s off by %d machine units, over the %.1fmm quantization tolerance", c.name, diff, tolMM)
+		}
+	}
+	t.Logf("dict %d bytes vs flat %d bytes", len(dict), len(flatPayload))
+}
+
 func TestRealLogos(t *testing.T) {
 	for _, f := range []string{"/home/wodan/Downloads/oshw-logo.svg", "/home/wodan/Downloads/Bitcoin_logo.svg"} {
 		data, err := os.ReadFile(f)
@@ -481,9 +682,9 @@ func TestRealLogos(t *testing.T) {
 			t.Errorf("%s: extract: %v", f, err)
 			continue
 		}
-		segs := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
-		if _, _, _, err := finish(segs, true); err != nil {
-			t.Errorf("%s: finish: %v", f, err)
+		d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
+		if _, _, _, err := finishDrawing(d, true); err != nil {
+			t.Errorf("%s: finishDrawing: %v", f, err)
 		}
 	}
 }

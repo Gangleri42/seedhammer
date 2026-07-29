@@ -10,8 +10,9 @@ Description=SeedHammer NFC bridge (local USB reader -> web editor)
 After=network.target
 
 [Service]
-# Adjust the interpreter/path if the venv or checkout moves.
-ExecStart=~/.nfc-venv/bin/python3 ~/seedhammer/cmd/nfc-bridge/bridge.py
+# %h expands to the user's home directory in a systemd user unit.
+# Adjust the interpreter/path if the venv or checkout lives elsewhere.
+ExecStart=%h/.nfc-venv/bin/python3 %h/seedhammer/cmd/nfc-bridge/bridge.py
 Restart=on-failure
 RestartSec=3
 

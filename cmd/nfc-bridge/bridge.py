@@ -16,8 +16,9 @@ Security posture (this drives a hardware wallet tool):
     device shows a confirm screen they approve, so a rogue page can at
     most make the SeedHammer ask "engrave this?".
 
-Run:  ~/.nfc-venv/bin/python3 bridge.py
-Env:  SH_BRIDGE_PORT (default 8787), SH_BRIDGE_ORIGINS (allow-list).
+Run:  python3 bridge.py   (any Python with nfcpy + ndeflib)
+Env:  SH_BRIDGE_PORT (default 8787), SH_BRIDGE_ORIGINS (allow-list),
+      SH_BRIDGE_LOG (log file, default ~/.local/state/nfc-bridge.log).
 """
 
 import base64
@@ -34,7 +35,8 @@ import nfc
 
 PORT = int(os.environ.get("SH_BRIDGE_PORT", "8787"))
 STUDIO_URL = "https://gangleri42.github.io/studio/"
-LOG_PATH = os.path.expanduser("~/bench/nfc-bridge.log")
+LOG_PATH = os.path.expanduser(
+    os.environ.get("SH_BRIDGE_LOG", "~/.local/state/nfc-bridge.log"))
 RECORD_TYPE = "urn:nfc:ext:seedhammer.com:curves"
 TAP_TIMEOUT_S = 30
 
@@ -67,6 +69,7 @@ _write_lock = threading.Lock()
 
 def log(msg):
     try:
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
         with open(LOG_PATH, "a") as f:
             f.write(f"{datetime.datetime.now().isoformat(timespec='seconds')} {msg}\n")
     except OSError:

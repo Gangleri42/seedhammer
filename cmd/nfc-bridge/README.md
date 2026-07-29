@@ -13,26 +13,29 @@ redirects to the hosted app.
 
 ## Endpoints
 
-- `GET  /bridge/health` → `{"ok":true,...}` — Studio probes this to
+- `GET  /bridge/health` returns `{"ok":true,...}`; Studio probes it to
   decide whether to route Send through the bridge.
-- `POST /bridge/send` with `{"payload":"<curves or text envelope>"}` →
-  writes the payload as a `seedhammer.com:curves` NDEF record and
-  returns `{"status": ...}`: `written`, `delivered_unconfirmed` (the
-  known tail-commit race — check the device screen), `no_target`,
-  `no_reader`, `busy`, or `error`.
-- Everything else is served from the Studio editor directory.
+- `POST /bridge/send` with `{"payload":"<text envelope>"}` or
+  `{"payloadB64":"<binary curves payload, base64>"}` writes the payload
+  as a `seedhammer.com:curves` NDEF record and returns
+  `{"status": ...}`: `written`, `delivered_unconfirmed` (the known
+  tail-commit race; check the device screen), `no_target`, `no_reader`,
+  `busy`, or `error`.
+- Anything else is a 404. The bridge serves no app files.
 
 ## Requirements
 
-- The nfcpy venv at `~/.nfc-venv` (`nfcpy`, `ndeflib`).
-- Reader access without sudo (the udev rule that already makes
-  `write-nfc.py` work).
+- Python 3 with `nfcpy` and `ndeflib` (`pip install nfcpy ndeflib`);
+  a venv keeps it tidy.
+- Reader access without sudo: a udev rule for your reader (an ACR122U
+  or similar).
 
 ## Run once
 
-    ~/.nfc-venv/bin/python3 cmd/nfc-bridge/bridge.py
+    python3 cmd/nfc-bridge/bridge.py
 
-Then open `http://127.0.0.1:8787/`. The Send button lights up.
+using the Python that has nfcpy installed. Then open
+`http://127.0.0.1:8787/`. The Send button lights up.
 
 ## Run on boot
 
@@ -42,8 +45,11 @@ Then open `http://127.0.0.1:8787/`. The Send button lights up.
     systemctl --user daemon-reload
     systemctl --user enable --now seedhammer-nfc-bridge
 
-Logs: `journalctl --user -u seedhammer-nfc-bridge -f` and
-`~/bench/nfc-bridge.log`.
+The unit assumes the venv at `~/.nfc-venv` and the checkout at
+`~/seedhammer`; edit the `ExecStart` paths if yours differ.
+
+Logs: `journalctl --user -u seedhammer-nfc-bridge -f` and the file named
+by `SH_BRIDGE_LOG` (default `~/.local/state/nfc-bridge.log`).
 
 ## Security
 
@@ -53,8 +59,8 @@ Logs: `journalctl --user -u seedhammer-nfc-bridge -f` and
   any endpoint.
 - Refuses `/bridge/send` from origins not on the allow-list. The
   allow-list is `SH_BRIDGE_ORIGINS`-overridable: point it at a
-  project-controlled origin, or drop the cross-origin entry to serve
-  Studio loopback-only.
+  project-controlled origin, or leave only the loopback entries so
+  nothing cross-origin can call it.
 - Caps the request body, so an oversized payload can't exhaust memory.
 - The strong backstop is physical: nothing is written until you tap
   the reader, and the device shows a confirm screen before engraving.

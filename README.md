@@ -1,48 +1,124 @@
-# SeedHammer II Firmware
+# SeedHammer II Firmware (fork)
 
-This repository contains the source code to run the controller program for the
-[SeedHammer II](https://seedhammer.com) engraving machine. The hardware is
-[open source](https://github.com/seedhammer/hardware).
+This is a fork of [seedhammer/seedhammer](https://github.com/seedhammer/seedhammer),
+the controller program for the [SeedHammer II](https://seedhammer.com) engraving
+machine. Upstream engraves wallet backups: output descriptors, seed phrases, and
+codex32 shares, rendered by the firmware from data it verified. The fork keeps
+all of that and opens the machine up: anything you can draw or type arrives over
+NFC, shows up in an on-screen preview, and engraves once you approve it.
 
-The [user manual](https://seedhammer.com/doc/manual) contains detailed instructions
-for operating the machine.
+Not an official SeedHammer project. The
+[diff against upstream](https://github.com/seedhammer/seedhammer/compare/main...Gangleri42:seedhammer:main)
+is live and always current; the
+[upstream README](https://github.com/seedhammer/seedhammer#readme) covers the
+stock machine, and the [user manual](https://seedhammer.com/doc/manual) covers
+operating it.
+
+The companion browser editor is
+**[SeedHammer Studio](https://gangleri42.github.io/studio/)**
+([repo](https://github.com/Gangleri42/studio)): compose text plates, draw on a
+canvas, import SVGs, write rich text, preview it all against the machine's real
+fonts and speed model, and send it to the machine from the browser.
+
+## What the fork adds
+
+### Drawings and rich text over NFC
+
+A new NDEF record type, `seedhammer.com:curves`, carries vector drawings and
+rich text. The firmware re-fits incoming geometry to its own spline, plans its
+own timing, and rasterizes a preview on the screen; nothing engraves until you
+approve that image. The format is binary with a shape dictionary, so a glyph
+used two hundred times ships once. Produce payloads in
+[Studio](https://gangleri42.github.io/studio/) or with
+[`cmd/svgplate`](cmd/svgplate) from an SVG or markdown file.
+[How-to](docs/howto-svg-and-richtext.md).
+
+### Free-form text plates
+
+A plain NDEF Text record engraves as a multi-line text plate. Write one from
+any phone NFC app, from
+[Studio's composer](https://gangleri42.github.io/studio/textplate/), or with
+[`write-nfc.py`](cmd/textplate/write-nfc.py). The firmware sets it at the
+largest of six sizes (6.0 down to 3.0 mm) whose grid holds the composition,
+wraps overlong lines without reflowing lines you sized deliberately, and
+confirms with the exact plate layout. Text that resembles a damaged descriptor
+or seed phrase gets a warning before it engraves.
+[How-to](docs/howto-text-plates.md).
+
+### Nostr key plates
+
+An `npub1`/`nsec1` string written as a text record engraves as a NIP-19 key
+plate. For an nsec the device derives the npub, engraves the secret plate, and
+then offers a second plate for the public key.
+[How-to](docs/howto-nostr-keys.md).
+
+### Larger descriptors, reliable phone writes
+
+Upstream engraves descriptors at one fixed layout and fails when they don't
+fit. The fork walks a fallback ladder (text at 3.8/3.4/3.0 mm, QR module scale
+3 then 2), taking QR-backed capacity to roughly 1500 compact characters; a
+973-character 5-of-7 descriptor engraved and transcribed back without errors.
+The Type-4 tag emulator also replays retransmitted frames instead of aborting
+the write, so long writes from phone apps complete.
+
+### Engraving quality and speed
+
+Round glyphs used to engrave very slightly egg-shaped. The outline fitter is
+now an interpolating spline, closed contours run as seam-free periodic loops,
+and bench circles measure 0.000% distortion. The font grew to the full 95
+printable ASCII characters. Smooth strokes cruise at constant speed for even
+dot pitch, glyph strokes chain by nearest endpoint, and text rows engrave
+serpentine to cut empty travel.
+
+### Firmware downloads
+
+CI builds every push. The rolling
+[`edge` prerelease](https://github.com/Gangleri42/seedhammer/releases/tag/edge)
+carries the latest `main` build under a stable URL, and tagged releases mark
+tested snapshots. All fork builds are unsigned, and a stock machine only boots
+SeedHammer-signed firmware, so first add your own boot key to a spare RP2350
+OTP slot and sign the build yourself:
+[the how-to](docs/howto-bootkey-and-signing.md) walks through it with
+`picotool`, leaving official firmware bootable alongside.
 
 ## Installation
 
-Press and hold the firmware upgrade button while connecting the machine to
-a computer. Then, copy the firmware file to the USB drive that appears. The
-installation is complete when the drive disappears.
+Official releases install as upstream describes: hold the firmware upgrade
+button while connecting the machine over USB, copy the UF2 onto the drive that
+appears, and wait for the drive to disappear. Fork builds are unsigned, so sign
+them with your own boot key first (see above), then flash the same way or with
+`picotool load`.
 
-### Building from source
+## Building from source
 
-To build a [UF2](https://github.com/microsoft/uf2) image, [Nix](https://nixos.org/) with flakes
-enabled is required.
+To build a [UF2](https://github.com/microsoft/uf2) image, [Nix](https://nixos.org/)
+with flakes enabled is required:
 
 ```sh
 $ nix run .#build-firmware
 ```
 
-### Reproducible builds
-
-The build process is designed to be deterministic, that is, images produced with the above steps
-should match the released images bit-for-bit, except for the signature. To copy the signature
-from an official release to a locally built firmware:
+Builds are deterministic. To reproduce a CI build bit-for-bit, set the version
+CI used: `VERSION=<tag or full commit sha> nix run .#build-firmware`. For
+official SeedHammer releases,
 
 ```sh
 $ nix run .#copy-signature <path/to/official/seedhammerii-vX.Y.Z.uf2> <path/to/your/seedhammerii-vX.Y.Z>
 ```
 
+copies the official signature onto a matching local build.
+
 ## Development
 
-Connect a debugger to the debug and UART ports on the machine PCB. Then, build and flash a
-firmware image:
+Connect a debugger to the debug and UART ports on the machine PCB. Then, build
+and flash a firmware image:
 
 ```
 $ nix run .#flash-firmware flash -tags debug
 ```
 
-In debug mode, logging output from the controller is routed through the USB serial device.
-Use
+In debug mode, logging output from the controller is routed through the USB
+serial device. Use
 
 ```
 $ tinygo monitor
@@ -52,12 +128,14 @@ to show the log on your terminal.
 
 ### License
 
-The files is this repository are in the public domain as described in the [LICENSE](LICENSE) file,
-except files in directories with their own LICENSE files.
+The files in this repository are in the public domain as described in the
+[LICENSE](LICENSE) file, except files in directories with their own LICENSE
+files.
 
 ### Contributions
 
-Contributors must agree to the [developer certificate of origin](https://developercertificate.org/),
-to ensure their work is compatible with the the LICENSE. Sign your commits with
-Signed-off-by statements to show your agreement with the `git commit --signoff` (or `-s`)
+Contributors must agree to the
+[developer certificate of origin](https://developercertificate.org/), to ensure
+their work is compatible with the LICENSE. Sign your commits with Signed-off-by
+statements to show your agreement with the `git commit --signoff` (or `-s`)
 command.

@@ -18,6 +18,7 @@ You will need:
   ```
 
   Keep `my-key.pem` somewhere safe. Lose it and you can't sign with this slot again.
+  The machine can [back it up as 24 words on steel](howto-bootkey-backup.md).
 
 - [`picotool`](https://github.com/raspberrypi/picotool) version 2.0 or later. Pre-built binaries: <https://github.com/raspberrypi/pico-sdk-tools/releases>. On macOS, `brew install picotool` works.
 - The SeedHammer source tree, with `nix` and the project flake usable, plus a Go toolchain for `picosign`: <https://github.com/SeedHammer/seedhammer>. The flake builds on Linux and macOS.
@@ -91,7 +92,7 @@ picotool otp dump > otp-before-$(date -u +%Y%m%dT%H%M%SZ).txt
 
 ## Step 2: Generate the OTP-JSON for your key
 
-Use `picotool seal --sign` on any binary picotool accepts — the firmware you'll build in step 4, or a `hello_world.elf` from [pico-examples](https://github.com/raspberrypi/pico-examples). The signed output is thrown away; what we want is the OTP-JSON byproduct, which carries your pubkey's correctly-hashed fingerprint:
+Use `picotool seal --sign` on any binary picotool accepts: the firmware you'll build in step 4, or a `hello_world.elf` from [pico-examples](https://github.com/raspberrypi/pico-examples). The signed output is thrown away; what we want is the OTP-JSON byproduct, which carries your pubkey's correctly-hashed fingerprint:
 
 ```sh
 picotool seal --sign placeholder.elf discard.elf my-key.pem my-otp.json
@@ -238,7 +239,7 @@ After step 5:
 1. *Three metadata blocks* in `picotool info -a`: the image was sealed twice. Rebuild and sign with the `picosign` flow from step 4.
 2. *Signature/key mismatch*: `picotool info -a <file>` prints the image's `public key:` as 64 bytes of X‖Y. SHA-256 of exactly those 64 bytes must equal the hash in your OTP slot (row *N* = digest bytes 2*N*+1 then 2*N*). `picosign extract` prints the signature, not the public key.
 
-**"OTP write failed: not permitted"**: an OTP page has been locked by a previous `picotool otp permissions` call — page 2 guards the `BOOTKEY` rows, page 1 guards `BOOT_FLAGS1`/`CRIT1`. That shouldn't happen on a stock SeedHammer-locked device. See [RP2350 datasheet §13.5 "Page locks"](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf) and the [picotool `permissions` docs](https://github.com/raspberrypi/picotool#permissions).
+**"OTP write failed: not permitted"**: an OTP page has been locked by a previous `picotool otp permissions` call (page 2 guards the `BOOTKEY` rows, page 1 `BOOT_FLAGS1`/`CRIT1`). That shouldn't happen on a stock SeedHammer-locked device. See [RP2350 datasheet §13.5 "Page locks"](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf) and the [picotool `permissions` docs](https://github.com/raspberrypi/picotool#permissions).
 
 **A manually computed hash doesn't match what picotool wrote**: the hash format is **SHA-256 of the uncompressed 64-byte X‖Y pubkey** ([`picobin/picobin.go:103`](https://github.com/seedhammer/seedhammer/blob/main/picobin/picobin.go#L103), [`cmd/picosign/main.go:142-143`](https://github.com/seedhammer/seedhammer/blob/main/cmd/picosign/main.go#L142-L143)). The 33-byte compressed form produces the wrong hash and silently poisons the slot.
 

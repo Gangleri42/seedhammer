@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/xml"
 	"math"
 	"os"
 	"strings"
@@ -23,6 +24,16 @@ func endpoints(segs []fseg) []fpt {
 }
 
 func approx(a, b, eps float64) bool { return math.Abs(a-b) <= eps }
+
+// startEl builds an element from name and alternating attribute
+// name/value pairs, for the shape helpers that take one directly.
+func startEl(name string, kv ...string) xml.StartElement {
+	e := xml.StartElement{Name: xml.Name{Local: name}}
+	for i := 0; i+1 < len(kv); i += 2 {
+		e.Attr = append(e.Attr, xml.Attr{Name: xml.Name{Local: kv[i]}, Value: kv[i+1]})
+	}
+	return e
+}
 
 func TestParsePathRelativeMatchesAbsolute(t *testing.T) {
 	abs, err := parsePath("M10 10 L30 10 C30 30 50 30 50 50")
@@ -279,6 +290,183 @@ func TestNonFiniteRejected(t *testing.T) {
 	bad := []fseg{{op: svgpath.MoveTo, p: [3]fpt{{math.Inf(1), 0}}}}
 	if _, _, _, err := finish(bad, true); err == nil {
 		t.Error("finish accepted a non-finite coordinate")
+	}
+}
+
+// moves returns the start point of every stroke in a segment list.
+func moves(segs []fseg) []fpt {
+	var pts []fpt
+	for _, s := range segs {
+		if s.op == svgpath.MoveTo {
+			pts = append(pts, s.p[0])
+		}
+	}
+	return pts
+}
+
+func TestUseStampsTheReferencedShape(t *testing.T) {
+	// One definition, two stamps, and the target is declared after both
+	// references: a document is free to define an id below its use.
+	const doc = `<svg viewBox="0 0 100 100">
+	  <use href="#pill" x="10" y="10"/>
+	  <use href="#pill" x="60" y="20"/>
+	  <defs><rect id="pill" width="20" height="30"/></defs>
+	</svg>`
+	segs, err := extractSVG([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := moves(segs)
+	want := []fpt{{10, 10}, {60, 20}}
+	if len(got) != len(want) {
+		t.Fatalf("want %d stamps, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if !approx(got[i].X, want[i].X, 1e-9) || !approx(got[i].Y, want[i].Y, 1e-9) {
+			t.Errorf("stamp %d at %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestUseComposesTransformWithOffset(t *testing.T) {
+	// The use's own transform applies, then its x/y, then the target's:
+	// scale(2) doubles the offset, and the target's translate rides
+	// along scaled.
+	const doc = `<svg viewBox="0 0 100 100">
+	  <use href="#dot" transform="scale(2)" x="5" y="5"/>
+	  <defs><rect id="dot" transform="translate(1,1)" width="4" height="4"/></defs>
+	</svg>`
+	segs, err := extractSVG([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := moves(segs)
+	if len(got) != 1 {
+		t.Fatalf("want 1 stamp, got %d", len(got))
+	}
+	if !approx(got[0].X, 12, 1e-9) || !approx(got[0].Y, 12, 1e-9) {
+		t.Errorf("stamp at %v, want (12,12)", got[0])
+	}
+}
+
+func TestUseThroughLegacyXlinkHref(t *testing.T) {
+	// Inkscape and Illustrator still write xlink:href.
+	const doc = `<svg viewBox="0 0 100 100" xmlns:xlink="http://www.w3.org/1999/xlink">
+	  <defs><rect id="box" width="10" height="10"/></defs>
+	  <use xlink:href="#box" x="20" y="30"/>
+	</svg>`
+	segs, err := extractSVG([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := moves(segs); len(got) != 1 || !approx(got[0].X, 20, 1e-9) || !approx(got[0].Y, 30, 1e-9) {
+		t.Errorf("got %v, want one stamp at (20,30)", got)
+	}
+}
+
+func TestUseOfSymbolRenders(t *testing.T) {
+	// A <symbol> draws nothing on its own but stamps through a <use>,
+	// so the document below engraves exactly one box.
+	const doc = `<svg viewBox="0 0 100 100">
+	  <symbol id="s"><rect width="10" height="10"/></symbol>
+	  <use href="#s" x="40" y="40"/>
+	</svg>`
+	segs, err := extractSVG([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := moves(segs); len(got) != 1 || !approx(got[0].X, 40, 1e-9) {
+		t.Errorf("got %v, want one stamp at (40,40)", got)
+	}
+}
+
+func TestUseUnresolvedIsAnError(t *testing.T) {
+	// Silently dropping the reference would engrave a drawing missing
+	// whatever it stamped, and still report every cap as clear.
+	for _, doc := range []string{
+		`<svg><use href="#missing" x="1" y="1"/><rect width="5" height="5"/></svg>`,
+		`<svg><use href="other.svg#box"/><rect width="5" height="5"/></svg>`,
+	} {
+		if _, err := extractSVG([]byte(doc)); err == nil {
+			t.Errorf("%s: want an error, got none", doc)
+		}
+	}
+}
+
+func TestUseCycleTerminates(t *testing.T) {
+	const doc = `<svg><g id="loop"><use href="#loop"/></g></svg>`
+	done := make(chan error, 1)
+	go func() {
+		_, err := extractSVG([]byte(doc))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("want an error on a self-referencing use, got none")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("extractSVG did not terminate on a use cycle")
+	}
+}
+
+func TestRectRadii(t *testing.T) {
+	for _, tc := range []struct {
+		rx, ry       string
+		w, h         float64
+		wantX, wantY float64
+		name         string
+	}{
+		{"", "", 20, 10, 0, 0, "no radii"},
+		{"4", "", 20, 10, 4, 4, "rx alone sets both"},
+		{"", "3", 20, 10, 3, 3, "ry alone sets both"},
+		{"4", "2", 20, 10, 4, 2, "both given"},
+		{"100", "100", 20, 10, 10, 5, "clamped to half the side"},
+		{"auto", "auto", 20, 10, 0, 0, "auto is no radius"},
+		{"-5", "", 20, 10, 0, 0, "negative is no radius"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			x, y := rectRadii(tc.rx, tc.ry, tc.w, tc.h)
+			if !approx(x, tc.wantX, 1e-9) || !approx(y, tc.wantY, 1e-9) {
+				t.Errorf("got (%g,%g), want (%g,%g)", x, y, tc.wantX, tc.wantY)
+			}
+		})
+	}
+}
+
+func TestRoundedRectCorners(t *testing.T) {
+	// A rounded rect is four sides and four cubic quarter-arcs, opening
+	// one radius along the top edge.
+	segs, err := shapeSegments(startEl("rect", "x", "10", "y", "20", "width", "40", "height", "30", "rx", "5"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(segs) != 9 {
+		t.Fatalf("want 9 segments, got %d", len(segs))
+	}
+	if got := segs[0].p[0]; !approx(got.X, 15, 1e-9) || !approx(got.Y, 20, 1e-9) {
+		t.Errorf("start at %v, want (15,20)", got)
+	}
+	cubics := 0
+	for _, s := range segs {
+		if s.op == svgpath.CubeTo {
+			cubics++
+		}
+	}
+	if cubics != 4 {
+		t.Errorf("want 4 corner cubics, got %d", cubics)
+	}
+	// The outline closes back on its start.
+	if got := segs[len(segs)-1].end(); !approx(got.X, 15, 1e-9) || !approx(got.Y, 20, 1e-9) {
+		t.Errorf("end at %v, want (15,20)", got)
+	}
+	// A radius-free rect stays a four-line polygon.
+	sharp, err := shapeSegments(startEl("rect", "width", "40", "height", "30"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sharp) != 5 {
+		t.Errorf("want 5 segments for a sharp rect, got %d", len(sharp))
 	}
 }
 

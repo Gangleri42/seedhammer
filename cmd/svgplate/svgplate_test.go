@@ -672,10 +672,14 @@ func placedMatchesFlat(t *testing.T, pl placement) {
 }
 
 func TestRealLogos(t *testing.T) {
-	for _, f := range []string{"~/Downloads/oshw-logo.svg", "~/Downloads/Bitcoin_logo.svg"} {
+	logos := os.Getenv("SVGPLATE_LOGOS")
+	if logos == "" {
+		t.Skip("SVGPLATE_LOGOS not set; point it at a comma-separated list of SVG files")
+	}
+	for _, f := range strings.Split(logos, ",") {
 		data, err := os.ReadFile(f)
 		if err != nil {
-			t.Skipf("%s not present", f)
+			t.Fatalf("%s: %v", f, err)
 		}
 		raw, err := extractSVG(data)
 		if err != nil {

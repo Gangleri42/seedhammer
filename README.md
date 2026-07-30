@@ -5,7 +5,9 @@ the controller program for the [SeedHammer II](https://seedhammer.com) engraving
 machine. Upstream engraves wallet backups: output descriptors, seed phrases, and
 codex32 shares, rendered by the firmware from data it verified. The fork keeps
 all of that and opens the machine up: anything you can draw or type arrives over
-NFC, shows up in an on-screen preview, and engraves once you approve it.
+NFC, shows up in an on-screen preview, and engraves once you approve it. It also
+ships the boot-key tool the machine needs to run firmware you built yourself:
+key handling, board provisioning and firmware signing in one place.
 
 Not an official SeedHammer project. The
 [diff against upstream](https://github.com/seedhammer/seedhammer/compare/main...Gangleri42:seedhammer:main)
@@ -70,6 +72,29 @@ printable ASCII characters. Smooth strokes cruise at constant speed for even
 dot pitch, glyph strokes chain by nearest endpoint, and text rows engrave
 serpentine to cut empty travel.
 
+### Key handling, provisioning and signing: `sh2key`
+
+[`cmd/sh2key`](cmd/sh2key) is one tool for the whole boot-key story.
+Run it bare and it opens a full-screen interactive app: your key and
+the attached board's fused OTP state on one screen, scanned on
+arrival, with signing and flashing a keystroke away. The same verbs
+exist as plain subcommands for scripts and the how-tos.
+
+It mints and stores a signing key, classifies a board from its OTP
+alone, fuses a boot-key slot and marks it valid, signs firmware
+in-process (no openssl, no `xxd`) and flashes it. The flash list only
+offers images the board's own keys accept, so a rejected image cannot
+be written by accident. Every irreversible write sits behind a
+readback-verified gate and typed consent, and every fuse it can burn
+is [named in the manual](docs/manual-sh2key.md#what-can-burn-fuses).
+
+It also backs the key up as 24 BIP39 words on the machine's own steel
+plates and restores them to a byte-identical PEM, finds a mis-read
+word by fingerprint search, consumes SeedQR payloads, and derives the
+key's Nostr identity. [Manual](docs/manual-sh2key.md),
+[backup how-to](docs/howto-bootkey-backup.md),
+[signing how-to](docs/howto-bootkey-and-signing.md).
+
 ### Firmware downloads
 
 CI builds every push. The rolling
@@ -77,9 +102,11 @@ CI builds every push. The rolling
 carries the latest `main` build under a stable URL, and tagged releases mark
 tested snapshots. All fork builds are unsigned, and a stock machine only boots
 SeedHammer-signed firmware, so first add your own boot key to a spare RP2350
-OTP slot and sign the build yourself:
-[the how-to](docs/howto-bootkey-and-signing.md) walks through it with
-`picotool`, leaving official firmware bootable alongside.
+OTP slot and sign the build yourself: `go run seedhammer.com/cmd/sh2key
+provision` runs the ceremony end to end
+([manual](docs/manual-sh2key.md)), and
+[the how-to](docs/howto-bootkey-and-signing.md) walks the same steps by hand
+with `picotool`, leaving official firmware bootable alongside.
 
 ## Installation
 

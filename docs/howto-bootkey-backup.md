@@ -168,6 +168,22 @@ to anyone who finds it, that is exactly what it will look like.
 
 Engraving Plate 2 on the back of Plate 1 gives up most of the benefit of splitting them.
 
+## Optional: the boot key as a Nostr identity
+
+The boot key scalar is a valid Nostr secret key: same curve, same range.
+
+```sh
+go run seedhammer.com/cmd/sh2key nsec my-key.pem        # print nsec1 and npub1
+go run seedhammer.com/cmd/sh2key nsec my-key.pem -nfc   # engrave, per the Nostr how-to
+```
+
+Name the consequence before you use this: deriving and using the nsec makes
+the boot key double as a Nostr identity. One secret, two protocols. Whoever
+holds either form can both sign firmware for the fused boards and act as that
+Nostr key, and plate 1 then backs up both. If you would not store your Nostr
+identity and your firmware-signing authority in the same vault, derive a
+separate Nostr key instead ([`howto-nostr-keys.md`](howto-nostr-keys.md)).
+
 ## Restoring
 
 ```sh
@@ -198,11 +214,6 @@ arrived as plain text. See the NFC notes in the signing howto.
 **`restore` writes a PEM but the board rejects the firmware.** The key is not the one
 this board was fused with. Compare your fingerprint against the board's OTP rows
 before re-flashing anything, and read the boot-key section of the signing howto.
-
-Until `sh2key` lands, the conversion is small enough to do with the in-tree
-`bip39` package: `bip39.New(entropy)` gives words from the 32-byte scalar, and
-`bip39.Mnemonic.Entropy()` gives the scalar back. The round-trip in step 3 is the
-part that matters.
 
 ## References
 

@@ -4,6 +4,12 @@ You own a SeedHammer II locked with the manufacturer's signing key, and you want
 
 This guide is the fun-and-games path. The manufacturer firmware is untouched; you're adding a parallel boot key alongside it. For a production-grade signing setup, run your key on an HSM end-to-end and follow the RP2350 datasheet §10.5 procedure carefully.
 
+> **Automated:** [`cmd/sh2key`](manual-sh2key.md) runs this whole
+> ceremony (`status`, `provision`, `sign`, `flash`), gated on readbacks at
+> every step. This document stays the by-hand path: read it to know what the
+> tool does before trusting it, and use it directly when the key lives on an
+> HSM, where only `digest.bin` travels (step 4).
+
 ## Before you start
 
 You will need:
@@ -145,11 +151,21 @@ Row *N* holds array bytes 2*N* and 2*N*+1, low byte first: with an array startin
 When all sixteen match, mark the slot valid:
 
 ```sh
-picotool otp set -s BOOT_FLAGS1.KEY_VALID 0x2   # OR in the bit for slot 1; slot 2 = 0x4, slot 3 = 0x8
-picotool otp get BOOT_FLAGS1.KEY_VALID          # expect 0x3 (slots 0 and 1)
+# The bit for slot 1; slot 2 = 0x4, slot 3 = 0x8. BOOT_FLAGS1's three
+# copies live at rows 0x4b, 0x4c and 0x4d, and all three take the bit.
+for row in 0x4b 0x4c 0x4d; do
+  picotool otp set -s "$row" 0x2
+done
+picotool otp get BOOT_FLAGS1      # expect KEY_VALID = 0x3 (slots 0 and 1)
 ```
 
-`-s` ORs the bit into the existing field, refuses any write that would clear a bit, and writes all three redundant copies of the `BOOT_FLAGS1` row.
+`-s` ORs the bits into the row's existing value and refuses any write that would clear one.
+
+Write every copy. `BOOT_FLAGS1` is an `RBIT-3` row: three consecutive rows holding the same value, which the boot ROM reads as a bitwise majority vote. Selecting the row by name or field (`BOOT_FLAGS1.KEY_VALID`) writes only the first copy, and one vote of three loses, so the bit lands in OTP with no effect. Selecting each copy by its row number writes all three. The same holds for every redundant row, including `CRIT1` (`RBIT-8`, rows `0x040` through `0x047`).
+
+The readback confirms it: a named read prints `KEY_VALID` as the majority vote, and adds a `RAW_VALUE=` line listing all three copies precisely when they disagree. No `RAW_VALUE` line means the copies agree.
+
+Do not reach for `-c` here. Despite its `-c <copies>` synopsis, picotool 2.x does not bind a count to it; the number becomes a second row selector, which makes `otp set` fail with `unexpected argument`.
 
 ## Step 4: Build and sign a firmware image
 
@@ -203,8 +219,12 @@ Success: the volume disappears and stays gone, and the LCD shows the normal star
 If you want a device that boots only firmware you've signed, permanently invalidate slot 0:
 
 ```sh
-# Re-enter BOOTSEL first
-picotool otp set -s BOOT_FLAGS1.KEY_INVALID 0x1
+# Re-enter BOOTSEL first. KEY_INVALID is bits 8-11 of BOOT_FLAGS1, so
+# slot 0's bit is 0x100, and every copy of the row takes it.
+for row in 0x4b 0x4c 0x4d; do
+  picotool otp set -s "$row" 0x100
+done
+picotool otp get BOOT_FLAGS1      # expect KEY_INVALID = 0x1
 picotool reboot
 ```
 
@@ -228,9 +248,11 @@ After step 5:
 
 **"No accessible RP-series devices in BOOTSEL mode were found"**: the device isn't in BOOTSEL. Hold the button and replug. A device that is listed but can't be opened is a USB permission problem (udev rules on Linux, `sudo` on macOS).
 
-**`picotool otp load` fails with "Attempted to clear bits in OTP row(s)"**: `otp load` replaces whole fields, so writing `"key_valid": 2` over an existing `0x1` would clear bit 0 and is refused. Use `picotool otp set -s BOOT_FLAGS1.KEY_VALID 0x2`, or load the combined value `"key_valid": 3`. Nothing was written.
+**`picotool otp load` fails with "Attempted to clear bits in OTP row(s)"**: `otp load` replaces whole fields, so writing `"key_valid": 2` over an existing `0x1` would clear bit 0 and is refused. Set the bit per copy row as in step 3, or load the combined value `"key_valid": 3`. Nothing was written.
 
 **`BOOT_FLAGS1.KEY_VALID` still shows `0x1` after loading**: the JSON had no `boot_flags1` entry. Set the bit as in step 3.
+
+**`KEY_VALID` unchanged after `otp set -s BOOT_FLAGS1.KEY_VALID`**: the write reached the first redundant copy only and lost the majority vote. `picotool otp get BOOT_FLAGS1` prints a `RAW_VALUE=` line when the copies disagree; set the bit on rows `0x4b`, `0x4c` and `0x4d` individually, which only flips further 0s to 1s.
 
 **The LCD stays dark but the device does not reappear in BOOTSEL**: the image booted; the display didn't come up. Unplug the device completely and plug it back in. A rejected signature looks different: the device returns to BOOTSEL.
 

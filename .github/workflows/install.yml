@@ -1,0 +1,142 @@
+# The install script is executable documentation, and documentation
+# rots. Two guards: e2e runs the real installer on the runner (a
+# disposable Ubuntu box with passwordless sudo) through its whole
+# lifecycle — install, rerun-as-no-op, verify, uninstall — and
+# contracts pins the cross-file facts the script hardcodes (the Go
+# toolchain, the picotool pin, the bridge origin allow-list) to their
+# sources of truth, so a bump in one place fails loudly until the
+# other follows.
+#
+# The reader and the user systemd bus are absent on a runner; the
+# script reports both as PENDING and exits 0, which is exactly the
+# honest-verify design this job leans on.
+name: Install
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Preempt pcscd
+        # The script refuses to coexist with an active pcscd and tells
+        # the operator to disable it; on a disposable runner we just do
+        # what it would have asked.
+        run: sudo systemctl disable --now pcscd.socket pcscd 2>/dev/null || true
+
+      - name: Install
+        run: ./install.sh send --yes
+
+      - name: Assert the installed state
+        run: |
+          set -euo pipefail
+          "$HOME/.nfc-venv/bin/python3" -c 'import nfc, ndef, usb1, serial'
+          test -x ./sh2key
+          test -x ./svgplate
+          "$HOME/.local/bin/picotool" version
+          grep -q 'SH_BRIDGE_ORIGINS=.*http://localhost:8788' \
+            "$HOME/.config/systemd/user/seedhammer-nfc-bridge.service"
+          sudo test -f /etc/udev/rules.d/99-seedhammer-nfc.rules
+          test -f "$HOME/.local/state/seedhammer-install/manifest.tsv"
+
+      - name: Rerun is a no-op
+        # '+' marks a mutation; '~' also carries standing advisories
+        # (setup-udev, no user bus) that repeat on every run, so only
+        # '+' may fail this. The manifest hash is the real no-op proof.
+        run: |
+          set -euo pipefail
+          m1=$(md5sum "$HOME/.local/state/seedhammer-install/manifest.tsv")
+          ./install.sh send --yes 2>&1 | tee run2.log
+          if grep -E '^  \+ ' run2.log; then
+            echo 'the rerun performed mutations' >&2
+            exit 1
+          fi
+          m2=$(md5sum "$HOME/.local/state/seedhammer-install/manifest.tsv")
+          [ "$m1" = "$m2" ] || { echo 'manifest changed on rerun' >&2; exit 1; }
+
+      - name: Verify
+        run: ./install.sh --verify
+
+      - name: Uninstall removes exactly what it installed
+        run: |
+          set -euo pipefail
+          ./install.sh --uninstall --yes
+          for p in "$HOME/.nfc-venv" "$HOME/.local/bin/picotool" \
+                   "$HOME/.config/systemd/user/seedhammer-nfc-bridge.service" \
+                   "$HOME/.local/state/seedhammer-install" ./sh2key ./svgplate; do
+            if [ -e "$p" ]; then echo "left behind: $p" >&2; exit 1; fi
+          done
+          if ls -d "$HOME"/.local/opt/picotool-* 2>/dev/null; then
+            echo 'picotool tree left behind' >&2
+            exit 1
+          fi
+          if sudo test -e /etc/udev/rules.d/99-seedhammer-nfc.rules; then
+            echo 'udev rule left behind' >&2
+            exit 1
+          fi
+
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: The Go pin follows go.mod
+        run: |
+          set -euo pipefail
+          gomod=$(awk '/^go /{print $2}' go.mod)
+          script=$(sed -n 's/^GO_VERSION=go//p' install.sh)
+          if [ "$gomod" != "$script" ]; then
+            echo "go.mod pins go $gomod but install.sh pins go$script" >&2
+            exit 1
+          fi
+
+      - name: The picotool pin is internally consistent
+        run: |
+          set -euo pipefail
+          pt=$(sed -n 's/^PICOTOOL_VERSION=//p' install.sh)
+          if ! grep -q "download/v$pt-" install.sh; then
+            echo "PICOTOOL_VERSION=$pt but PICOTOOL_BASE points at another release" >&2
+            exit 1
+          fi
+
+      - name: The unit origin allow-list covers the bridge defaults and the local serve
+        # SH_BRIDGE_ORIGINS replaces the bridge's built-in default, so
+        # the installed unit must re-list every default plus both
+        # localhost:8788 forms for seedhammer-studio/serve.sh.
+        run: |
+          set -euo pipefail
+          origins=$(sed -n 's/^ORIGINS="\(.*\)"$/\1/p' install.sh)
+          [ -n "$origins" ] || { echo 'no ORIGINS line in install.sh' >&2; exit 1; }
+          {
+            python3 - <<'EOF'
+          import re
+          import sys
+          src = open('cmd/nfc-bridge/bridge.py').read()
+          # The capture runs to the brace that closes the set (the one
+          # a ')' follows); f-string {PORT} braces sit inside it.
+          m = re.search(r'ALLOWED_ORIGINS\s*=.*?else\s*\{(.*?)\}\s*\)', src, re.S)
+          vals = re.findall(r'f?"([^"]+)"', m.group(1)) if m else []
+          if len(vals) < 3:
+              sys.exit('could not extract the bridge default origins from bridge.py')
+          for v in vals:
+              print(v.replace('{PORT}', '8787'))
+          EOF
+            echo http://127.0.0.1:8788
+            echo http://localhost:8788
+          } | while read -r o; do
+            case ",$origins," in
+              *",$o,"*) ;;
+              *) echo "ORIGINS lacks $o" >&2; exit 1 ;;
+            esac
+          done

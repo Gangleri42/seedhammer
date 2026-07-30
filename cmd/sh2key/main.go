@@ -77,6 +77,8 @@ func run(stdout io.Writer, stdin io.Reader, args []string) error {
 		return cmdProvision(stdout, args)
 	case "enable-secure-boot":
 		return cmdEnableSecureBoot(stdout, args)
+	case "revoke":
+		return cmdRevoke(stdout, args)
 	case "help", "-h", "-help", "--help":
 		usage(stdout)
 		return flag.ErrHelp
@@ -107,6 +109,7 @@ Provision a board and sign firmware. Needs picotool for device steps:
   flash [uf2]          flash an image; the fuse-free default for DIY boards
   provision [uf2]      mint, fuse, sign and flash, skipping what is done
   enable-secure-boot   one-way door: a DIY board starts requiring signatures
+  revoke -slot n       final: that key stops booting this board for good
 
 Run 'sh2key <command> -h' for the flags of each command.
 `)

@@ -92,6 +92,13 @@ boot** is its own screen with its own gates. Both run the identical
 ceremony cores as the CLI, print the same transcript inline, and
 collect consent in a typed modal.
 
+**Revoke** lists the four slots with what each holds. A slot is
+selectable only when the gates above would allow it; the others show
+the reason instead, so the screen states the rule rather than hiding
+the option. The chosen slot's consequence ("afterwards: slot 0, so
+official SeedHammer releases keep booting") is on screen before the
+confirmation.
+
 With several key PEMs in the directory, the home screen says so and
 `k` opens the key picker, annotated with each key's fingerprint and,
 when a board is attached, which slot it is fused in.
@@ -250,6 +257,32 @@ which prompts for your password itself; the tool never reads it.
 Idempotent: an already-current rule means nothing to do. On macOS
 there is no udev and nothing to set up.
 
+### revoke
+
+    sh2key revoke -slot n [-key file]
+
+Sets a slot's `KEY_INVALID` bit, which outranks `KEY_VALID` and can
+never be cleared. `-slot` is required and never inferred.
+
+The gates are the strictest here, because this is the one operation
+that can leave a board unable to accept any firmware:
+
+- at least one other slot must remain valid and unrevoked;
+- one of those remaining slots must hold either the manufacturer key
+  or the key loaded here, so something provably bootable is left;
+- when the only remainder is your own key, a `*.signed.uf2` that
+  verifies against it must exist, the same evidence
+  `enable-secure-boot` demands;
+- confirmation is the first 8 digits of the hash being revoked, or the
+  chip id for an empty slot, so it cannot be typed against the wrong
+  slot or the wrong board;
+- the bit goes into every redundant copy of `BOOT_FLAGS1` and each is
+  verified, as with the valid bit.
+
+Revoking an empty slot is allowed and blocks it from ever holding a
+key, which is how the RP2350 datasheet's procedure hardens unused
+slots.
+
 ## Files
 
 | File | What | Written how |
@@ -277,11 +310,12 @@ says what was and was not written.
 
 ## What can burn fuses
 
-Only two commands write OTP at all: `provision` (a boot-key slot's
-hash rows, then its `KEY_VALID` bit) and `enable-secure-boot`
-(`CRIT1.SECURE_BOOT_ENABLE`). Everything else, `status` included,
-is read-only on the device. The tool never writes white-label rows
-and never touches `KEY_INVALID`.
+Three commands write OTP at all: `provision` (a boot-key slot's hash
+rows, then its `KEY_VALID` bit), `enable-secure-boot`
+(`CRIT1.SECURE_BOOT_ENABLE`), and `revoke` (a slot's `KEY_INVALID`
+bit). Everything else, `status` included, is read-only on the device.
+The tool never writes white-label rows, which would brand a
+third-party board as genuine hardware.
 
 ## Troubleshooting
 

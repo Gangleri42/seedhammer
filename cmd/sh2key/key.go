@@ -216,8 +216,10 @@ func fingerprintHex(priv *secp256k1.PrivateKey) string {
 
 // parseFingerprint accepts a -verify argument: 64 hex digits, or any
 // unambiguous prefix of at least 16, matching what plate 2 carries.
+// Spaces are stripped, so the plate's grouped form types verbatim.
 func parseFingerprint(s string) ([]byte, error) {
 	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, " ", "")
 	if n := len(s); n < 16 || n > 64 || n%2 != 0 {
 		return nil, fmt.Errorf("fingerprint must be 16 to 64 hex digits (an even number), got %d", len(s))
 	}

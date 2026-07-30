@@ -336,35 +336,6 @@ ROW 0x0000: OTP_DATA_CHIPID0 (ECC) (Part 1/4)
 	}
 }
 
-func TestInstructionsFitThePlate(t *testing.T) {
-	text := instructionsText(fixtureFingerprint)
-	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
-	// The 5mm grid is 26x15; the howto promises a single 5mm plate.
-	if len(lines) > 15 {
-		t.Fatalf("%d lines exceed the 5mm plate's 15 rows", len(lines))
-	}
-	over22 := false
-	for _, l := range lines {
-		if len(l) > 26 {
-			t.Errorf("line %q exceeds the 5mm plate's 26 columns", l)
-		}
-		if len(l) > 22 {
-			over22 = true
-		}
-		for _, r := range l {
-			if r < ' ' || r > '~' {
-				t.Errorf("line %q contains non-printable-ASCII %q", l, r)
-			}
-		}
-	}
-	if !over22 {
-		t.Error("no line exceeds 22 columns; the text would fit 6mm and the howto's 5mm claim is stale")
-	}
-	if !strings.Contains(text, "STARTS "+fixtureFingerprint[:16]) {
-		t.Error("fingerprint prefix line missing")
-	}
-}
-
 func TestRestoreFromPipe(t *testing.T) {
 	_, pemBytes := loadFixture(t)
 	var out bytes.Buffer
@@ -556,8 +527,15 @@ func TestBackupInstructionsToStdout(t *testing.T) {
 	if err := run(&out, nil, []string{"backup", fixtureKeyFile(t), "-instructions"}); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != instructionsText(fixtureFingerprint) {
-		t.Fatal("instructions output differs")
+	if out.String() != instructionsMarkdown(fixtureFingerprint) {
+		t.Fatal("bare -instructions must print the markdown source")
+	}
+	out.Reset()
+	if err := run(&out, nil, []string{"backup", fixtureKeyFile(t), "-instructions", "-o", "-"}); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(out.Bytes(), []byte("2 ")) {
+		t.Fatalf("-instructions -o - is not a curves payload: %q", out.Bytes()[:min(8, out.Len())])
 	}
 }
 

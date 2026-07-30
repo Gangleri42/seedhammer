@@ -106,62 +106,50 @@ func wordsGridLines(u *ui, m bip39.Mnemonic) []string {
 	return out
 }
 
+// emitInstructions delivers the plate-2 restore document as a
+// rich-text curves payload, rendered and validated by the same
+// packages cmd/svgplate uses: what passes here is what the machine
+// engraves. Bare invocation prints the markdown source; -o and -nfc
+// carry the payload.
 func emitInstructions(stdout io.Writer, priv *secp256k1.PrivateKey, outPath string, nfc bool) error {
-	text := instructionsText(fingerprintHex(priv))
+	src := instructionsMarkdown(fingerprintHex(priv))
+	payload, err := instructionsPayload(src)
+	if err != nil {
+		return err
+	}
 	u := newUI(os.Stderr)
 	delivered := false
 	switch outPath {
 	case "":
 	case "-":
-		if _, err := io.WriteString(stdout, text); err != nil {
+		if _, err := stdout.Write(payload); err != nil {
 			return err
 		}
 		delivered = true
 	default:
 		// The instructions are public and regenerable at any time;
 		// unlike key material they may be overwritten freely.
-		if err := os.WriteFile(outPath, []byte(text), 0o644); err != nil {
+		if err := os.WriteFile(outPath, payload, 0o644); err != nil {
 			return err
 		}
-		u.printf("  wrote %s %s\n", u.bold(outPath), u.dim("(engraves at 5mm, 14 lines)"))
+		u.printf("  wrote %s %s\n", u.bold(outPath),
+			u.dim(fmt.Sprintf("(%d-byte curves payload, rich text at %gmm; send: write-nfc.py --curves)", len(payload), instructionsBodyMM)))
 		delivered = true
 	}
 	if nfc {
-		u.printf("  sending the instructions plate; the device offers the text-plate flow\n")
-		if err := sendNFC(u, nfcPlate, []byte(text)); err != nil {
+		u.printf("  sending the instructions plate; the device previews before engraving\n")
+		if err := sendNFC(u, nfcCurves, payload); err != nil {
 			return err
 		}
 		delivered = true
 	}
 	if !delivered {
-		if _, err := io.WriteString(stdout, text); err != nil {
+		if _, err := io.WriteString(stdout, src); err != nil {
 			return err
 		}
+		u.printf("  %s\n", u.dim(fmt.Sprintf("markdown source; the rendered payload is %d bytes (-o file, -nfc to engrave)", len(payload))))
 	}
 	return nil
-}
-
-// instructionsText is the plate-2 text of the backup howto, filled in
-// with the key's fingerprint prefix. 23 columns by 14 rows; the
-// firmware's anchored fit engraves it at 5mm (26x15), the largest
-// size that holds it, exactly as the howto promises.
-func instructionsText(fpHex string) string {
-	return strings.Join([]string{
-		"SH2 BOOTKEY RESTORE",
-		"24 BIP39 WORDS ARE THE",
-		"secp256k1 PRIVATE KEY",
-		"NOT A WALLET SEED",
-		"NO BIP32, NO PASSPHRASE",
-		"1 WORDS -> 264 BITS",
-		"2 DROP LAST 8 = CKSUM",
-		"3 THE 32 BYTES ARE THE",
-		"  PRIVATE SCALAR",
-		"4 WRAP AS SEC1 EC PEM",
-		"CHECK SHA256 PUBKEY XY",
-		"STARTS " + fpHex[:16],
-		"MUST MATCH OTP BOOTKEY",
-		"SIGNING: SEE REPO DOCS",
-	}, "\n") + "\n"
 }
 
 // writeSecretFile creates a 0600 file that must not already exist.

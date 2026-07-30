@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -25,6 +24,9 @@ const (
 	// nfcPlate validates the payload against the text-plate grid and
 	// reports the engraving size before writing.
 	nfcPlate
+	// nfcCurves carries a ready binary curves payload as-is; the
+	// firmware plans and previews it before anything engraves.
+	nfcCurves
 )
 
 // pythonForNFC picks the interpreter for write-nfc.py: the installer's
@@ -47,8 +49,11 @@ func sendNFC(u *ui, mode nfcMode, payload []byte) error {
 		return err
 	}
 	args := []string{script}
-	if mode == nfcRaw {
+	switch mode {
+	case nfcRaw:
 		args = append(args, "--raw")
+	case nfcCurves:
+		args = append(args, "--curves")
 	}
 	args = append(args, "-")
 	cmd := exec.Command(pythonForNFC(), args...)
@@ -66,29 +71,12 @@ func sendNFC(u *ui, mode nfcMode, payload []byte) error {
 	return nil
 }
 
-// findWriteNFC locates cmd/textplate/write-nfc.py: from the module
-// checkout the working directory is in, else relative to this source
-// file, which covers `go run seedhammer.com/cmd/sh2key` from anywhere
-// on the machine that built it.
+// findWriteNFC locates cmd/textplate/write-nfc.py in the checkout
+// that findModuleRoot names.
 func findWriteNFC() (string, error) {
-	const rel = "cmd/textplate/write-nfc.py"
-	if dir, err := os.Getwd(); err == nil {
-		for {
-			if isSeedhammerModule(dir) {
-				p := filepath.Join(dir, rel)
-				if _, err := os.Stat(p); err == nil {
-					return p, nil
-				}
-			}
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
-		}
-	}
-	if _, src, _, ok := runtime.Caller(0); ok {
-		p := filepath.Join(filepath.Dir(src), "..", "..", "cmd", "textplate", "write-nfc.py")
+	root, err := findModuleRoot()
+	if err == nil {
+		p := filepath.Join(root, "cmd", "textplate", "write-nfc.py")
 		if _, err := os.Stat(p); err == nil {
 			return p, nil
 		}

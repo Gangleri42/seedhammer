@@ -62,8 +62,12 @@ func (b *backupScreen) handle(ev keyEvent) navAction {
 		}
 	case ev.kind == keyChar && ev.ch == 'i':
 		u := a.paneUI(b.pane)
-		u.printf("sending the instructions plate (engraves at 5mm; waits up to 30s)\n")
-		if err := sendNFC(u, nfcPlate, []byte(instructionsText(fingerprintHex(a.priv)))); err != nil {
+		u.printf("sending the instructions plate (rich text at %gmm; waits up to 30s)\n", instructionsBodyMM)
+		payload, err := instructionsPayload(instructionsMarkdown(fingerprintHex(a.priv)))
+		if err == nil {
+			err = sendNFC(u, nfcCurves, payload)
+		}
+		if err != nil {
 			u.printf("%s\n", u.bad(firstLine(err.Error())))
 		} else {
 			u.printf("%s instructions delivered\n", u.tick())

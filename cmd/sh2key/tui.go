@@ -148,9 +148,12 @@ type tuiApp struct {
 	keyErr   error
 	pico     *pico
 	picoErr  error
-	board    *otpBoard
-	boardErr error
-	records  *recordFile
+	// buildGate is buildGateReason() from startup: why the build
+	// action is disabled, empty when it can run.
+	buildGate string
+	board     *otpBoard
+	boardErr  error
+	records   *recordFile
 }
 
 func runTUI(keyFlag string) error {
@@ -173,6 +176,7 @@ func runTUI(keyFlag string) error {
 	defer leave()
 	app.reloadKey()
 	app.loadPicotool()
+	app.buildGate = buildGateReason()
 	app.push(newHomeScreen(app))
 	// Scan on arrival: the board panel is the reason to open the tool,
 	// and an empty one asking to be filled in is a step for nothing.

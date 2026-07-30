@@ -116,10 +116,11 @@ func TestHomeScreenStates(t *testing.T) {
 	if !strings.Contains(frame, "not scanned") {
 		t.Error("home does not show the unscanned board state")
 	}
-	// Signing and flashing lead the list.
+	// Build leads the list; signing and flashing follow.
 	acts := h.actions()
-	if acts[0].label != "Sign firmware" || acts[1].label != "Flash firmware" {
-		t.Errorf("first actions = %q, %q", acts[0].label, acts[1].label)
+	if acts[0].label != "Build firmware from this checkout" ||
+		acts[1].label != "Sign firmware" || acts[2].label != "Flash firmware" {
+		t.Errorf("first actions = %q, %q, %q", acts[0].label, acts[1].label, acts[2].label)
 	}
 	// Signing needs no device, so picotool's absence must not gate it;
 	// everything that talks to a board must be gated.
@@ -147,11 +148,17 @@ func TestHomeScreenStates(t *testing.T) {
 	if !strings.Contains(joined, "Mint a boot key|Restore key from 24 words") {
 		t.Errorf("keyless actions = %v", labels)
 	}
-	if acts[0].disabled == "" {
+	if acts[1].disabled == "" {
 		t.Error("signing offered without a key")
 	}
-	// Navigation skips disabled rows: from a disabled Sign, down lands
-	// on the first enabled entry after it.
+	// A gated build stays visible with its reason, and navigation
+	// skips disabled rows: from a disabled first row, down lands on
+	// the first enabled entry after it.
+	a.buildGate = "nix missing: install from nixos.org"
+	acts = h.actions()
+	if acts[0].disabled == "" {
+		t.Error("build offered without nix")
+	}
 	h.cursor = 0
 	h.handle(keyEvent{kind: keyDown})
 	if acts[h.cursor].disabled != "" {

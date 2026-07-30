@@ -52,9 +52,18 @@ func (h *homeScreen) actions() []homeAction {
 		signGate = "needs a key: mint or restore first"
 	}
 
-	// Signing and flashing lead: they are the everyday pair, and the
-	// rest of the ceremony is rarer than either.
+	// A fresh checkout starts at the top: build, then the everyday
+	// pair, sign and flash; the rest of the ceremony is rarer.
 	out = append(out,
+		homeAction{
+			label:    "Build firmware from this checkout",
+			detail:   "nix run .#build-firmware; unsigned, lands here",
+			disabled: a.buildGate,
+			run: func() navAction {
+				a.suspend(func() error { return runBuild(newUI(os.Stdout)) })
+				return nil
+			},
+		},
 		homeAction{
 			label:    "Sign firmware",
 			detail:   "picosign flow in-process; the input survives",

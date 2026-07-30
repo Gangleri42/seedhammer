@@ -69,6 +69,8 @@ func run(stdout io.Writer, stdin io.Reader, args []string) error {
 		return cmdStatus(stdout, args)
 	case "setup-udev":
 		return cmdSetupUdev(stdout, args)
+	case "build":
+		return cmdBuild(stdout, args)
 	case "sign":
 		return cmdSign(stdout, args)
 	case "flash":
@@ -101,8 +103,9 @@ Back up the boot key. No device, no fuse writes:
   nsec <key.pem>       the key as a Nostr identity (nsec1 and npub1)
   mint                 mint a new boot key, nothing else
 
-Provision a board and sign firmware. Needs picotool for device steps:
+Build, provision and sign firmware. Device steps need picotool:
 
+  build                firmware from this checkout's tip, via the nix flake
   status               classify the attached board, write nothing
   setup-udev           one-time Linux USB access for picotool; sudo, shown first
   sign [uf2]           sign a firmware image; no device involved

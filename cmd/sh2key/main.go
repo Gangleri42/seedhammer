@@ -34,7 +34,23 @@ func main() {
 }
 
 func run(stdout io.Writer, stdin io.Reader, args []string) error {
-	if len(args) == 0 {
+	if len(args) == 0 || args[0][0] == '-' {
+		// Bare invocation (with at most -key) opens the interactive
+		// tool on a terminal; scripts and pipes get the usage. The
+		// key often lives outside the checkout.
+		fs := newFlagSet("sh2key", "[-key file]")
+		keyFlag := fs.String("key", "", "key `file` for the interactive tool")
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+		if fs.NArg() > 0 {
+			return fmt.Errorf("put the command first: sh2key %s [flags]", fs.Arg(0))
+		}
+		if fout, ok := stdout.(*os.File); ok && isTerminal(fout) {
+			if fin, ok := stdin.(*os.File); ok && isTerminal(fin) {
+				return runTUI(*keyFlag)
+			}
+		}
 		usage(stdout)
 		return errors.New("missing command")
 	}
@@ -70,7 +86,11 @@ func run(stdout io.Writer, stdin io.Reader, args []string) error {
 }
 
 func usage(w io.Writer) {
-	io.WriteString(w, `usage: sh2key <command> [flags]
+	io.WriteString(w, `usage: sh2key [command] [flags]
+
+Run bare on a terminal, sh2key opens its interactive tool: key and
+board panels, guided backup, restore, signing and the board ceremony.
+The commands below are the scripting face of the same verbs.
 
 Back up the boot key. No device, no fuse writes:
 

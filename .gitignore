@@ -2,4 +2,6 @@ seedhammerii-*.uf2
 _artifacts
 __pycache__/
 /svgplate
+/sh2key
+sh2key.json
 .wiki/

@@ -115,39 +115,57 @@ Then follow the on-screen flow and engrave.
 
 ## Step 5: Engrave plate 2, the instructions
 
-Plate 2 is a text plate. It carries no secret, so unlike plate 1 it is safe to
-generate, store and re-send at any time.
+Plate 2 carries no secret, so unlike plate 1 it is safe to generate, store
+and re-send at any time. It engraves as a rich-text document: a title,
+numbered steps, and your fingerprint prefix on its own header line,
+grouped for transcription.
 
 ```sh
-go run seedhammer.com/cmd/sh2key backup my-key.pem -instructions -o restore.txt
-python3 cmd/textplate/write-nfc.py restore.txt
+go run seedhammer.com/cmd/sh2key backup my-key.pem -instructions -nfc
 ```
 
-`write-nfc.py` validates the text against the plate grid and reports the size
-before writing; the machine then confirms the same layout on screen.
+or produce the payload once and send it later:
 
-The generated text fits a single plate at 5mm, the largest size the machine offers
-that holds it. It reads:
-
-```
-SH2 BOOTKEY RESTORE
-24 BIP39 WORDS ARE THE
-secp256k1 PRIVATE KEY
-NOT A WALLET SEED
-NO BIP32, NO PASSPHRASE
-1 WORDS -> 264 BITS
-2 DROP LAST 8 = CKSUM
-3 THE 32 BYTES ARE THE
-  PRIVATE SCALAR
-4 WRAP AS SEC1 EC PEM
-CHECK SHA256 PUBKEY XY
-STARTS <first 16 hex>
-MUST MATCH OTP BOOTKEY
-SIGNING: SEE REPO DOCS
+```sh
+go run seedhammer.com/cmd/sh2key backup my-key.pem -instructions -o restore.curves
+python3 cmd/textplate/write-nfc.py --curves restore.curves
 ```
 
-The fingerprint line is filled in from your own key. It deliberately names no signing
-command: tools change, steel does not, and the repo docs stay current.
+The document is validated against the machine's own caps before anything is
+sent, and the machine previews the exact plate before engraving. The source
+it renders (bare `-instructions` prints it):
+
+```
+## SH2 BOOT KEY RESTORE
+
+The 24 words on the words plate are a
+secp256k1 private key, encoded as BIP39.
+_Not a wallet seed:_ no BIP32 derivation,
+no passphrase, no seed generation.
+
+## Decode
+
+1. 24 words decode to 264 bits.
+2. Drop the last 8 bits, the checksum.
+3. The remaining 32 bytes are the scalar.
+4. Wrap it as a SEC1 EC private key PEM.
+
+## Verify
+
+SHA-256 of the public key, 64 bytes
+X then Y, must begin with
+
+## 6183 a9ce b053 54a6
+and match the boot key hash in the
+board's OTP.
+```
+
+Body text engraves at 3mm; the title, sections and fingerprint header
+at 4.5mm. The fingerprint is filled in from your own
+key, and `-verify` accepts its grouped spacing verbatim. The plate
+deliberately names no signing command and no project: tools change, steel
+does not, and stripped of any pointer the document restores any secp256k1
+key kept as 24 words, not only this boot key.
 
 ## Step 6: Verify the plates, not the files
 

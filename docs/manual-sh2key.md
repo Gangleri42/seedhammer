@@ -30,8 +30,10 @@ The paper commands (backup, restore, nsec, mint) need nothing else.
 The device commands (status, flash, provision, enable-secure-boot)
 need `picotool` 2.0 or later: the installer pins one, and `nix
 develop` provides one in this repo's shell; `sign` needs no device and
-no picotool. Sending plates to the machine (`-nfc`, or the engrave
-keys in the tool) runs `cmd/textplate/write-nfc.py`, which needs
+no picotool. `build` wraps `nix run .#build-firmware`, so it is the
+one command that needs nix itself. Sending plates to the machine
+(`-nfc`, or the engrave keys in the tool) runs
+`cmd/textplate/write-nfc.py`, which needs
 `python3` with `nfcpy` and `ndeflib` and a USB NFC reader. The
 installer creates that stack in `~/.nfc-venv`, and the tool prefers
 that venv's python by itself; nothing to activate.
@@ -55,8 +57,8 @@ stay visible with the reason they cannot.
 
 Keys everywhere: arrows move, `enter` selects, `esc` goes back (and
 quits from home), `q` quits, `ctrl-l` repaints. Digits pick list rows
-directly. Signing and flashing head the action list; the paper
-commands and the ceremony follow.
+directly. Build heads the action list, signing and flashing follow;
+the paper commands and the ceremony close it.
 
 Device steps run synchronously and picotool takes seconds: while one
 is running, the footer names it, and the transcript of the step builds
@@ -130,9 +132,12 @@ Prints the key as 24 BIP39 words. The words render to a terminal or
 an explicitly named sink only: with stdout redirected and no `-o` or
 `-nfc`, backup refuses, so a stray pipe or `tee` cannot capture the
 key. `-o` writes a 0600 file (never overwrites; `-` for stdout).
-`-instructions` emits the plate-2 restore text instead, public and
-freely overwritable, sized for a single 5mm plate. `-nfc` sends to
-the engraver: words as a seed payload, instructions as a text plate.
+`-instructions` emits the plate-2 restore document instead, public
+and freely overwritable: a rich-text curves payload (3mm body, the
+fingerprint grouped in fours at 4.5mm), validated against the
+machine's caps before it leaves the tool; bare invocation prints its
+markdown source. `-nfc` sends to the engraver: words as a seed
+payload, instructions as the curves plate.
 
 ### restore
 
@@ -183,6 +188,17 @@ backup is engraved by the machine, and the machine engraves only once
 it boots firmware this key signed. Fuse and flash first; the
 post-provision summary names the backup command the moment it is
 actually possible.
+
+### build
+
+    sh2key build
+
+Firmware from this checkout at its current tip, uncommitted changes
+included, by running the flake's `build-firmware`: the pinned
+toolchain stays in flake.nix, and this is the one command that needs
+nix. The output is `seedhammerii-<git describe>.uf2` in the checkout
+root, unsigned, exactly where `sign`, `flash` and `provision` look
+for it.
 
 ### status
 
@@ -295,6 +311,7 @@ slots.
 | --- | --- | --- |
 | `sh2-bootkey.pem` (or `my-key.pem`, or `-key`) | the private key, SEC1 PEM byte-identical to `openssl ecparam -genkey` | 0600, never clobbered |
 | `sh2key.json` | provisioning record next to the key: chip id, slot, population, timestamps; no secrets | rewritten each ceremony |
+| restore payload (`-instructions -o`) | the plate-2 document as a rich-text curves payload; public, regenerable | overwritten freely |
 | `<input>.signed.uf2` | signed firmware copy | overwritten freely |
 | OTP JSON for `picotool otp load` | one temp directory per run | never next to the key |
 

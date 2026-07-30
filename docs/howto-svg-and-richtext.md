@@ -57,6 +57,12 @@ curl -s http://127.0.0.1:8787/bridge/send \
   -d "{\"payloadB64\":\"$(base64 -w0 logo.curves)\"}"
 ```
 
+or skip the bridge and write it straight from the reader (venv active):
+
+```sh
+python3 cmd/textplate/write-nfc.py --curves logo.curves
+```
+
 ## The rich-text subset
 
 Markdown, deliberately small: five header levels (`#` through `#####`),

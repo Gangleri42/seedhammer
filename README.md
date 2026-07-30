@@ -77,12 +77,13 @@ serpentine to cut empty travel.
 [`cmd/sh2key`](cmd/sh2key) is one tool for the whole boot-key story.
 Run it bare and it opens a full-screen interactive app: your key and
 the attached board's fused OTP state on one screen, scanned on
-arrival, with signing and flashing a keystroke away. The same verbs
-exist as plain subcommands for scripts and the how-tos.
+arrival, with building, signing and flashing a keystroke away. The
+same verbs exist as plain subcommands for scripts and the how-tos.
 
-It mints and stores a signing key, classifies a board from its OTP
-alone, fuses a boot-key slot and marks it valid, signs firmware
-in-process (no openssl, no `xxd`) and flashes it. The flash list only
+It builds firmware from your checkout through the nix flake, mints
+and stores a signing key, classifies a board from its OTP alone,
+fuses a boot-key slot and marks it valid, signs firmware in-process
+(no openssl, no `xxd`) and flashes it. The flash list only
 offers images the board's own keys accept, so a rejected image cannot
 be written by accident. Every irreversible write sits behind a
 readback-verified gate and typed consent, and every fuse it can burn

@@ -103,6 +103,35 @@ func ClosestWord(word string) (Word, bool) {
 	return Word(i), strings.HasPrefix(match, word)
 }
 
+// Matches returns the first word that frag is a prefix of and the count
+// of consecutive words sharing that prefix. n is 0 when no word starts
+// with frag; the empty fragment matches every word.
+func Matches(frag string) (first Word, n int) {
+	w, valid := ClosestWord(frag)
+	if !valid {
+		return -1, 0
+	}
+	first = w
+	for ; w < NumWords; w++ {
+		if !strings.HasPrefix(LabelFor(w), frag) {
+			break
+		}
+		n++
+	}
+	return first, n
+}
+
+// Complete reports the word frag completes to: the sole word matching
+// frag as a prefix, or the word frag spells out exactly. The boolean is
+// false when frag is ambiguous or matches nothing.
+func Complete(frag string) (Word, bool) {
+	first, n := Matches(frag)
+	if n == 0 {
+		return -1, false
+	}
+	return first, n == 1 || frag == LabelFor(first)
+}
+
 // Valid reports whether the mnemonic checksum is correct.
 func (m Mnemonic) Valid() bool {
 	// Panics in splitMnemonic.

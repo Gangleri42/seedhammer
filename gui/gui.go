@@ -790,12 +790,11 @@ func inputWordsFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, selected 
 		return widget.Labelf(buf, style, th.Background, "%2d: %s", n, word)
 	}
 	_, longest := layoutWord(nil, 24, widestWord)
-	var nvalid int
 	for !ctx.Done {
 		for kbd.Update(ctx) {
-			nvalid = updateValidBIP39Keys(kbd.Fragment, kbd.allKeys)
+			updateValidBIP39Keys(kbd.Fragment, kbd.allKeys)
 			wordLabel = kbd.Fragment
-			if completedWord, complete := completeBIP39Word(wordLabel, nvalid); complete {
+			if completedWord, complete := bip39.Complete(wordLabel); complete {
 				wordLabel = bip39.LabelFor(completedWord)
 			}
 		}
@@ -803,13 +802,13 @@ func inputWordsFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, selected 
 			return
 		}
 		for okBtn.Clicked(ctx) {
-			w, complete := completeBIP39Word(kbd.Fragment, nvalid)
+			w, complete := bip39.Complete(kbd.Fragment)
 			if !complete {
 				continue
 			}
 			kbd.Clear()
 			wordLabel = ""
-			nvalid = updateValidBIP39Keys("", kbd.allKeys)
+			updateValidBIP39Keys("", kbd.allKeys)
 			mnemonic[selected] = w
 			for {
 				selected++
@@ -846,7 +845,7 @@ func inputWordsFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, selected 
 		).Offset(top.Center(longest))
 
 		nav, _ := layoutNavigation(&ctx.B, th, dims, []NavButton{{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack}}...)
-		if _, complete := completeBIP39Word(kbd.Fragment, nvalid); complete {
+		if _, complete := bip39.Complete(kbd.Fragment); complete {
 			nav2, _ := layoutNavigation(&ctx.B, th, dims, []NavButton{{Clickable: okBtn, Style: StylePrimary, Icon: assets.IconCheckmark}}...)
 			nav = op.Layer(
 				nav,
@@ -1101,36 +1100,20 @@ func completeSLIP39Word(frag string, nvalid int) (slip39words.Word, bool) {
 	return w, nvalid == 1 || frag == slip39words.LabelFor(w)
 }
 
-func completeBIP39Word(frag string, nvalid int) (bip39.Word, bool) {
-	w, ok := bip39.ClosestWord(frag)
-	if !ok {
-		return -1, false
-	}
-	// The word is complete if it's in the word list or is the only option.
-	return w, nvalid == 1 || frag == bip39.LabelFor(w)
-}
-
 func updateValidBIP39Keys(frag string, keys []keyboardKey) int {
-	mask := ^uint32(0)
-	w, valid := bip39.ClosestWord(frag)
-	if !valid {
+	first, nvalid := bip39.Matches(frag)
+	if nvalid == 0 {
 		panic("invalid fragment")
 	}
-	nvalid := 0
-	for ; w < bip39.NumWords; w++ {
-		bip39w := bip39.LabelFor(w)
-		if !strings.HasPrefix(bip39w, frag) {
-			break
+	mask := ^uint32(0)
+	if nvalid > 1 {
+		for w := first; w < first+bip39.Word(nvalid); w++ {
+			suffix := bip39.LabelFor(w)[len(frag):]
+			if len(suffix) > 0 {
+				idx := unicode.ToLower(rune(suffix[0])) - 'a'
+				mask &^= 1 << idx
+			}
 		}
-		nvalid++
-		suffix := bip39w[len(frag):]
-		if len(suffix) > 0 {
-			idx := unicode.ToLower(rune(suffix[0])) - 'a'
-			mask &^= 1 << idx
-		}
-	}
-	if nvalid == 1 {
-		mask = ^uint32(0)
 	}
 	updateValidKeys(mask, keys)
 	return nvalid

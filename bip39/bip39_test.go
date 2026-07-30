@@ -234,3 +234,53 @@ loop:
 		}
 	}
 }
+
+func TestMatches(t *testing.T) {
+	// The empty fragment matches the whole list; callers redraw before
+	// the first keystroke.
+	if first, n := Matches(""); first != 0 || n != int(NumWords) {
+		t.Errorf("Matches(\"\") = %v, %d, want 0, %d", first, n, NumWords)
+	}
+	if w, complete := Complete(""); complete {
+		t.Errorf("Complete(\"\") reported complete word %v", w)
+	}
+	if _, n := Matches("XYZZY"); n != 0 {
+		t.Errorf("Matches(\"XYZZY\") = %d matches, want 0", n)
+	}
+	// Every fragment of every word agrees with a brute-force scan.
+	for w := Word(0); w < NumWords; w++ {
+		label := LabelFor(w)
+		for l := 1; l <= len(label); l++ {
+			frag := label[:l]
+			var wantFirst Word = -1
+			wantN := 0
+			for v := Word(0); v < NumWords; v++ {
+				if strings.HasPrefix(LabelFor(v), frag) {
+					if wantN == 0 {
+						wantFirst = v
+					}
+					wantN++
+				}
+			}
+			first, n := Matches(frag)
+			if first != wantFirst || n != wantN {
+				t.Fatalf("Matches(%q) = %v, %d, want %v, %d", frag, first, n, wantFirst, wantN)
+			}
+			cw, complete := Complete(frag)
+			wantComplete := wantN == 1 || frag == LabelFor(wantFirst)
+			if complete != wantComplete || cw != wantFirst {
+				t.Fatalf("Complete(%q) = %v, %v, want %v, %v", frag, cw, complete, wantFirst, wantComplete)
+			}
+		}
+	}
+	// BIP39 words are unique in their first four letters.
+	for w := Word(0); w < NumWords; w++ {
+		label := LabelFor(w)
+		if len(label) < 4 {
+			continue
+		}
+		if _, n := Matches(label[:4]); n != 1 {
+			t.Errorf("prefix %q matches %d words, want 1", label[:4], n)
+		}
+	}
+}

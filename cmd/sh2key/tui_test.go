@@ -105,7 +105,7 @@ func TestHomeScreenStates(t *testing.T) {
 	}
 	defer devnull.Close()
 	priv, _ := loadFixture(t)
-	a := &tuiApp{tty: devnull, u: newUI(devnull), keyPath: fixturePEM, priv: priv,
+	a := &tuiApp{tty: devnull, u: newUI(devnull), keyPath: fixtureKeyName, priv: priv,
 		picoErr: errStr("picotool not found")}
 	h := newHomeScreen(a)
 
@@ -187,7 +187,7 @@ func TestRestoreScreenFlow(t *testing.T) {
 	}
 	defer devnull.Close()
 	priv, _ := loadFixture(t)
-	a := &tuiApp{tty: devnull, u: newUI(devnull), keyPath: fixturePEM, priv: priv}
+	a := &tuiApp{tty: devnull, u: newUI(devnull), keyPath: fixtureKeyName, priv: priv}
 	a.stack = []screen{&messageScreen{app: a, name: "t"}}
 	r := newRestoreScreen(a)
 	for _, w := range mnemonicFromKey(priv) {
@@ -206,7 +206,7 @@ func TestRestoreScreenFlow(t *testing.T) {
 		t.Fatal("restore screen did not reproduce the key")
 	}
 	frame := strings.Join(r.render(100, 40), "\n")
-	if !strings.Contains(frame, "byte-identical to "+fixturePEM) {
+	if !strings.Contains(frame, "byte-identical to "+fixtureKeyName) {
 		t.Errorf("result frame lacks the identity verdict:\n%s", frame)
 	}
 }
@@ -267,7 +267,7 @@ func TestHomeOffersUdevSetup(t *testing.T) {
 	}
 	defer devnull.Close()
 	priv, _ := loadFixture(t)
-	a := &tuiApp{tty: devnull, u: newUI(devnull), keyPath: fixturePEM, priv: priv}
+	a := &tuiApp{tty: devnull, u: newUI(devnull), keyPath: fixtureKeyName, priv: priv}
 	a.boardErr = fmt.Errorf("%w; USB permission problem: run 'sh2key setup-udev'", errNoUSBAccess)
 	h := newHomeScreen(a)
 	frame := strings.Join(h.render(100, 40), "\n")

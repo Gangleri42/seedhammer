@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"io"
 	"os"
@@ -18,27 +19,68 @@ import (
 	"seedhammer.com/seedqr"
 )
 
-// The committed fixture is a throwaway test key. Its words and
-// fingerprint were derived outside this package: the fingerprint via
-// openssl (pubout -conv_form uncompressed | tail -c 64 | sha256sum),
-// the words via a python reimplementation over bip39/wordlist.txt.
+// The test vector is the synthetic scalar 01 02 .. 20, chosen so it
+// cannot be mistaken for a generated key. fixtureDERHex is openssl's
+// canonical SEC1 encoding of that scalar, recorded here rather than
+// produced by this package: it pins field order, the curve OID, the
+// embedded public point and the fixed-width scalar, which is where an
+// encoder bug would show. The PEM armor around it is RFC 7468 and both
+// encoders agree on it, so the fixture is assembled from the DER and no
+// key file, nor a private-key banner, lives in the tree.
+//
+// Words come from a python reimplementation over bip39/wordlist.txt,
+// the fingerprint from openssl:
+//
+//	openssl ec -in k.pem -pubout -conv_form uncompressed -outform DER |
+//	    tail -c 64 | sha256sum
 const (
-	fixturePEM         = "testdata/testkey.pem"
-	fixtureWords       = "glory salmon copy option learn above satisfy palace drive camera document off toe cupboard report moon raw merge kangaroo scorpion uphold grunt hint prison"
-	fixtureFingerprint = "5e2370fcd36b64c11c1ae8e7ec394c67b312af7532a3bd8748f4e66da51be518"
+	// fixtureKeyName is the path the screens display; no such file
+	// needs to exist for a rendering test.
+	fixtureKeyName     = "testkey.pem"
+	fixtureScalarHex   = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	fixtureWords       = "absurd avoid scissors anxiety gather lottery category door army half long cage bachelor another expect people blade school educate curtain scrub monitor lady beyond"
+	fixtureFingerprint = "6183a9ceb05354a69c31fdcfa1ab5982bb89136dbd7259bebea0919b548bd6a8"
+	fixtureDERHex      = "307402010104200102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20" +
+		"a00706052b8104000aa1440342000484bf7562262bbd6940085748f3be6afa52ae317155181ece31b6" +
+		"6351ccffa4b08cc43d63b2859d469fee15f31c9edb5324266e6fd0407e87382d60fc4511acd8"
 )
 
-func loadFixture(t *testing.T) (*secp256k1.PrivateKey, []byte) {
+// fixturePEM assembles the vector's PEM from openssl's recorded DER.
+func fixturePEM(t *testing.T) []byte {
 	t.Helper()
-	pemBytes, err := os.ReadFile(fixturePEM)
+	der, err := hex.DecodeString(fixtureDERHex)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+}
+
+func loadFixture(t *testing.T) (*secp256k1.PrivateKey, []byte) {
+	t.Helper()
+	pemBytes := fixturePEM(t)
 	priv, err := parseKeyPEM(pemBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
+	scalar, err := hex.DecodeString(fixtureScalarHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(priv.Serialize(), scalar) {
+		t.Fatalf("the recorded DER does not hold the test scalar")
+	}
 	return priv, pemBytes
+}
+
+// fixtureKeyFile writes the vector to a temporary file for the
+// commands that take a key path.
+func fixtureKeyFile(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), fixtureKeyName)
+	if err := os.WriteFile(path, fixturePEM(t), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestFixtureVector(t *testing.T) {
@@ -351,7 +393,8 @@ func TestRestoreAcceptsUniquePrefixes(t *testing.T) {
 }
 
 func TestRestoreRejectsAmbiguousPrefix(t *testing.T) {
-	words := strings.Replace(fixtureWords, "glory", "glo", 1)
+	// "mon" fits monitor, monkey, monster and month.
+	words := strings.Replace(fixtureWords, "monitor", "mon", 1)
 	var out bytes.Buffer
 	err := run(&out, strings.NewReader(words), []string{"restore", "-o", "-"})
 	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
@@ -489,7 +532,7 @@ func TestWriteKeyPEMFileNeverClobbers(t *testing.T) {
 
 func TestBackupRefusesPipes(t *testing.T) {
 	var out bytes.Buffer
-	err := run(&out, nil, []string{"backup", fixturePEM})
+	err := run(&out, nil, []string{"backup", fixtureKeyFile(t)})
 	if err == nil || !strings.Contains(err.Error(), "terminal") {
 		t.Fatalf("backup to a pipe: %v", err)
 	}
@@ -500,7 +543,7 @@ func TestBackupRefusesPipes(t *testing.T) {
 
 func TestBackupExplicitStdout(t *testing.T) {
 	var out bytes.Buffer
-	if err := run(&out, nil, []string{"backup", fixturePEM, "-o", "-"}); err != nil {
+	if err := run(&out, nil, []string{"backup", fixtureKeyFile(t), "-o", "-"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.TrimSpace(out.String()); got != fixtureWords {
@@ -510,7 +553,7 @@ func TestBackupExplicitStdout(t *testing.T) {
 
 func TestBackupInstructionsToStdout(t *testing.T) {
 	var out bytes.Buffer
-	if err := run(&out, nil, []string{"backup", fixturePEM, "-instructions"}); err != nil {
+	if err := run(&out, nil, []string{"backup", fixtureKeyFile(t), "-instructions"}); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != instructionsText(fixtureFingerprint) {
@@ -521,8 +564,9 @@ func TestBackupInstructionsToStdout(t *testing.T) {
 func TestBackupWordsFileRoundTrip(t *testing.T) {
 	_, pemBytes := loadFixture(t)
 	dir := t.TempDir()
+	keyFile := fixtureKeyFile(t)
 	wordsFile := filepath.Join(dir, "words.txt")
-	if err := run(io.Discard, nil, []string{"backup", fixturePEM, "-o", wordsFile}); err != nil {
+	if err := run(io.Discard, nil, []string{"backup", keyFile, "-o", wordsFile}); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(wordsFile)
@@ -540,7 +584,7 @@ func TestBackupWordsFileRoundTrip(t *testing.T) {
 	if !bytes.Equal(out.Bytes(), pemBytes) {
 		t.Fatal("words file does not restore the fixture")
 	}
-	if err := run(io.Discard, nil, []string{"backup", fixturePEM, "-o", wordsFile}); err == nil {
+	if err := run(io.Discard, nil, []string{"backup", keyFile, "-o", wordsFile}); err == nil {
 		t.Fatal("backup overwrote an existing words file")
 	}
 }
@@ -566,7 +610,7 @@ func TestNsecMatchesKey(t *testing.T) {
 		t.Fatal("npub is not the x-only public key")
 	}
 	// And the command refuses to print the nsec into a pipe.
-	err = run(&bytes.Buffer{}, nil, []string{"nsec", fixturePEM})
+	err = run(&bytes.Buffer{}, nil, []string{"nsec", fixtureKeyFile(t)})
 	if err == nil || !strings.Contains(err.Error(), "terminal") {
 		t.Fatalf("nsec to a pipe: %v", err)
 	}

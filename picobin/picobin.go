@@ -22,6 +22,10 @@ type Image struct {
 	hashDefOffset    uint32
 	hashValueOffset  uint32
 	SignatureOffset  uint32
+	// NumBlocks counts the blocks in the image's block loop. A signed
+	// SeedHammer image has exactly two; a third block is the symptom of
+	// sealing an already-sealed image, which the boot ROM rejects.
+	NumBlocks int
 }
 
 type itemHeader struct {
@@ -272,6 +276,7 @@ func read(data io.ReadSeeker) (*Image, error) {
 		}
 		idx = hidx
 	}
+	img.NumBlocks = nblocks
 	return img, img.r.err
 }
 

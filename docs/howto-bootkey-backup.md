@@ -13,6 +13,10 @@ no support path. The file is the whole story.
 - Your key, `my-key.pem`, minted in the signing how-to.
 - A SeedHammer II and blank plates.
 - The repo checkout and Go.
+- For the NFC steps (4 and 5), the nfcpy stack: `./install.sh send`
+  sets it up in `~/.nfc-venv`. `sh2key` finds the venv by itself;
+  step 5's direct `python3` call needs it activated first
+  (`. ~/.nfc-venv/bin/activate`).
 - Somewhere private. Words go on a screen during this.
 
 ## Why words rather than hex

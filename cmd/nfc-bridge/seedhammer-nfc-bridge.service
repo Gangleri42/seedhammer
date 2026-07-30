@@ -5,6 +5,8 @@
 #   loginctl enable-linger "$USER"          # run at boot without a login session
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now seedhammer-nfc-bridge
+# Or let ../../install.sh send write an equivalent unit with absolute
+# paths and the SH_BRIDGE_ORIGINS allow-list.
 [Unit]
 Description=SeedHammer NFC bridge (local USB reader -> web editor)
 After=network.target

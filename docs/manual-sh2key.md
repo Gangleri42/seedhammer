@@ -22,19 +22,25 @@ go run seedhammer.com/cmd/sh2key            # the interactive tool
 go run seedhammer.com/cmd/sh2key <command>  # the scripting face
 ```
 
+`./install.sh send` at the repo root builds the tool as `./sh2key` and
+sets up everything below in one pass; the `go run` form always works
+without it.
+
 The paper commands (backup, restore, nsec, mint) need nothing else.
 The device commands (status, flash, provision, enable-secure-boot)
-need `picotool` 2.0 or later, which `nix develop` provides in this
-repo's shell; `sign` needs no device and no picotool. Sending plates
-to the machine (`-nfc`, or the engrave keys in the tool) runs
-`cmd/textplate/write-nfc.py`, which needs `python3` with `nfcpy` and
-`ndeflib` and a USB NFC reader.
+need `picotool` 2.0 or later: the installer pins one, and `nix
+develop` provides one in this repo's shell; `sign` needs no device and
+no picotool. Sending plates to the machine (`-nfc`, or the engrave
+keys in the tool) runs `cmd/textplate/write-nfc.py`, which needs
+`python3` with `nfcpy` and `ndeflib` and a USB NFC reader. The
+installer creates that stack in `~/.nfc-venv`, and the tool prefers
+that venv's python by itself; nothing to activate.
 
 First run on Linux: `sh2key setup-udev`, once. It shows and installs
 the single udev rule that lets picotool open the board without sudo;
 the interactive tool offers the same install right on the board panel
-(`i`) when it detects the permission failure. That is the whole host
-setup.
+(`i`) when it detects the permission failure, and the installer offers
+it at the end of its run.
 
 ## The interactive tool
 
@@ -330,8 +336,11 @@ third-party board as genuine hardware.
 - **"parses as neither SeedQR nor CompactSeedQR"**: the payload is
   not one of the two formats; export the QR's raw content, not a
   screenshot.
-- **write-nfc.py fails**: `pip install nfcpy ndeflib`, plug the USB
-  reader, and hold the machine's antenna to it within 30 seconds.
+- **write-nfc.py fails**: no nfcpy stack. `./install.sh send` creates
+  it in `~/.nfc-venv` (the tool finds the venv by itself; a direct
+  `python3` call needs it activated), or `pip install nfcpy ndeflib`.
+  Plug the USB reader and hold the machine's antenna to it within
+  30 seconds.
 - **"sealed twice"**: the image went through `picotool seal` twice;
   rebuild it. `build-firmware` output and the `*-unsigned` edge asset
   are correct inputs.

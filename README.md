@@ -108,6 +108,30 @@ provision` runs the ceremony end to end
 [the how-to](docs/howto-bootkey-and-signing.md) walks the same steps by hand
 with `picotool`, leaving official firmware bootable alongside.
 
+## Host setup
+
+The desktop tooling installs in one pass. From the checkout, on Linux or
+macOS:
+
+```sh
+$ ./install.sh send
+```
+
+It builds `./sh2key` and `./svgplate`, creates `~/.nfc-venv` (the
+hash-pinned nfcpy stack the NFC senders use), installs the USB reader's
+udev rule, sets up the [NFC bridge](cmd/nfc-bridge) as a user service
+with the Studio origins allowed, and installs `picotool` for the
+boot-key ceremony (a pinned, checksummed build on Linux; brew on
+macOS). Root is asked per step, with the exact file and
+commands shown first.
+
+Every change lands in a manifest: reruns are no-ops,
+`./install.sh --verify` reports the full state without changing
+anything, and `./install.sh --uninstall` removes exactly what was
+installed, restoring anything it replaced. On Windows the script prints
+the WSL2 recipe and stops. `./install.sh dev` points firmware work at
+the nix flake instead of duplicating it.
+
 ## Installation
 
 Official releases install as upstream describes: hold the firmware upgrade

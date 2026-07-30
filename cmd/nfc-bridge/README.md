@@ -11,6 +11,15 @@ the CORS + Private Network Access headers a public HTTPS page needs to
 reach a loopback server. A plain GET to `http://127.0.0.1:8787/`
 redirects to the hosted app.
 
+## Install
+
+`../../install.sh send` at the repo root sets all of this up: the
+`~/.nfc-venv` python environment, the reader's udev rule, and the
+bridge as a user service that starts at boot, allow-listing the hosted
+Studio and the local serve at `http://localhost:8788`. The sections
+below are the by-hand path and the reference for what the installer
+does.
+
 ## Endpoints
 
 - `GET  /bridge/health` returns `{"ok":true,...}`; Studio probes it to
@@ -46,7 +55,11 @@ using the Python that has nfcpy installed. Then open
     systemctl --user enable --now seedhammer-nfc-bridge
 
 The unit assumes the venv at `~/.nfc-venv` and the checkout at
-`~/seedhammer`; edit the `ExecStart` paths if yours differ.
+`~/seedhammer`; edit the `ExecStart` paths if yours differ. The
+installer writes an equivalent unit with absolute paths and an
+`SH_BRIDGE_ORIGINS` line carrying the full allow-list (the variable
+replaces the built-in default, so every origin must be re-listed);
+this file stays the reference.
 
 Logs: `journalctl --user -u seedhammer-nfc-bridge -f` and the file named
 by `SH_BRIDGE_LOG` (default `~/.local/state/nfc-bridge.log`).

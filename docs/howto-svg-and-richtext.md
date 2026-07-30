@@ -11,13 +11,14 @@ preview.
 Draw on the canvas, place and edit text, import an SVG, or write markdown in
 the rich-text pane; the preview uses the same fonts and speed model the machine
 does (firmware code compiled to WebAssembly). Send writes over Web NFC on
-Android; on desktop, run the [NFC bridge](../cmd/nfc-bridge/README.md) and
-Send routes through it to a USB reader.
+Android; on desktop, the [NFC bridge](../cmd/nfc-bridge/README.md) routes
+Send to a USB reader (`./install.sh send` installs it as a user service).
 
 ## The CLI way: svgplate
 
 `cmd/svgplate` converts an SVG, or markdown with `-text`, into a validated
-payload:
+payload. `./install.sh send` builds it as `./svgplate` at the repo root;
+the `go run` form always works:
 
 ```sh
 go run seedhammer.com/cmd/svgplate logo.svg

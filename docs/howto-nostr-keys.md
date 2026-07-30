@@ -2,7 +2,8 @@
 
 The fork recognizes NIP-19 keys. Write an `npub1...` or `nsec1...` string to
 the machine as a plain NFC Text record (from a phone app, or
-`write-nfc.py --raw`) and it offers a key plate. For a key held as a PEM,
+`write-nfc.py --raw` with the [text-plate CLI setup](howto-text-plates.md))
+and it offers a key plate. For a key held as a PEM,
 `sh2key nsec <key.pem> -nfc` derives and sends the nsec directly; the
 tradeoffs of reusing the boot key as a Nostr identity are named in
 [the backup how-to](howto-bootkey-backup.md).

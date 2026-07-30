@@ -53,7 +53,10 @@ previews the grid, the wrap, and the size as you type, using glyph geometry
 generated from this repo's font. Send works over Web NFC on Android, or
 through the [desktop bridge](../cmd/nfc-bridge/README.md).
 
-**CLI.** With `nfcpy` and `ndeflib` installed and a USB reader attached:
+**CLI.** With a USB reader attached and the nfcpy stack available to
+`python3` (the repo installer creates it in `~/.nfc-venv`, so
+`. ~/.nfc-venv/bin/activate` first; or `pip install nfcpy ndeflib`
+yourself):
 
 ```sh
 python3 cmd/textplate/write-nfc.py plate.txt     # a file, or - for stdin

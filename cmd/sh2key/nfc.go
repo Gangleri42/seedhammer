@@ -27,6 +27,20 @@ const (
 	nfcPlate
 )
 
+// pythonForNFC picks the interpreter for write-nfc.py: the installer's
+// venv when it exists (that is where ./install.sh send pins the nfcpy
+// stack), else whatever python3 the PATH offers. Either way, nothing
+// needs activating.
+func pythonForNFC() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		venv := filepath.Join(home, ".nfc-venv", "bin", "python3")
+		if fi, err := os.Stat(venv); err == nil && !fi.IsDir() && fi.Mode().Perm()&0o111 != 0 {
+			return venv
+		}
+	}
+	return "python3"
+}
+
 func sendNFC(u *ui, mode nfcMode, payload []byte) error {
 	script, err := findWriteNFC()
 	if err != nil {
@@ -37,7 +51,7 @@ func sendNFC(u *ui, mode nfcMode, payload []byte) error {
 		args = append(args, "--raw")
 	}
 	args = append(args, "-")
-	cmd := exec.Command("python3", args...)
+	cmd := exec.Command(pythonForNFC(), args...)
 	cmd.Stdin = bytes.NewReader(payload)
 	// The script narrates ("hold a tag...") on stderr; route it where
 	// this ui renders, which is the pane inside the TUI.
@@ -45,9 +59,9 @@ func sendNFC(u *ui, mode nfcMode, payload []byte) error {
 	cmd.Stderr = u.w
 	if err := cmd.Run(); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
-			return errors.New("python3 not found; write-nfc.py needs python3 with nfcpy and ndeflib (pip install nfcpy ndeflib)")
+			return errors.New("python3 not found; './install.sh send' creates ~/.nfc-venv with the nfcpy stack, or install python3 with nfcpy and ndeflib")
 		}
-		return fmt.Errorf("write-nfc.py: %v (it needs a USB NFC reader and 'pip install nfcpy ndeflib')", err)
+		return fmt.Errorf("write-nfc.py: %v (it needs a USB NFC reader and the nfcpy stack; './install.sh send' provides the stack in ~/.nfc-venv)", err)
 	}
 	return nil
 }

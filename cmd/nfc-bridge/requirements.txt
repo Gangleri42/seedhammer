@@ -1,0 +1,16 @@
+# SeedHammer NFC stack, hash-pinned: the venv build is reproducible and tamper-evident.
+# Regenerate: pip download + pip hash; both wheel and sdist hashes are listed where published.
+nfcpy==1.0.4 \
+    --hash=sha256:c1f3ecdd9755f9af46e89a945ed490354d089d5b19422e307159e256ff8c1b3d \
+    --hash=sha256:e5bd08d0119e1d9e95d05215f838b07b44d03b651adddc523cc1a38892b8af6b
+ndeflib==0.3.3 \
+    --hash=sha256:c634b1af2ab454754f0fdbe1debd38247ed7bdaf94587359b857726f3ee7decb \
+    --hash=sha256:1d56828558b9b16f2822a4051824346347b66adf5320ea86070748b6f2454a88
+libusb1==3.4.0 \
+    --hash=sha256:e83d034e44c3efe1c4599c6281d34bca50a38c12cab3b7b6217d583161a01ffd \
+    --hash=sha256:9cf5638506d54f21bf36550d97ea63189111a23c4d8078f630103a2052135f45
+pyserial==3.5 \
+    --hash=sha256:c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0 \
+    --hash=sha256:3c77e014170dfffbd816e6ffc205e9842efb10be9f58ec16d3e8675b4925cddb
+pyDes==2.0.1 \
+    --hash=sha256:e2ab8e21d2b83e90d90dbfdcb6fb8ac0000b813238b7ecaede04f8435c389012

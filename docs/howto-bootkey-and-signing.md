@@ -26,7 +26,7 @@ You will need:
   Keep `my-key.pem` somewhere safe. Lose it and you can't sign with this slot again.
   The machine can [back it up as 24 words on steel](howto-bootkey-backup.md).
 
-- [`picotool`](https://github.com/raspberrypi/picotool) version 2.0 or later. Pre-built binaries: <https://github.com/raspberrypi/pico-sdk-tools/releases>. On macOS, `brew install picotool` works.
+- [`picotool`](https://github.com/raspberrypi/picotool) version 2.0 or later. `./install.sh send` in the repo installs a pinned build; pre-built binaries live at <https://github.com/raspberrypi/pico-sdk-tools/releases>, and on macOS `brew install picotool` works.
 - The SeedHammer source tree, with `nix` and the project flake usable, plus a Go toolchain for `picosign`: <https://github.com/SeedHammer/seedhammer>. The flake builds on Linux and macOS.
 
 Confirm picotool sees your SH2:
@@ -42,7 +42,7 @@ Confirm picotool sees your SH2:
 
    You should see a `Program Information` block reporting an RP2350 with a verified ARM Secure image, and a mass-storage volume named `SHII` appears (its `INFO_UF2.TXT` reads `Model: SeedHammer II`).
 
-   "No accessible RP-series devices in BOOTSEL mode were found" means the device isn't in BOOTSEL; redo the button dance. A device that is listed but can't be opened is a USB permission problem: install picotool's udev rules on Linux, or retry with `sudo` on macOS.
+   "No accessible RP-series devices in BOOTSEL mode were found" means the device isn't in BOOTSEL; redo the button dance. A device that is listed but can't be opened is a USB permission problem: `sh2key setup-udev` installs the rule on Linux, or retry with `sudo` on macOS.
 
 ## What you are about to do
 

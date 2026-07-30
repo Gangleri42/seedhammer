@@ -1013,3 +1013,136 @@ ROW 0x004b: OTP_DATA_BOOT_FLAGS1 (RBIT-3)
 		t.Fatalf("re-scan lost the copy disagreement: %v", fresh.flagCopies)
 	}
 }
+
+// revokeBoard builds a locked board: slot 0 the manufacturer key, slot
+// 1 the given key, slots 2 and 3 empty, all four unrevoked.
+func revokeBoard(t *testing.T, ourFP [32]byte) *otpBoard {
+	t.Helper()
+	b := &otpBoard{secureBoot: true, keyValid: 0b0011}
+	for i := range b.slots {
+		b.slots[i].readable = true
+		b.slots[i].zero = true
+	}
+	mfr, err := hex.DecodeString(signKeyHashSH2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy(b.slots[0].hash[:], mfr)
+	b.slots[0].zero = false
+	b.slots[1].hash, b.slots[1].zero = ourFP, false
+	return b
+}
+
+func TestRevokePlanGates(t *testing.T) {
+	priv, _ := loadFixture(t)
+	fp := fingerprint(priv)
+	b := revokeBoard(t, fp)
+
+	// Revoking the manufacturer key is allowed while our key remains,
+	// and the plan says what keeps booting.
+	p := makeRevokePlan(b, priv, "k.pem", 0)
+	if p.refuse != "" {
+		t.Fatalf("revoking slot 0 refused: %s", p.refuse)
+	}
+	if len(p.bootable) != 1 || !strings.Contains(p.bootable[0], "you sign with k.pem") {
+		t.Fatalf("bootable = %v", p.bootable)
+	}
+	// And revoking ours is allowed while the manufacturer key remains.
+	p = makeRevokePlan(b, priv, "k.pem", 1)
+	if p.refuse != "" || len(p.bootable) != 1 || !strings.Contains(p.bootable[0], "official SeedHammer") {
+		t.Fatalf("revoking slot 1: refuse=%q bootable=%v", p.refuse, p.bootable)
+	}
+	// An empty slot may be blocked off; something valid still remains.
+	if p := makeRevokePlan(b, priv, "k.pem", 2); p.refuse != "" {
+		t.Errorf("revoking an empty slot refused: %s", p.refuse)
+	}
+	// Out of range and already-revoked are refused by name.
+	if p := makeRevokePlan(b, priv, "k.pem", 4); p.refuse == "" {
+		t.Error("slot 4 accepted")
+	}
+	b.keyInvalid = 0b0100
+	if p := makeRevokePlan(b, priv, "k.pem", 2); !strings.Contains(p.refuse, "already revoked") {
+		t.Errorf("re-revoking: %q", p.refuse)
+	}
+}
+
+// TestRevokeRefusesLastKey is the brick case: the write that would
+// leave a board unable to accept any firmware must never happen.
+func TestRevokeRefusesLastKey(t *testing.T) {
+	priv, _ := loadFixture(t)
+	fp := fingerprint(priv)
+	b := revokeBoard(t, fp)
+	b.keyValid = 0b0010 // only our slot 1 is valid
+	p := makeRevokePlan(b, priv, "k.pem", 1)
+	if p.refuse == "" || !strings.Contains(p.refuse, "last usable boot key") {
+		t.Fatalf("last valid slot accepted: %q", p.refuse)
+	}
+	// The core refuses without touching the device.
+	pico := &pico{run: func(args ...string) (string, error) {
+		t.Errorf("device call during a refused revoke: %v", args)
+		return "", nil
+	}}
+	err := revokeCore(newUI(io.Discard), pico, b, priv, "k.pem", 1)
+	if err == nil || !strings.Contains(err.Error(), "Nothing was written") {
+		t.Fatalf("revokeCore: %v", err)
+	}
+}
+
+// TestRevokeRefusesUnaccountedRemainder covers the subtler brick: the
+// slots left valid hold keys this tool cannot boot with.
+func TestRevokeRefusesUnaccountedRemainder(t *testing.T) {
+	priv, _ := loadFixture(t)
+	b := revokeBoard(t, fingerprint(priv))
+	// Slot 1 holds a stranger's key instead of ours.
+	b.slots[1].hash = [32]byte{0xaa, 0xbb}
+	p := makeRevokePlan(b, priv, "k.pem", 0)
+	if p.refuse == "" || !strings.Contains(p.refuse, "provably bootable") {
+		t.Fatalf("unaccounted remainder accepted: %q", p.refuse)
+	}
+	// With no key loaded at all, revoking the manufacturer key is the
+	// same refusal.
+	if p := makeRevokePlan(b, nil, "", 0); p.refuse == "" {
+		t.Error("accepted with no key loaded")
+	}
+}
+
+func TestKeyInvalidMask(t *testing.T) {
+	// KEY_INVALID is bits 8 to 11 of BOOT_FLAGS1.
+	for slot, want := range map[int]uint32{0: 0x100, 1: 0x200, 2: 0x400, 3: 0x800} {
+		if got := keyInvalidMask(slot); got != want {
+			t.Errorf("keyInvalidMask(%d) = %#x, want %#x", slot, got, want)
+		}
+	}
+	// The revoke mask must never collide with a valid bit.
+	for slot := range otpNumSlots {
+		if keyInvalidMask(slot)&0xf != 0 {
+			t.Errorf("slot %d's revoke mask touches KEY_VALID", slot)
+		}
+	}
+}
+
+// TestRevokeRequiresEvidence covers the gate for the case where only a
+// locally signed image could boot afterwards.
+func TestRevokeRequiresEvidence(t *testing.T) {
+	priv, _ := loadFixture(t)
+	b := revokeBoard(t, fingerprint(priv))
+	t.Chdir(t.TempDir()) // no signed image here
+	pico := &pico{run: func(args ...string) (string, error) {
+		if len(args) > 1 && args[1] == "set" {
+			t.Errorf("wrote OTP without evidence: %v", args)
+		}
+		return "", nil
+	}}
+	// Revoking the manufacturer key leaves only our key, so an image
+	// signed by it must exist and verify.
+	err := revokeCore(newUI(io.Discard), pico, b, priv, "k.pem", 0)
+	if err == nil || !strings.Contains(err.Error(), "no image here verifies") {
+		t.Fatalf("evidence gate: %v", err)
+	}
+	// Revoking our own slot keeps the manufacturer key, which needs no
+	// local evidence; it stops at the typed confirmation instead.
+	err = revokeCore(newUI(io.Discard), pico, b, priv, "k.pem", 1)
+	if err == nil || strings.Contains(err.Error(), "no image here verifies") {
+		t.Fatalf("wrong gate for slot 1: %v", err)
+	}
+}

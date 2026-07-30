@@ -115,12 +115,30 @@ func (h *homeScreen) actions() []homeAction {
 	case a.board != nil && a.board.secureBoot:
 		esbGate = "already enabled on the attached board"
 	}
+	revokeGate := picoGate
+	if revokeGate == "" && a.board != nil {
+		allowed := false
+		for i := range otpNumSlots {
+			if makeRevokePlan(a.board, a.priv, a.keyPath, i).refuse == "" {
+				allowed = true
+			}
+		}
+		if !allowed {
+			revokeGate = "no slot can be revoked while leaving something bootable"
+		}
+	}
 	out = append(out,
 		homeAction{
 			label:    "Enable secure boot",
 			detail:   "one-way door: the board starts requiring signatures",
 			disabled: esbGate,
 			run:      func() navAction { return navPush{newProvisionScreen(a, true)} },
+		},
+		homeAction{
+			label:    "Revoke a boot key",
+			detail:   "final: that key stops booting this board for good",
+			disabled: revokeGate,
+			run:      func() navAction { return navPush{newRevokeScreen(a)} },
 		},
 		homeAction{
 			label:  "Quit",

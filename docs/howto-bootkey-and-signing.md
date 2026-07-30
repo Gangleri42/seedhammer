@@ -228,6 +228,8 @@ picotool otp get BOOT_FLAGS1      # expect KEY_INVALID = 0x1
 picotool reboot
 ```
 
+[`sh2key revoke`](manual-sh2key.md#revoke) does the same thing behind gates that refuse to leave the board unbootable.
+
 `KEY_INVALID` takes precedence over `KEY_VALID` and is irreversible. After this, the official SeedHammer release builds will no longer boot on this device. **Do this only after you've verified step 5 worked.** A safer choice is to leave slot 0 valid so the device retains dual-trust during testing.
 
 ## What changed inside the SH2

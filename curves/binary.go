@@ -97,6 +97,7 @@ func EncodePath(unitsPerMM, strokeWidth int, segs []svgpath.Segment) ([]byte, er
 	if len(segs) == 0 || segs[0].Op != svgpath.MoveTo {
 		return nil, fmt.Errorf("curves: path must begin with a move")
 	}
+	segs = preservePointStrokes(segs)
 	// Bound the coordinate domain: past maxPayloadCoord the decoder's
 	// cursor clamp would silently reshape the drawing.
 	for _, s := range segs {
@@ -110,6 +111,46 @@ func EncodePath(unitsPerMM, strokeWidth int, segs []svgpath.Segment) ([]byte, er
 	b := []byte(fmt.Sprintf("%d %s %d %d\n", Version, ModePath, unitsPerMM, strokeWidth))
 	var cur bezier.Point
 	return appendSegs(b, segs, bezier.Point{}, &cur), nil
+}
+
+// preservePointStrokes rewrites any stroke whose drawing segments all
+// collapse onto its start into a single one-unit LineTo. Dot glyphs
+// (periods, colons, the tittle on i) sit below the payload grid at
+// small text sizes, so quantization leaves them without geometry, the
+// decoder's degenerate-segment filter drops them, and the machine
+// never hammers the dot. A one-unit tick engraves exactly like the
+// full-size dot: shorter than the needle is wide. A bare MoveTo with
+// no drawing segments stays untouched; that is positioning, not a dot.
+func preservePointStrokes(segs []svgpath.Segment) []svgpath.Segment {
+	out := append([]svgpath.Segment(nil), segs...)
+	for i := 0; i < len(out); {
+		if out[i].Op != svgpath.MoveTo {
+			i++
+			continue
+		}
+		start := out[i].Args[0]
+		j := i + 1
+		for j < len(out) && out[j].Op != svgpath.MoveTo {
+			j++
+		}
+		pointOnly := j > i+1
+		for _, s := range out[i+1 : j] {
+			_, n := opByte(s.Op)
+			for k := 0; k < n; k++ {
+				if s.Args[k] != start {
+					pointOnly = false
+				}
+			}
+		}
+		if pointOnly {
+			tick := svgpath.Segment{Op: svgpath.LineTo}
+			tick.Args[0] = start.Add(bezier.Pt(1, 0))
+			out = append(out[:i+1], append([]svgpath.Segment{tick}, out[j:]...)...)
+			j = i + 2
+		}
+		i = j
+	}
+	return out
 }
 
 // appendSegs appends segs to b in the wire's opcode + chained-delta

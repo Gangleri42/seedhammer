@@ -77,12 +77,20 @@ func TestParseErrors(t *testing.T) {
 		path string
 	}{
 		{"move only", "M 400 400"},
-		{"zero-length drawing", "M 400 400 L 400 400 C 400 400 400 400 400 400"},
 	}
 	for _, test := range geo {
 		if _, err := Parse(payload(test.path), params); err == nil {
 			t.Errorf("%s: Parse succeeded, want error", test.name)
 		}
+	}
+	// A drawing that is nothing but a point stroke is real content:
+	// dot glyphs quantize to exactly this shape, and the encoder gives
+	// them one unit of geometry so the needle's dot survives the wire.
+	d, err := Parse(payload("M 400 400 L 400 400 C 400 400 400 400 400 400"), params)
+	if err != nil {
+		t.Errorf("point stroke: %v, want one stroke", err)
+	} else if d.Strokes != 1 {
+		t.Errorf("point stroke: strokes=%d, want 1", d.Strokes)
 	}
 }
 

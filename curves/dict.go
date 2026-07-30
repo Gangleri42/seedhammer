@@ -52,10 +52,13 @@ func EncodeGroups(unitsPerMM, strokeWidth int, groups []Group) ([]byte, error) {
 	// cursor clamp kicks in, and the flat and dictionary decodes of
 	// one drawing clamp differently.
 	keys := make([]string, len(groups))
+	fixed := make([]Group, len(groups))
 	for i, g := range groups {
 		if len(g.Segs) == 0 || g.Segs[0].Op != svgpath.MoveTo {
 			return nil, fmt.Errorf("curves: group %d must begin with a move", i)
 		}
+		g.Segs = preservePointStrokes(g.Segs)
+		fixed[i] = g
 		for _, s := range g.Segs {
 			_, n := opByte(s.Op)
 			for j := 0; j < n; j++ {
@@ -67,6 +70,7 @@ func EncodeGroups(unitsPerMM, strokeWidth int, groups []Group) ([]byte, error) {
 		var cur bezier.Point
 		keys[i] = string(appendSegs(nil, g.Segs, bezier.Point{}, &cur))
 	}
+	groups = fixed
 	counts := make(map[string]int, len(groups))
 	firstSeen := make(map[string]int, len(groups))
 	for i, k := range keys {

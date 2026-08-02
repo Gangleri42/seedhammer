@@ -215,6 +215,15 @@ func ChecksumWord(entropy []byte) Word {
 	return w % Word(len(index))
 }
 
+// MnemonicSeed derives the BIP32 seed from a mnemonic and passphrase.
+//
+// The passphrase must be ASCII. BIP39 salts with its NFKD normalisation,
+// which this does not apply: the only way one reaches here is the
+// device keyboard, whose alphabet is ASCII, and normalising ASCII is the
+// identity. Skipping it saves 19.5 KB of static RAM that unicode/norm
+// would otherwise take off the heap arena. Any future path that can
+// carry a non-ASCII passphrase has to bring normalisation with it, or it
+// will silently derive a different wallet than every other implementation.
 func MnemonicSeed(m Mnemonic, password string) []byte {
 	var sentence []byte
 	for i, w := range m {

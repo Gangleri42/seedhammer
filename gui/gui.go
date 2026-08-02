@@ -309,6 +309,36 @@ func (w *Warning) Layout(ctx *Context, th *Colors, dims image.Point, title, txt 
 	)
 }
 
+// noticeScreen explains something and takes a plain yes or no. It is
+// ConfirmWarningScreen without the hold, because a hold earns its place
+// when an action cannot be undone, and what this gates can be redrawn or
+// backed out of.
+type noticeScreen struct {
+	Title string
+	Body  string
+	Icon  image.RGBA64Image
+
+	cancelBtn  Clickable
+	confirmBtn Clickable
+	warning    Warning
+}
+
+func (s *noticeScreen) Layout(ctx *Context, th *Colors, dims image.Point) (op.Op, ConfirmResult) {
+	cancelBtn := s.cancelBtn.For(Button1)
+	confirmBtn := s.confirmBtn.For(Button3, Center)
+	if cancelBtn.Clicked(ctx) {
+		return op.Op{}, ConfirmNo
+	}
+	if confirmBtn.Clicked(ctx) {
+		return op.Op{}, ConfirmYes
+	}
+	nav, _ := layoutNavigation(&ctx.B, th, dims, []NavButton{
+		{Clickable: cancelBtn, Style: StyleSecondary, Icon: assets.IconBack},
+		{Clickable: confirmBtn, Style: StylePrimary, Icon: s.Icon},
+	}...)
+	return op.Layer(nav, s.warning.Layout(ctx, th, dims, s.Title, s.Body)), ConfirmNone
+}
+
 func (s *ConfirmWarningScreen) Layout(ctx *Context, th *Colors, dims image.Point) (op.Op, ConfirmResult) {
 	cancelBtn := s.cancelBtn.For(Button1)
 	confirmBtn := s.confirmBtn.For(Button3, Center)
@@ -785,11 +815,11 @@ func inputWordsFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, selected 
 	wordLabel := ""
 	backBtn := &Clickable{Button: Button1}
 	okBtn := &Clickable{Button: Button2}
-	layoutWord := func(buf *op.Buffer, n int, word string) (op.Op, image.Point) {
-		style := ctx.Styles.word
-		return widget.Labelf(buf, style, th.Background, "%2d: %s", n, word)
-	}
-	_, longest := layoutWord(nil, 24, widestWord)
+	// The offer to draw the final word shares Button2 with the checkmark.
+	// They can never both apply: the offer requires an empty fragment,
+	// and bip39.Complete("") is false, so the checkmark is not drawn then.
+	pickBtn := &Clickable{Button: Button2}
+	longest := wordBoxSize(ctx, th)
 	for !ctx.Done {
 		for kbd.Update(ctx) {
 			updateValidBIP39Keys(kbd.Fragment, kbd.allKeys)
@@ -801,25 +831,39 @@ func inputWordsFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, selected 
 		if backBtn.Clicked(ctx) {
 			return
 		}
-		for okBtn.Clicked(ctx) {
-			w, complete := bip39.Complete(kbd.Fragment)
-			if !complete {
-				continue
-			}
-			kbd.Clear()
-			wordLabel = ""
-			updateValidBIP39Keys("", kbd.allKeys)
-			mnemonic[selected] = w
-			for {
-				selected++
-				if selected == len(mnemonic) {
+		if lastWordOffer(mnemonic, selected, kbd.Fragment) {
+			if pickBtn.Clicked(ctx) {
+				if w, ok := pickLastWordFlow(ctx, th, mnemonic, longest); ok {
+					mnemonic[selected] = w
 					return
 				}
-				if mnemonic[selected] == -1 {
-					break
+				continue
+			}
+		} else {
+			for okBtn.Clicked(ctx) {
+				w, complete := bip39.Complete(kbd.Fragment)
+				if !complete {
+					continue
+				}
+				kbd.Clear()
+				wordLabel = ""
+				updateValidBIP39Keys("", kbd.allKeys)
+				mnemonic[selected] = w
+				for {
+					selected++
+					if selected == len(mnemonic) {
+						return
+					}
+					if mnemonic[selected] == -1 {
+						break
+					}
 				}
 			}
 		}
+		// Evaluated after the handler above may have advanced to the
+		// final word. Nothing redraws until the next event, so the frame
+		// that lands on that word has to carry the offer already.
+		offer := lastWordOffer(mnemonic, selected, kbd.Fragment)
 		dims := ctx.Platform.DisplaySize()
 
 		screen := layout.Rectangle{Max: dims}
@@ -829,38 +873,185 @@ func inputWordsFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, selected 
 		kbdOp, kbdsz := kbd.Layout(ctx, th)
 		kbdOp = kbdOp.Offset(content.S(kbdsz))
 
-		r := image.Rectangle{Max: longest}
-		r.Min.Y -= 3 + buttonPadY
-		r.Max.Y += buttonPadY
-		r.Min.X -= buttonPadX
-		r.Max.X += buttonPadX
 		top, _ := content.CutBottom(kbdsz.Y)
-		word, _ := layoutWord(&ctx.B, selected+1, wordLabel)
-		txtBg := op.Layer(
-			word,
-			op.Compose(
-				op.Color(&ctx.B, th.Text),
-				op.RoundedRect2(&ctx.B, r, cornerRadius),
-			),
-		).Offset(top.Center(longest))
+		txtBg := wordBox(ctx, th, top, longest, selected+1, wordLabel)
+
+		// The band between the word and the keyboard is empty on every
+		// other word, so the offer costs no layout elsewhere.
+		hint := op.Op{}
+		if offer {
+			hintOp, hintsz := widget.Labelw(&ctx.B, ctx.Styles.lead, top.Dx(), th.Text, lastWordHint)
+			hint = hintOp.Offset(top.S(hintsz))
+		}
 
 		nav, _ := layoutNavigation(&ctx.B, th, dims, []NavButton{{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack}}...)
-		if _, complete := bip39.Complete(kbd.Fragment); complete {
-			nav2, _ := layoutNavigation(&ctx.B, th, dims, []NavButton{{Clickable: okBtn, Style: StylePrimary, Icon: assets.IconCheckmark}}...)
-			nav = op.Layer(
-				nav,
-				nav2,
-			)
+		switch {
+		case offer:
+			// An info glyph, not a pencil: it opens an explanation, and
+			// a pencil in this slot would read as "the device fills this
+			// in for you", which is the misreading to avoid.
+			nav2, _ := layoutNavigation(&ctx.B, th, dims, []NavButton{{Clickable: pickBtn, Style: StyleSecondary, Icon: assets.IconInfo}}...)
+			nav = op.Layer(nav, nav2)
+		default:
+			if _, complete := bip39.Complete(kbd.Fragment); complete {
+				nav2, _ := layoutNavigation(&ctx.B, th, dims, []NavButton{{Clickable: okBtn, Style: StylePrimary, Icon: assets.IconCheckmark}}...)
+				nav = op.Layer(
+					nav,
+					nav2,
+				)
+			}
 		}
 		title, _ := layoutTitle(ctx, dims.X, th.Text, "Input Words")
 		ctx.Frame(op.Layer(
 			kbdOp,
 			txtBg,
+			hint,
 			nav,
 			title,
 			op.Color(&ctx.B, th.Background),
 		))
 	}
+}
+
+// lastWordOffer reports whether the device can complete the phrase. Only
+// the final word has a set of valid completions, only an empty box can
+// take one, and every other word must be in, because those words are
+// what determine the completions.
+func lastWordOffer(mnemonic bip39.Mnemonic, selected int, frag string) bool {
+	return selected == len(mnemonic)-1 && frag == "" &&
+		!slices.Contains(mnemonic[:selected], bip39.Word(-1))
+}
+
+// Copy for the device-completed final word. It never says calculate,
+// find, recover or missing: a user who has forgotten their own last word
+// must not read this as an offer to retrieve it.
+const (
+	lastWordHint      = "New seed? Get a random last word."
+	lastWordGateTitle = "New Seed?"
+	lastWordGateBody  = "The device picks the last word at random.\n\n" +
+		"It is not the word you forgot. A different last word is a different wallet."
+	// Not "press for another". Rerolling until a word looks right is
+	// choosing, and the drawing rules forbid exactly that for the tiles.
+	// The button stays for a genuine misdraw.
+	lastWordLead = "A new wallet, not a recovered word.\nTake the first word drawn."
+)
+
+// wordBoxSize measures the plate that shows one numbered seed word. It
+// is sized for the widest number and word so the plate neither jumps
+// between words nor moves between screens, and it is measured once per
+// flow because the frame loop must not allocate.
+func wordBoxSize(ctx *Context, th *Colors) image.Point {
+	_, sz := widget.Labelf(nil, ctx.Styles.word, th.Background, "%2d: %s", 24, widestWord)
+	return sz
+}
+
+func wordBox(ctx *Context, th *Colors, area layout.Rectangle, longest image.Point, n int, word string) op.Op {
+	r := image.Rectangle{Max: longest}
+	r.Min.Y -= 3 + buttonPadY
+	r.Max.Y += buttonPadY
+	r.Min.X -= buttonPadX
+	r.Max.X += buttonPadX
+	lbl, _ := widget.Labelf(&ctx.B, ctx.Styles.word, th.Background, "%2d: %s", n, word)
+	return op.Layer(
+		lbl,
+		op.Compose(
+			op.Color(&ctx.B, th.Text),
+			op.RoundedRect2(&ctx.B, r, cornerRadius),
+		),
+	).Offset(area.Center(longest))
+}
+
+// pickLastWordFlow gates on an explanation, then draws a final word that
+// gives mnemonic a valid checksum and offers to draw another. It reports
+// false if the user backs out, leaving mnemonic untouched.
+//
+// The gate comes before the draw on purpose. A user who has lost their
+// own last word is most tempted at the moment a plausible one is on
+// screen, so the sentence that says this is a different wallet has to
+// land while the screen is still empty.
+func pickLastWordFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, longest image.Point) (bip39.Word, bool) {
+	gate := &noticeScreen{
+		Title: strings.ToTitle(lastWordGateTitle),
+		Body:  lastWordGateBody,
+		// The hold button confirms; the icon is the action, as the
+		// discard warning's is. An "i" there reads as "more information".
+		Icon: assets.IconCheckmark,
+	}
+	for !ctx.Done {
+		dims := ctx.Platform.DisplaySize()
+		d, res := gate.Layout(ctx, th, dims)
+		switch res {
+		case ConfirmNo:
+			return -1, false
+		case ConfirmYes:
+			return drawLastWordFlow(ctx, th, mnemonic, longest)
+		}
+		ctx.Frame(d)
+	}
+	return -1, false
+}
+
+func drawLastWordFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, longest image.Point) (bip39.Word, bool) {
+	prefix := mnemonic[:len(mnemonic)-1]
+	draw := func() (bip39.Word, bool) {
+		if Rand == nil {
+			// A build problem, not a hardware one: cmd/controller
+			// installs the source at startup.
+			showError(ctx, th, errNoRNG, blankScreen)
+			return -1, false
+		}
+		w, err := bip39.PickLastWord(prefix, Rand)
+		if err != nil {
+			showError(ctx, th, errNoEntropy, blankScreen)
+			return -1, false
+		}
+		return w, true
+	}
+	word, ok := draw()
+	if !ok {
+		return -1, false
+	}
+	backBtn := &Clickable{Button: Button1}
+	rerollBtn := &Clickable{Button: Button2}
+	acceptBtn := &Clickable{Button: Button3, AltButton: Center}
+	for !ctx.Done {
+		if backBtn.Clicked(ctx) {
+			return -1, false
+		}
+		if rerollBtn.Clicked(ctx) {
+			if w, ok := draw(); ok {
+				word = w
+			} else {
+				return -1, false
+			}
+		}
+		if acceptBtn.Clicked(ctx) {
+			return word, true
+		}
+		dims := ctx.Platform.DisplaySize()
+		screen := layout.Rectangle{Max: dims}
+		_, content := screen.CutTop(leadingSize)
+		content, _ = content.CutBottom(8)
+
+		leadOp, leadsz := widget.Labelw(&ctx.B, ctx.Styles.lead, content.Dx(), th.Text, lastWordLead)
+		top, _ := content.CutBottom(leadsz.Y)
+		box := wordBox(ctx, th, top, longest, len(mnemonic), bip39.LabelFor(word))
+
+		nav, _ := layoutNavigation(&ctx.B, th, dims,
+			NavButton{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack},
+			NavButton{Clickable: rerollBtn, Style: StyleSecondary, Icon: assets.IconEdit},
+			NavButton{Clickable: acceptBtn, Style: StylePrimary, Icon: assets.IconCheckmark},
+		)
+		title, _ := layoutTitlef(ctx, dims.X, th.Text, "Random Word %d", len(mnemonic))
+		ctx.Frame(op.Layer(
+			box,
+			leadOp.Offset(content.S(leadsz)),
+			nav,
+			title,
+			op.Color(&ctx.B, th.Background),
+		))
+	}
+	return -1, false
 }
 
 func inputCodex32Flow(ctx *Context, th *Colors) (codex32.String, bool) {
@@ -2143,6 +2334,8 @@ func (s *NostrScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {
 }
 
 var (
+	errNoEntropy  = errors.New("The random number generator reported a fault. No word was drawn.")
+	errNoRNG      = errors.New("This firmware has no random number generator.")
 	errNsecPlate  = errors.New("The secret-key plate does not fit.")
 	errNpubPlate  = errors.New("The public-key plate does not fit.")
 	errNpubDerive = errors.New("Could not derive the public key.")
@@ -2344,7 +2537,10 @@ events:
 				if nonstandard.ElectrumSeed(strings.Join(words, " ")) {
 					scr.Body = "Electrum seeds are not supported."
 				} else {
-					scr.Body = "The seed phrase is invalid.\n\nCheck the words and try again."
+					// Naming no word leaves a stuck user to guess it is
+					// the last one, and the device can now "fix" that
+					// into a valid but different wallet.
+					scr.Body = "The checksum does not match.\n\nAny of the words could be wrong, not just the last one."
 				}
 				showErr(scr)
 				continue

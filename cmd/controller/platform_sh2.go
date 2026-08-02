@@ -22,6 +22,7 @@ import (
 	"seedhammer.com/driver/otp"
 	"seedhammer.com/driver/st25r3916"
 	"seedhammer.com/driver/tmc2209"
+	"seedhammer.com/driver/trng"
 	"seedhammer.com/engrave"
 	"seedhammer.com/gui"
 	"seedhammer.com/image/rgb565"
@@ -197,6 +198,10 @@ var (
 )
 
 func Init() (*Platform, error) {
+	// The hardware generator, not machine.GetRNG: the seed word drawn
+	// from this ends up on a plate. crypto/rand has no backend on
+	// rp2350, so without this the gui default is nil.
+	gui.Rand = new(trng.Reader)
 	if err := dataI2C.Configure(machine.I2CConfig{Frequency: 400_000, SDA: DATA_SDA, SCL: DATA_SCL}); err != nil {
 		return nil, fmt.Errorf("data I2C: %w", err)
 	}

@@ -910,3 +910,118 @@ func TestRunJobCancel(t *testing.T) {
 		}
 	})
 }
+
+func TestDrawLastWordFlow(t *testing.T) {
+	for _, nwords := range []int{12, 24} {
+		ctx := NewContext(newPlatform())
+		th := &descriptorTheme
+		longest := wordBoxSize(ctx, th)
+		m := emptyBIP39Mnemonic(nwords)
+		for i := range m[:nwords-1] {
+			m[i] = bip39.Word(i)
+		}
+		valid := bip39.LastWords(m[:nwords-1])
+
+		// Backing out must leave the mnemonic alone.
+		click(&ctx.Router, Button1)
+		if _, ok := drawLastWordFlow(ctx, th, m, longest); ok {
+			t.Fatalf("%d words: back accepted a word", nwords)
+		}
+		if m[nwords-1] != -1 {
+			t.Fatalf("%d words: back wrote word %v", nwords, m[nwords-1])
+		}
+
+		// Accepting must yield one of the checksum-valid completions.
+		click(&ctx.Router, Button3)
+		w, ok := drawLastWordFlow(ctx, th, m, longest)
+		if !ok {
+			t.Fatalf("%d words: accept returned no word", nwords)
+		}
+		if !slices.Contains(valid, w) {
+			t.Errorf("%d words: drew %s, not a valid completion", nwords, bip39.LabelFor(w))
+		}
+		m[nwords-1] = w
+		if !m.Valid() {
+			t.Errorf("%d words: completed mnemonic fails its checksum", nwords)
+		}
+	}
+}
+
+// TestDrawLastWordCoversCandidates checks the draw reaches every valid
+// completion rather than favouring one, which a masking bug would show
+// as a stuck high bit. It is a smoke test, not the distribution soak
+// that lives in package bip39.
+func TestDrawLastWordCoversCandidates(t *testing.T) {
+	ctx := NewContext(newPlatform())
+	th := &descriptorTheme
+	longest := wordBoxSize(ctx, th)
+	m := emptyBIP39Mnemonic(24)
+	for i := range m[:23] {
+		m[i] = bip39.Word(i)
+	}
+	seen := make(map[bip39.Word]bool)
+	// 8 candidates; 200 draws leaves a miss vanishingly unlikely.
+	for range 200 {
+		click(&ctx.Router, Button3)
+		w, ok := drawLastWordFlow(ctx, th, m, longest)
+		if !ok {
+			t.Fatal("accept returned no word")
+		}
+		seen[w] = true
+	}
+	if want := len(bip39.LastWords(m[:23])); len(seen) != want {
+		t.Errorf("drew %d distinct words over 200 draws, want all %d", len(seen), want)
+	}
+}
+
+// TestLastWordOfferDrawnOnArrival guards a frame-ordering bug. Nothing
+// redraws between events, so the offer has to be on the very frame that
+// lands on the final word. Reading the state before the word advances
+// leaves a button that is pressable but invisible until the next event.
+func TestLastWordOfferDrawnOnArrival(t *testing.T) {
+	// arrival renders the first frame drawn after typing the
+	// second-to-last word and accepting it.
+	arrival := func(t *testing.T, prefixComplete bool) image.Image {
+		t.Helper()
+		ctx := NewContext(newPlatform())
+		clip := image.Rectangle{Max: ctx.Platform.DisplaySize()}
+		fb := rgb565.New(clip)
+		// Rasterise inside the callback: Context.Frame resets the op
+		// buffer as soon as it returns, so the ops cannot be drawn later.
+		ctx.FrameCallback = func(content op.Op) {
+			new(op.Drawer).Draw(fb, image.NewAlpha(clip), content)
+			ctx.Done = true
+		}
+		m := emptyBIP39Mnemonic(12)
+		for i := range m[:10] {
+			m[i] = bip39.Word(i)
+		}
+		if !prefixComplete {
+			// One hole earlier in the phrase leaves the completions
+			// undetermined, so there is nothing to offer.
+			m[0] = -1
+		}
+		runes(&ctx.Router, bip39.LabelFor(bip39.Word(10)))
+		click(&ctx.Router, Button2)
+		inputWordsFlow(ctx, &descriptorTheme, m, 10)
+		if m[10] == -1 {
+			t.Fatal("the typed word was not accepted")
+		}
+		return fb
+	}
+	withOffer, without := arrival(t, true), arrival(t, false)
+	b := withOffer.Bounds()
+	diff := 0
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if withOffer.At(x, y) != without.At(x, y) {
+				diff++
+			}
+		}
+	}
+	// The two frames differ only in the offer, so identical frames mean
+	// the button and hint were not drawn on arrival.
+	if diff == 0 {
+		t.Error("the frame that lands on the final word is identical with and without the offer")
+	}
+}

@@ -67,7 +67,7 @@ to re-draw a word you have already seen.
 ### How much margin you have
 
 A clean blind draw is 11 bits per word, 253 bits across 23 words. Mechanical
-imperfection — a bag not stirred quite enough, tiles worn unevenly — shaves some
+imperfection (a bag not stirred quite enough, tiles worn unevenly) shaves some
 of that off, and the margin is enormous: even losing *half* your entropy leaves
 126 bits, which nobody is searching.
 
@@ -84,8 +84,8 @@ So: imperfect mixing is survivable. Deciding anything is not.
 The keyboard cannot accept a word that does not exist, so typos and half-words
 are not a risk. What it cannot know is *which* word you drew. Enter ADDRESS where
 your tile says ADDICT, or two words out of order, and you get a valid phrase for
-a different wallet — restoring would almost always catch that, but generating
-cannot, because the checksum is computed from what you entered. Read the list
+a different wallet. Restoring would almost always catch that; generating cannot,
+because the checksum is computed from what you entered. Read the list
 against your tiles before confirming; order counts as much as spelling.
 
 Draw somewhere unobserved, and put the tiles away before anyone comes in. Write
@@ -102,16 +102,60 @@ against the screen, then destroy the paper.
 3. On the final word, with nothing typed, the screen offers a random last word.
    Take the middle button. Typing a word instead hides the offer; clearing the
    box brings it back.
-4. A confirmation appears before anything is drawn. Hold the bottom button for
-   a second to go ahead; the top button backs out.
-5. The machine draws a word and shows it. The middle button draws a different
-   one, the top button backs out, the bottom button accepts.
+4. An explanation appears before anything is drawn. The bottom button goes
+   ahead, the top button backs out.
+5. The machine draws a word and shows it. The bottom button accepts, the top
+   button backs out, and the middle button draws a different one.
+
+   **Take the first word.** The middle button is there for a genuine misdraw,
+   not for shopping. Rejecting words until one looks right is the same mistake
+   as putting a tile back because you dislike it, and it costs you the
+   machine's contribution: 3 bits of 256 on a 24-word phrase, 7 of 128 on a
+   12-word one. Your own 253 (or 121) are untouched either way, so this is a
+   small loss rather than a disaster. It is still a loss, and it is free to
+   avoid.
 6. Check every word against your draw, then confirm to engrave.
+
+What follows is up to three plates in a row: the seed, then the wallet
+descriptor, then the passphrase if you set one. Each is offered and each can be
+skipped, so a seed already on metal can be entered just to produce a descriptor
+plate, and a descriptor can be cut again years later without touching the seed.
+
+## Add a passphrase, or don't
+
+Before the seed plate engraves, the machine asks whether to add a passphrase.
+Say no and nothing changes. Say yes and you type one on an ASCII keyboard: the
+arrow key cycles between lower case, upper case and symbols, while the digits
+and the space bar stay put across all three. Every printable ASCII character is
+reachable, so a spaced passphrase is entered exactly as written.
+
+**A passphrase has no checksum.** One wrong character opens a different wallet,
+which is perfectly valid and completely empty, and nothing downstream can warn
+you. So the machine shows it back exactly as typed, beside the fingerprint of
+the wallet it opens, and makes you hold to confirm. Read it character for
+character. If you already know your wallet's fingerprint, that is the stronger
+of the two checks.
+
+Only printable ASCII can be typed. BIP39 salts with the NFKD normalisation of
+the passphrase and the machine does not normalise, because normalising ASCII
+changes nothing. A passphrase containing anything else cannot be entered here,
+and that wallet cannot be opened on this machine.
+
+**There is no length limit.** BIP39 sets none, so neither does the machine. Type
+as long a passphrase as you like; the box shows the tail of what you are typing
+and the confirm screen scrolls through all of it. The one thing length costs you
+is portability, and it is worth knowing before you commit: Trezor stops at 50
+characters, Ledger, Coldcard and Jade at 100, BitBox02 at 127, Keystone at 128.
+A passphrase longer than that is a wallet those devices cannot open, whatever
+you do with the seed words.
+
+From here on, the fingerprint on every plate is the wallet you actually end up
+with, passphrase included. That is what makes the plates identifiable as a set.
 
 ## Set up the watch-only wallet
 
 Once the seed plate is done, the machine offers the wallet descriptor: choose an
-address type, or back out if you do not want one.
+address type, or take **SKIP** at the bottom of the list.
 
 Segwit (`wpkh`, m/84'/0'/0') is understood by every wallet in circulation.
 Taproot (`tr`, m/86'/0'/0') is newer, with better privacy and fees, and slightly
@@ -133,14 +177,47 @@ addresses and build transactions, but it cannot spend, because the seed never
 left the machine. Check the fingerprint on screen against what the wallet
 reports after import; they must match.
 
-The bottom button engraves the descriptor as a plate of its own, which is worth
-doing for a wallet you intend to keep — restoring from a seed is easier when you
-also know which address type it was set up with.
+The bottom button takes you on to engraving the descriptor as a plate of its
+own, which is worth doing for a wallet you intend to keep. Restoring from a seed
+is easier when you also know which address type it was set up with.
 
-**A descriptor is not a seed, but it is not nothing.** It cannot move funds. It
-does reveal every address the wallet will ever use, so anyone holding it can see
-your whole balance and transaction history forever. Treat it as private
-information, just not as a key.
+**A descriptor is a privacy secret.** It cannot move funds. It does reveal every
+address the wallet will ever use, so anyone holding it can see your whole
+balance and transaction history forever. Guard it as private information, and
+know it is not a key.
+
+## The passphrase plate
+
+If you set a passphrase, the machine then offers to engrave it on a plate of its
+own, the third of the set:
+
+```
+BIP39 PASSPHRASE
+7 CHARACTERS
+
+hunter2
+
+WALLET CA2C62D2
+PATH m/84h/0h/0h
+```
+
+The passphrase sits alone between blank lines, so where it begins and ends is
+never in question. Above it is the **character count**, the only
+check the passphrase carries on its own. It matters most for a long one: if the
+passphrase wraps onto a second line and the break swallowed a space, the number
+of characters you transcribe will not match the number on the plate.
+
+Short passphrases engrave at the largest size the machine has; longer ones step
+down the same ladder as any other text plate. That ladder has a bottom: around
+880 characters alongside a standard derivation path, fewer with a long one.
+Past it the machine says the text does not fit and declines the plate. The
+wallet is unaffected and the seed plate is already cut, so a passphrase that
+long has to be recorded some other way.
+
+**This plate is exactly as sensitive as the seed plate.** The two together are
+the whole wallet. Storing them in the same place converts a passphrase back into
+no passphrase at all, and the point of the third plate is that it lives
+somewhere the first one does not.
 
 ## What the machine's randomness is worth
 
@@ -150,13 +227,16 @@ In a 24-word phrase your 23 drawn words fix **253 bits**. The machine
 contributes **3**, for 256 in total. In a 12-word phrase it is 121 from you and
 7 from the machine, for 128.
 
-Now suppose the machine's generator is bad — biased, broken, or backdoored. The
+Now suppose the machine's generator is bad: biased, broken, or backdoored. The
 worst case is that its 3 bits are fully predictable, which leaves an attacker
 facing your 253. Nobody brute-forces 253 bits. The randomness of the last word
 is close to irrelevant to the strength of your seed.
 
 That is the whole argument for generating a phrase this way. **The machine
-touches three bits of your secret and cannot influence the other 253.** A device
+chooses three bits of your secret and cannot influence the other 253.** It
+still handles all 256: you type them in, it holds them in memory, renders them
+and cuts them into steel. What the split removes is trust in its *generator*,
+not trust in the machine. A device
 that generates all 24 words holds your entire wallet inside its random number
 generator, and a flaw there is total and undetectable. Here the blast radius is
 three bits, whatever the hardware does.

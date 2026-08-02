@@ -185,8 +185,8 @@ func (r *richText) Addf(b *op.Buffer, style text.Style, width int, col color.RGB
 	r.Y = offy + m.Descent.Ceil()
 }
 
-func deriveMasterKey(m bip39.Mnemonic, net *chaincfg.Params) (*hdkeychain.ExtendedKey, bool) {
-	seed := bip39.MnemonicSeed(m, "")
+func deriveMasterKey(m bip39.Mnemonic, passphrase string, net *chaincfg.Params) (*hdkeychain.ExtendedKey, bool) {
+	seed := bip39.MnemonicSeed(m, passphrase)
 	mk, err := hdkeychain.NewMaster(seed, net)
 	// Err is only non-nil if the seed generates an invalid key, or we made a mistake.
 	// According to [0] the odds of encountering a seed that generates
@@ -725,8 +725,10 @@ type Plate struct {
 	Spline   bspline.Curve
 }
 
-func engraveSeed(params engrave.Params, m bip39.Mnemonic) (Plate, error) {
-	mfp, err := masterFingerprintFor(m, &chaincfg.MainNetParams)
+func engraveSeed(params engrave.Params, m bip39.Mnemonic, passphrase string) (Plate, error) {
+	// The fingerprint names the wallet the plates actually open, which
+	// with a passphrase is not the one the words alone would.
+	mfp, err := masterFingerprintFor(m, passphrase, &chaincfg.MainNetParams)
 	if err != nil {
 		return Plate{}, err
 	}
@@ -753,8 +755,8 @@ func engraveSeed(params engrave.Params, m bip39.Mnemonic) (Plate, error) {
 	return toPlate(seedSide, params)
 }
 
-func masterFingerprintFor(m bip39.Mnemonic, network *chaincfg.Params) (uint32, error) {
-	mk, ok := deriveMasterKey(m, network)
+func masterFingerprintFor(m bip39.Mnemonic, passphrase string, network *chaincfg.Params) (uint32, error) {
+	mk, ok := deriveMasterKey(m, passphrase, network)
 	if !ok {
 		return 0, errors.New("failed to derive mnemonic master key")
 	}
@@ -1203,6 +1205,16 @@ func inputSLIP39Flow(ctx *Context, th *Colors, mnemonic slip39words.Mnemonic, se
 type Keyboard struct {
 	Fragment string
 
+	// Verbatim types and draws runes as given. The word and share
+	// keyboards want the uppercase the wordlists are written in; a
+	// passphrase is case-sensitive and must not be folded.
+	Verbatim bool
+	// Layer is a key reported to the caller rather than typed, drawn as
+	// an upward arrow. It carries no character so none is lost from the
+	// alphabet, and it is how a passphrase reaches upper case and
+	// symbols without a keyboard too tall for the screen.
+	Layer bool
+
 	keys      [][]keyboardKey
 	widest    image.Point
 	backspace image.Point
@@ -1430,7 +1442,12 @@ func (k *Keyboard) Update(ctx *Context) bool {
 			}
 		}
 		if e, ok := e.AsRune(); ok {
-			r := unicode.ToLower(e.Rune)
+			// A Verbatim keyboard's layers hold both cases, so folding
+			// here would make the upper-case layer drop every letter.
+			r := e.Rune
+			if !k.Verbatim {
+				r = unicode.ToLower(r)
+			}
 			for i, row := range k.keys {
 				for j, key := range row {
 					if key.r == r && k.Valid(key) {
@@ -1447,13 +1464,22 @@ func (k *Keyboard) Update(ctx *Context) bool {
 
 func (k *Keyboard) rune() {
 	r := k.keys[k.row][k.col].r
-	if r == '⌫' {
+	switch {
+	case r == '⌫':
 		_, n := utf8.DecodeLastRuneInString(k.Fragment)
 		k.Fragment = k.Fragment[:len(k.Fragment)-n]
-	} else {
-		k.Fragment = k.Fragment + string(unicode.ToUpper(r))
+	case r == layerKey:
+		k.Layer = true
+	case k.Verbatim:
+		k.Fragment += string(r)
+	default:
+		k.Fragment += string(unicode.ToUpper(r))
 	}
 }
+
+// layerKey is outside printable ASCII so it cannot collide with a
+// character a passphrase might contain.
+const layerKey = '\x01'
 
 // adjust resets the row and column to the nearest valid key, if any.
 func (k *Keyboard) adjust(allowBackspace bool) {
@@ -1534,14 +1560,24 @@ func (k *Keyboard) Layout(ctx *Context, th *Colors) (op.Op, image.Point) {
 			inpOp := op.Input(&ctx.B, &k.keys[i][j].clk).Clip(bgr)
 			var keyOp op.Op
 			var sz image.Point
-			if key.r == '⌫' {
+			switch {
+			case key.r == '⌫':
 				icn := assets.KeyBackspace
 				sz = image.Pt(k.backspace.X, icn.Bounds().Dy())
 				keyOp = op.Compose(
 					op.Color(&ctx.B, col),
 					op.Mask(&ctx.B, icn),
 				)
-			} else {
+			case key.r == layerKey:
+				icn := assets.ArrowUp
+				sz = icn.Bounds().Size()
+				keyOp = op.Compose(
+					op.Color(&ctx.B, col),
+					op.Mask(&ctx.B, icn),
+				)
+			case k.Verbatim:
+				keyOp, sz = widget.Labelf(&ctx.B, style, col, "%c", key.r)
+			default:
 				keyOp, sz = widget.Labelf(&ctx.B, style, col, "%c", unicode.ToUpper(key.r))
 			}
 			keyOp = keyOp.Offset(bgsz.Sub(sz).Div(2))
@@ -2180,26 +2216,66 @@ func engraveObjectFlow(ctx *Context, th *Colors, obj any) bool {
 
 func backupWalletFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic) {
 	ss := new(SeedScreen)
+	// Asked once and carried across retries. Every path back to the seed
+	// screen would otherwise re-enter passphraseFlow, which starts from
+	// an empty field, and retyping a confirmed passphrase from memory is
+	// how a second and different one gets made. That is the hazard the
+	// edit path inside passphraseFlow already avoids.
+	var passphrase string
+	var havePassphrase bool
 	for {
 		if !ss.Confirm(ctx, th, mnemonic) {
 			return
 		}
-		plate, err := engraveSeed(ctx.Platform.EngraverParams(), mnemonic)
-		if err != nil {
-			showError(ctx, th, err, func(ctx *Context, th *Colors, dims image.Point) op.Op {
-				return ss.Draw(ctx, th, dims, mnemonic)
-			})
+		if !havePassphrase {
+			p, ok := passphraseFlow(ctx, th, mnemonic)
+			if !ok {
+				continue
+			}
+			passphrase, havePassphrase = p, true
+		}
+		// Three plates, each offered and each declinable. A seed already
+		// on metal may need only a descriptor; a descriptor can be cut
+		// again years later without touching the seed plate.
+		if !seedPlateFlow(ctx, th, ss, mnemonic, passphrase) {
 			continue
 		}
-		completed := NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme)
-		if completed {
-			// The seed is on metal; offer the descriptor it implies, so
-			// a watch-only wallet can be set up without entering the
-			// phrase anywhere.
-			walletDescriptorFlow(ctx, th, mnemonic)
-			return
-		}
+		path := walletDescriptorFlow(ctx, th, mnemonic, passphrase)
+		passphrasePlateFlow(ctx, th, mnemonic, passphrase, path)
+		return
 	}
+}
+
+// seedPlateFlow offers the seed plate and reports whether to carry on
+// to the other two: skipping does, and so does engraving, while a
+// cancelled engrave goes back to the seed screen so it can be tried
+// again.
+func seedPlateFlow(ctx *Context, th *Colors, ss *SeedScreen, mnemonic bip39.Mnemonic, passphrase string) (ok bool) {
+	// Engraving sits first so the selection lands on it, the same reason
+	// walletDescriptorFlow puts its SKIP last. Someone who reached this
+	// screen came to cut a seed plate; skipping is the exception, and an
+	// exception should cost a keypress rather than be the default.
+	cs := &ChoiceScreen{
+		Title:   "Seed Plate",
+		Lead:    "Engrave the seed phrase?",
+		Choices: []string{"ENGRAVE SEED", "SKIP"},
+	}
+	choice, ok := cs.Choose(ctx, th)
+	if !ok {
+		return false
+	}
+	if choice == 1 {
+		return true
+	}
+	plate, err := engraveSeed(ctx.Platform.EngraverParams(), mnemonic, passphrase)
+	if err != nil {
+		showError(ctx, th, err, func(ctx *Context, th *Colors, dims image.Point) op.Op {
+			return ss.Draw(ctx, th, dims, mnemonic)
+		})
+		return false
+	}
+	done := NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme)
+	return done
 }
 
 func backupSeedStringFlow(ctx *Context, th *Colors, s backup.SeedString) {
@@ -2549,7 +2625,7 @@ events:
 				showErr(scr)
 				continue
 			}
-			if _, ok := deriveMasterKey(mnemonic, &chaincfg.MainNetParams); !ok {
+			if _, ok := deriveMasterKey(mnemonic, "", &chaincfg.MainNetParams); !ok {
 				showErr(&ErrorScreen{
 					Title: "Invalid Seed",
 					Body:  "The seed is invalid.",

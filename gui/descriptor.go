@@ -43,9 +43,9 @@ const pathPrefix = "m/"
 // seedDescriptor derives the single-signature wallet descriptor implied
 // by a seed, so a watch-only wallet can be set up without the seed
 // itself leaving the machine.
-func seedDescriptor(m bip39.Mnemonic, script bip380.Script, path bip32.Path) (*bip380.Descriptor, error) {
+func seedDescriptor(m bip39.Mnemonic, passphrase string, script bip380.Script, path bip32.Path) (*bip380.Descriptor, error) {
 	network := &chaincfg.MainNetParams
-	mk, ok := deriveMasterKey(m, network)
+	mk, ok := deriveMasterKey(m, passphrase, network)
 	if !ok {
 		return nil, errDescriptorDerive
 	}
@@ -146,7 +146,7 @@ var (
 // a seed whose wallet already exists at a different account or depth.
 // It reports the derivation path it used, so a passphrase plate can
 // record which wallet the set belongs to. Empty means declined.
-func walletDescriptorFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic) string {
+func walletDescriptorFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, passphrase string) string {
 	// Declining is a visible choice rather than a back button nobody
 	// thinks to press, and it sits last so the selection lands on the
 	// common answer instead of on the way out.
@@ -176,7 +176,7 @@ func walletDescriptorFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic) str
 				continue
 			}
 		}
-		desc, err := seedDescriptor(mnemonic, script, path)
+		desc, err := seedDescriptor(mnemonic, passphrase, script, path)
 		if err != nil {
 			showError(ctx, th, err, blankScreen)
 			continue

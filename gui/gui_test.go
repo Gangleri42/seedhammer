@@ -1025,3 +1025,45 @@ func TestLastWordOfferDrawnOnArrival(t *testing.T) {
 		t.Error("the frame that lands on the final word is identical with and without the offer")
 	}
 }
+
+// A passphrase survives every path that returns to the seed screen.
+// backupWalletFlow used to call passphraseFlow inside its retry loop, so
+// cancelling the seed plate sent the user back to an empty passphrase
+// field and asked them to retype a confirmed secret from memory.
+func TestBackupWalletAsksPassphraseOnce(t *testing.T) {
+	ctx := NewContext(newPlatform())
+	m, err := bip39.ParseMnemonic(
+		"legal winner thank year wave sausage worth useful legal winner thank yellow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, quit := runUI(ctx, func() {
+		backupWalletFlow(ctx, &descriptorTheme, m)
+	})
+	defer quit()
+
+	asks, backs := 0, 0
+	for range 400 {
+		content, ok := frame()
+		if !ok {
+			break
+		}
+		switch {
+		case uiContains(content, "Add a passphrase to this seed?"):
+			asks++
+			if asks > 1 {
+				t.Fatalf("passphrase asked %d times; cancelling the seed plate discarded it", asks)
+			}
+			click(&ctx.Router, Button3) // NO PASSPHRASE
+		case uiContains(content, "Engrave the seed phrase?"):
+			backs++
+			if backs > 1 {
+				return // reached the seed plate twice, asked once: correct
+			}
+			click(&ctx.Router, Button1) // cancel, back to the seed screen
+		default:
+			click(&ctx.Router, Button3) // seed screen, and anything else, advances
+		}
+	}
+	t.Fatalf("flow never returned to the seed plate: asks=%d backs=%d", asks, backs)
+}

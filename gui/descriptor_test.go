@@ -58,7 +58,7 @@ func TestSeedDescriptorVectors(t *testing.T) {
 		},
 	} {
 		t.Run(tc.script.String(), func(t *testing.T) {
-			desc, err := seedDescriptor(m, tc.script, tc.script.DerivationPath())
+			desc, err := seedDescriptor(m, "", tc.script, tc.script.DerivationPath())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -140,7 +140,7 @@ func TestDescriptorQRIsScannable(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, script := range seedScripts {
-		desc, err := seedDescriptor(m, script, script.DerivationPath())
+		desc, err := seedDescriptor(m, "", script, script.DerivationPath())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -219,7 +219,7 @@ func TestParsePathFragment(t *testing.T) {
 func BenchmarkDescriptorFrame(b *testing.B) {
 	ctx := NewContext(newPlatform())
 	m, _ := bip39.ParseMnemonic(vectorMnemonic)
-	d, _ := seedDescriptor(m, seedScripts[0], seedScripts[0].DerivationPath())
+	d, _ := seedDescriptor(m, "", seedScripts[0], seedScripts[0].DerivationPath())
 	code, _ := qr.Encode(d.Encode(), qr.L)
 	dims := image.Pt(480, 320)
 	img := new(qrImage)
@@ -269,7 +269,7 @@ func TestDescriptorSkipIsAChoice(t *testing.T) {
 		click(&ctx.Router, Down)
 	}
 	click(&ctx.Router, Button3)
-	if path := walletDescriptorFlow(ctx, &descriptorTheme, m); path != "" {
+	if path := walletDescriptorFlow(ctx, &descriptorTheme, m, ""); path != "" {
 		t.Errorf("choosing SKIP reported a path: %q", path)
 	}
 }

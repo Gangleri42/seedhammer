@@ -66,14 +66,23 @@ choose from the RP2350's hardware random number generator.
 
 The split is the point. Your 23 drawn words fix 253 of the 256 bits; the machine
 supplies 3 and cannot influence the rest, so even a broken generator leaves an
-attacker facing 253 bits. A device that generates all 24 words holds the whole
+attacker facing 253 bits. A 12-word phrase splits 121 and 7 the same way, for a
+floor of 121. A device that generates all 24 words holds the whole
 wallet inside its RNG instead. The offer appears on the last word and nowhere
-else, so entering a phrase you already hold is unchanged.
+else, and it disappears the moment you type, so entering a phrase you already
+hold costs no extra keystrokes.
 
 Once the seed plate is engraved the machine derives the wallet descriptor from
-it and shows it as a QR to scan into a watch-only wallet, single-sig segwit or
-taproot, with the option to engrave it as a second plate. The seed never leaves
-the machine and never gets typed into a computer.
+it and shows it as a QR to scan into a watch-only wallet (segwit, taproot,
+nested or legacy, at the standard path or one you edit) with the option to
+engrave it as a second plate. The seed never leaves the machine and never gets
+typed into a computer.
+
+A BIP39 passphrase is optional and, if set, every plate carries the fingerprint
+of the wallet it actually opens rather than the one the words alone would. The
+passphrase can be engraved on a third plate of its own, under its character
+count, which is the only check the passphrase carries on its own. Its length is
+not capped: BIP39 sets no limit, so the machine sets none either.
 [How-to](docs/howto-generate-a-seed.md).
 
 ### Larger descriptors, reliable phone writes

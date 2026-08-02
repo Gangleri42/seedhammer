@@ -69,6 +69,11 @@ supplies 3 and cannot influence the rest, so even a broken generator leaves an
 attacker facing 253 bits. A device that generates all 24 words holds the whole
 wallet inside its RNG instead. The offer appears on the last word and nowhere
 else, so entering a phrase you already hold is unchanged.
+
+Once the seed plate is engraved the machine derives the wallet descriptor from
+it and shows it as a QR to scan into a watch-only wallet, single-sig segwit or
+taproot, with the option to engrave it as a second plate. The seed never leaves
+the machine and never gets typed into a computer.
 [How-to](docs/howto-generate-a-seed.md).
 
 ### Larger descriptors, reliable phone writes

@@ -2193,6 +2193,10 @@ func backupWalletFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic) {
 		}
 		completed := NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme)
 		if completed {
+			// The seed is on metal; offer the descriptor it implies, so
+			// a watch-only wallet can be set up without entering the
+			// phrase anywhere.
+			walletDescriptorFlow(ctx, th, mnemonic)
 			return
 		}
 	}

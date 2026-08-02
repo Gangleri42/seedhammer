@@ -108,6 +108,40 @@ against the screen, then destroy the paper.
    one, the top button backs out, the bottom button accepts.
 6. Check every word against your draw, then confirm to engrave.
 
+## Set up the watch-only wallet
+
+Once the seed plate is done, the machine offers the wallet descriptor: choose an
+address type, or back out if you do not want one.
+
+Segwit (`wpkh`, m/84'/0'/0') is understood by every wallet in circulation.
+Taproot (`tr`, m/86'/0'/0') is newer, with better privacy and fees, and slightly
+narrower support. Nested segwit (m/49') and legacy (m/44') are offered too, for
+a seed destined for a system that only speaks an older standard. All four derive
+from the same seed, so choosing one now does not rule out the others later.
+
+Each type carries its standard path, which is the whole answer for a wallet you
+are creating here. **ADVANCED** is for one that already exists somewhere else: it
+lets you pick the address type and then edit the derivation path, prefilled with
+the standard one, for a wallet set up at a second account or a different depth.
+Check the path and fingerprint on screen against that wallet; the machine has no
+way to check them for you.
+
+The descriptor appears as a QR code with its type, master fingerprint and
+derivation path beside it. Scan the code into a wallet on your phone or desktop
+and you have a watch-only wallet: it can show balances, generate receive
+addresses and build transactions, but it cannot spend, because the seed never
+left the machine. Check the fingerprint on screen against what the wallet
+reports after import; they must match.
+
+The bottom button engraves the descriptor as a plate of its own, which is worth
+doing for a wallet you intend to keep — restoring from a seed is easier when you
+also know which address type it was set up with.
+
+**A descriptor is not a seed, but it is not nothing.** It cannot move funds. It
+does reveal every address the wallet will ever use, so anyone holding it can see
+your whole balance and transaction history forever. Treat it as private
+information, just not as a key.
+
 ## What the machine's randomness is worth
 
 Honestly: very little, and that is the point.

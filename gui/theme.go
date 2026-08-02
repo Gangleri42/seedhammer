@@ -42,25 +42,30 @@ var (
 
 const leadingSize = 44
 
+// The palette is three colours and no more: a black ground, white text,
+// and orange for whatever the primary action is. It replaces a scheme
+// that carried a green, two blues and three near-whites, where the mode
+// a screen belonged to was signalled by its background colour.
+const (
+	black  = 0x000000
+	white  = 0xffffff
+	orange = 0xdd9700
+)
+
 func init() {
-	prim := rgb(0x02427d)
-	descriptorTheme = Colors{
-		Background: rgb(0x267f26),
-		Text:       rgb(0xe9f2ea),
-		Primary:    prim,
+	// One palette across every mode. The names are kept because the
+	// screens still ask for them, and because a mode may want to differ
+	// again; nothing should introduce a fourth colour to do it.
+	palette := Colors{
+		Background: rgb(black),
+		Text:       rgb(white),
+		Primary:    rgb(orange),
 	}
-	singleTheme = Colors{
-		Background: rgb(0xdd9700),
-		Text:       rgb(0xfbf4e8),
-		Primary:    prim,
-	}
-	engraveTheme = Colors{
-		Background: rgb(0xd1e83cb),
-		Text:       rgb(0xdffffff),
-		Primary:    prim,
-	}
+	descriptorTheme = palette
+	singleTheme = palette
+	engraveTheme = palette
 	cameraTheme = Colors{
-		Text: rgb(0xfbf4e8),
+		Text: rgb(white),
 	}
 	theme.overlayMask = 0x55
 	theme.activeMask = 0x55

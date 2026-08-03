@@ -59,9 +59,17 @@ func (t *Reader) readCC() (int, error) {
 	if magic := cc[0]; magic != ccMagic {
 		return 0, fmt.Errorf("cc: invalid magic: %x", magic)
 	}
-	memBlocks := int(cc[2]) * 8 / blockSize
+	// cc[2] is the tag's own claim, so it reaches 510 blocks while the
+	// block counter is a uint8. Comparing a truncated terminator lets the
+	// counter wrap past it and the read loop never ends. Clamp to what a
+	// uint8 can address; the largest real tag, NTAG216, claims 0x6d.
+	memBlocks := min(int(cc[2])*8/blockSize, maxMemBlocks)
 	return memBlocks, nil
 }
+
+// maxMemBlocks is the highest block count the uint8 block counter can
+// reach without wrapping past the end-of-read comparison.
+const maxMemBlocks = 255
 
 func (t *Reader) sensReq() (uint16, error) {
 	sensReq := t.scratch[:1]

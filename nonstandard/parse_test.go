@@ -139,3 +139,29 @@ func TestElectrumSeed(t *testing.T) {
 		t.Fatal("failed to detect upper-case Electrum seed")
 	}
 }
+
+// A malformed BlueWallet export must be rejected, not handed onward as a
+// descriptor that panics later. Both shapes reached the firmware from an
+// NFC tag: a short fingerprint panicked binary.BigEndian.Uint32 inside
+// the parser, and a missing Format header left Script at its zero value,
+// which bip380.Encode panics on when the operator confirms.
+func TestBlueWalletRejectsMalformed(t *testing.T) {
+	const xp = "xpub6DiYrfRwNnjeX4vHsWMajJVFKrbEEnu8gAW9vDuQzgTWEsEHE16sGWeXXUV1LBWQE1yCTmeprSNcqZ3W74hqVdgDbtYHUv3eM4W2TEUhpan"
+	base := "Name: t\nPolicy: 1 of 1\nDerivation: m/48'/0'/0'/2'\nFormat: P2WSH\n"
+	for _, fp := range []string{"", "00", "0000", "000000"} {
+		if _, err := OutputDescriptor([]byte(base + fp + ": " + xp + "\n")); err == nil {
+			t.Errorf("fingerprint %q: accepted, want rejected", fp)
+		}
+	}
+	if _, err := OutputDescriptor([]byte(base + "dc567276: " + xp + "\n")); err != nil {
+		t.Errorf("well-formed export rejected: %v", err)
+	}
+	for _, p := range []string{
+		"Name: t\nPolicy: 1 of 1\nDerivation: m/48'/0'/0'/2'\ndc567276: " + xp + "\n",
+		"Name: 00",
+	} {
+		if d, err := OutputDescriptor([]byte(p)); err == nil {
+			t.Errorf("missing Format accepted as %v, want rejected", d.Script)
+		}
+	}
+}

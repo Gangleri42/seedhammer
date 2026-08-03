@@ -137,7 +137,9 @@ func parseBlueWalletDescriptor(txt string) (*bip380.Descriptor, error) {
 			if err != nil {
 				return nil, fmt.Errorf("bluewallet: invalid fingerprint: %q", key)
 			}
-			if len(fp) > 4 {
+			// Exactly four, not at most four. A short key decodes to
+			// a slice binary.BigEndian.Uint32 indexes past the end of.
+			if len(fp) != 4 {
 				return nil, fmt.Errorf("bluewallet: invalid fingerprint: %q", key)
 			}
 			network, err := bip32.NetworkFor(xpub)
@@ -153,6 +155,14 @@ func parseBlueWalletDescriptor(txt string) (*bip380.Descriptor, error) {
 				ParentFingerprint: xpub.ParentFingerprint(),
 			})
 		}
+	}
+	// Format is the only header that sets Script, and bip380.Encode
+	// panics on the zero value. Reject here rather than hand the GUI a
+	// descriptor whose confirm screen renders but whose engrave does
+	// not: a payload as small as "Name: 00" reaches this point, and it
+	// shadows the plain text flow that should have claimed it.
+	if desc.Script == bip380.UnknownScript {
+		return nil, fmt.Errorf("bluewallet: missing Format header")
 	}
 	if nkeys != len(desc.Keys) {
 		return nil, fmt.Errorf("bluewallet: expected %d keys, but got %d", nkeys, len(desc.Keys))

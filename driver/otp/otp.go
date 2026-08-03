@@ -371,12 +371,22 @@ func otpAccess(buf []byte, row uint16, flags int) error {
 		aligned = unsafe.Slice(ptr, len(buf32)*4)
 	}
 	copy(aligned, buf)
+	if otp_access == nil {
+		return ErrUnavailable
+	}
 	res := otp_access(unsafe.SliceData(aligned), uint32(len(aligned)), rowAndFlags)
 	copy(buf, aligned)
 	return toErr(int(res))
 }
 
+// otp_access is installed by the rp2350 build. driver/trng holds the
+// same shape and guards it; a nil call here faults instead, and Init
+// reaches this through isSecureBootEnabled. Nothing but a link failure
+// in an unrelated package stops a build without it today.
 var otp_access func(buf *uint8, buf_len, row_and_flags uint32) int
+
+// ErrUnavailable reports a build with no bootrom OTP access.
+var ErrUnavailable = errors.New("otp: no bootrom access on this target")
 
 func toErr(res int) error {
 	if res == 0 {

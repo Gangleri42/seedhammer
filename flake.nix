@@ -99,7 +99,11 @@
               WORKDIR="$(mktemp -d)"
               OUTPUT="seedhammerii-$VERSION.uf2"
 
-              ${pkgs.tinygo}/bin/tinygo build -o "$WORKDIR/firmware.uf2" -ldflags="-X main.Version=$VERSION" ${tinygo-flags} "$@" ./cmd/controller
+              # No "$@": forwarding build flags here let -tags debug produce a
+              # signable image carrying the UART stdin injection in
+              # debug_sh2.go, with nothing on screen to say so. flash-firmware
+              # keeps its own passthrough for development builds.
+              ${pkgs.tinygo}/bin/tinygo build -o "$WORKDIR/firmware.uf2" -ldflags="-X main.Version=$VERSION" ${tinygo-flags} ./cmd/controller
               # Sign with a dummy key to convince picotool to create the necessary
               # file structure for signing.
               ${pkgs.picotool}/bin/picotool seal --sign --clear --quiet "$WORKDIR/firmware.uf2" "$WORKDIR/firmware.signed.uf2" "${dummy_pem}"

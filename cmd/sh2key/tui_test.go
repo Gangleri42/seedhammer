@@ -490,3 +490,67 @@ func TestWorkingPaintsBeforeBlocking(t *testing.T) {
 		t.Error("modal did not clear the busy line")
 	}
 }
+
+// provision is the only command that burns a write-once fuse, so it is
+// the one that must not guess which key it is provisioning. It mints
+// past a genuine absence and past a missing named file, and past nothing
+// else: minting past an ambiguous directory spends a slot and then
+// silences the guard everywhere, because resolveKeyPath prefers the
+// convention name once it exists.
+func TestProvisionKeyMintsOnlyOnAbsence(t *testing.T) {
+	write := func(name string) {
+		k, err := secp256k1.GeneratePrivateKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, marshalKeyPEM(k), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("empty dir mints", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		_, path, minted, err := provisionKey(newUI(io.Discard), defaultKeyPath)
+		if err != nil || !minted || path != defaultKeyPath {
+			t.Fatalf("got %q minted=%v err=%v; want a fresh %s", path, minted, err, defaultKeyPath)
+		}
+	})
+
+	t.Run("one key is adopted", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		write("only.pem")
+		_, path, minted, err := provisionKey(newUI(io.Discard), defaultKeyPath)
+		if err != nil || minted || path != "only.pem" {
+			t.Fatalf("got %q minted=%v err=%v; want only.pem adopted", path, minted, err)
+		}
+	})
+
+	t.Run("ambiguous dir refuses", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		write("board-a.pem")
+		write("board-b.pem")
+		_, _, minted, err := provisionKey(newUI(io.Discard), defaultKeyPath)
+		if err == nil {
+			t.Fatal("ambiguous directory provisioned without asking")
+		}
+		if minted {
+			t.Error("ambiguous directory minted a key")
+		}
+		if !strings.Contains(err.Error(), "several keys here") {
+			t.Errorf("error does not name the ambiguity: %v", err)
+		}
+		if _, serr := os.Stat(defaultKeyPath); serr == nil {
+			t.Errorf("%s was written despite the refusal", defaultKeyPath)
+		}
+	})
+
+	t.Run("explicit -key wins in an ambiguous dir", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		write("board-a.pem")
+		write("board-b.pem")
+		_, path, minted, err := provisionKey(newUI(io.Discard), "board-b.pem")
+		if err != nil || minted || path != "board-b.pem" {
+			t.Fatalf("got %q minted=%v err=%v; want board-b.pem adopted", path, minted, err)
+		}
+	})
+}

@@ -31,6 +31,12 @@ const defaultKeyPath = "sh2-bootkey.pem"
 // compatibility, then discovers key PEMs in the working directory:
 // exactly one wins regardless of its name, and several is the user's
 // choice to make, never a silent pick.
+// errNoKeyHere reports a working directory holding no key to adopt.
+// provision is allowed to mint past this one and past a missing named
+// file, and past nothing else: an ambiguous directory must stop it,
+// because it is the only command that burns a write-once fuse.
+var errNoKeyHere = errors.New("no PEM here parses as a secp256k1 private key; mint one with 'sh2key mint' or name yours with -key")
+
 func resolveKeyPath(flagVal string) (string, error) {
 	if flagVal != defaultKeyPath && flagVal != "" {
 		if _, err := os.Stat(flagVal); err != nil {
@@ -46,7 +52,7 @@ func resolveKeyPath(flagVal string) (string, error) {
 	case 1:
 		return cands[0], nil
 	case 0:
-		return "", errors.New("no PEM here parses as a secp256k1 private key; mint one with 'sh2key mint' or name yours with -key")
+		return "", errNoKeyHere
 	default:
 		return "", fmt.Errorf("several keys here: %s; name one with -key", strings.Join(cands, ", "))
 	}

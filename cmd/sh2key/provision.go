@@ -250,7 +250,12 @@ func provisionKey(u *ui, keyFlag string) (priv *secp256k1.PrivateKey, path strin
 	if resolved, rerr := resolveKeyPath(keyFlag); rerr == nil {
 		priv, err = loadKeyFile(resolved)
 		return priv, resolved, false, err
-	} else if !errors.Is(rerr, fs.ErrNotExist) && keyFlag != defaultKeyPath {
+	} else if !errors.Is(rerr, fs.ErrNotExist) && !errors.Is(rerr, errNoKeyHere) {
+		// Only a genuine absence mints. resolveKeyPath also reports an
+		// ambiguous directory, and this is the one command that burns a
+		// write-once fuse: minting past "several keys here" spends a
+		// slot and then silences the guard everywhere, because
+		// resolveKeyPath prefers the convention name once it exists.
 		return nil, "", false, rerr
 	}
 	priv, err = mintKey(path)

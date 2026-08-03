@@ -184,3 +184,40 @@ func TestNpubFromRejectsNpub(t *testing.T) {
 		t.Fatalf("NpubFrom(npub): err = %v, want errNotNsec", err)
 	}
 }
+
+func TestNpubFromRejectsOutOfRangeScalars(t *testing.T) {
+	// secp256k1 group order N, and the values either side of the valid
+	// range [1, N-1]. PrivKeyFromBytes would reduce these mod N and hand
+	// back a public key belonging to a different secret.
+	order := []byte{
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe,
+		0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b,
+		0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41,
+	}
+	for name, data := range map[string][]byte{
+		"zero": make([]byte, 32),
+		"N":    order,
+		"N+1":  append(append([]byte{}, order[:31]...), order[31]+1),
+		"all ff": {
+			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		},
+	} {
+		var k Key
+		k.HRP = HRPSec
+		copy(k.Data[:], data)
+		if _, err := NpubFrom(k); err == nil {
+			t.Errorf("%s: accepted, want rejected", name)
+		}
+	}
+	// One in range still works.
+	var ok Key
+	ok.HRP = HRPSec
+	ok.Data[31] = 1
+	if _, err := NpubFrom(ok); err != nil {
+		t.Errorf("scalar 1 rejected: %v", err)
+	}
+}

@@ -34,6 +34,7 @@ var (
 	errInvalidCase      = errors.New("invalid case")
 	errInvalidCharacter = errors.New("invalid character")
 	errCompoundEntity   = errors.New("compound entity not supported")
+	errKeyOutOfRange    = errors.New("secret key is not in [1, N-1]")
 	errNotNsec          = errors.New("not an nsec key")
 )
 
@@ -86,7 +87,16 @@ func NpubFrom(nsec Key) (Key, error) {
 	if nsec.HRP != HRPSec {
 		return Key{}, fmt.Errorf("nip19: %w", errNotNsec)
 	}
-	priv := secp256k1.PrivKeyFromBytes(nsec.Data[:])
+	// PrivKeyFromBytes discards SetByteSlice's overflow report and
+	// reduces mod N, so a scalar of N+1 would derive the npub of 1 and
+	// zero would derive no curve point at all. cmd/sh2key rejects both
+	// explicitly; do the same here rather than engrave a public key that
+	// does not belong to the secret on the other plate.
+	var scalar secp256k1.ModNScalar
+	if scalar.SetByteSlice(nsec.Data[:]) || scalar.IsZero() {
+		return Key{}, fmt.Errorf("nip19: %w", errKeyOutOfRange)
+	}
+	priv := secp256k1.NewPrivateKey(&scalar)
 	pub := priv.PubKey()
 	npub := Key{HRP: HRPPub}
 	// X().FillBytes writes the 32-byte big-endian X coordinate, zero-padded

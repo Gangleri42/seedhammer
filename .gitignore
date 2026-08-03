@@ -5,3 +5,10 @@ __pycache__/
 /sh2key
 sh2key.json
 .wiki/
+
+# Key material never belongs in the tree. These are also in
+# .git/info/exclude on the machine that holds them, but that file is
+# local and a fresh clone does not get it.
+*.pem
+sh2-bootkey*.json
+otp-*.txt

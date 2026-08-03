@@ -74,6 +74,11 @@ func (s *scanner) Scan(r io.Reader) (any, error) {
 			return curvesPayload(bytes.Clone(buf)), nil
 		}
 	}
+	// The provisioning channel inherited from upstream, dispatched ahead
+	// of every parser and deliberately ungated: see the commands in
+	// gui.go. On a provisioned board lock-boot is a no-op plus a reboot,
+	// because each of its three steps early-returns on an already-set
+	// value.
 	const cmdPrefix = "command: "
 	if bytes.HasPrefix(buf, []byte(cmdPrefix)) {
 		cmd := debugCommand{string(buf[len(cmdPrefix):])}

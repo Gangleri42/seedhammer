@@ -284,3 +284,48 @@ func TestMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestValidOutOfRangeLengths(t *testing.T) {
+	// Valid is a predicate, and seedqr.Parse gates only on len%4, so
+	// every length reaches it and it has to answer rather than panic.
+	for _, n := range []int{0, 3, 6, 9, 27, 30, 48} {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("Valid panicked on %d words: %v", n, r)
+				}
+			}()
+			if make(Mnemonic, n).Valid() {
+				t.Errorf("Valid reported %d words as valid", n)
+			}
+		}()
+	}
+}
+
+func TestValidAcceptsDefinedLengths(t *testing.T) {
+	for _, n := range []int{12, 15, 18, 21, 24} {
+		if m := make(Mnemonic, n).FixChecksum(); !m.Valid() {
+			t.Errorf("checksum-fixed %d-word mnemonic reported invalid", n)
+		}
+	}
+}
+
+func TestValidRejectsOutOfRangeWords(t *testing.T) {
+	// seedqr.Parse admits indices up to 65535 from a four-digit group.
+	// A word past the wordlist overflows the entropy big.Int and drives
+	// splitMnemonic's padding count negative.
+	for _, w := range []Word{-1, NumWords, NumWords + 1, 65535} {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("Valid panicked on word %d: %v", w, r)
+				}
+			}()
+			m := make(Mnemonic, 12)
+			m[0] = w
+			if m.Valid() {
+				t.Errorf("Valid reported word %d as valid", w)
+			}
+		}()
+	}
+}

@@ -134,8 +134,14 @@ func Complete(frag string) (Word, bool) {
 
 // Valid reports whether the mnemonic checksum is correct.
 func (m Mnemonic) Valid() bool {
-	// Panics in splitMnemonic.
-	if len(m)%3 != 0 {
+	// Panics in splitMnemonic below three, in checksum past 24 words,
+	// and on the last-word index when empty.
+	if len(m) < 12 || len(m) > 24 || len(m)%3 != 0 {
+		return false
+	}
+	// A word past the end of the list overflows the entropy big.Int and
+	// makes the padding count in splitMnemonic negative.
+	if !m.wordsInRange() {
 		return false
 	}
 	ent, _ := splitMnemonic(m)

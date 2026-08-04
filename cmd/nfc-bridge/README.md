@@ -36,8 +36,11 @@ does.
 
 - Python 3 with `nfcpy` and `ndeflib` (`pip install nfcpy ndeflib`);
   a venv keeps it tidy.
-- Reader access without sudo: a udev rule for your reader (an ACR122U
-  or similar).
+- A USB NFC reader: an **ACS ACR122U**, which is what this bridge, the
+  senders and the repo's udev rule are written against. Others that nfcpy
+  supports generally work; the rule below is then yours to adapt.
+- Reader access without sudo: a udev rule for it (`install.sh send` writes
+  one for the ACR122U).
 
 ## Run once
 

@@ -12,7 +12,8 @@ Tools APP, add text --> send, done. preview renders on screen)
 - A SeedHammer II running the [fork firmware](../README.md#firmware-downloads).
 - Something that writes NFC Text records: a phone app (NFC Tools works),
   [Studio's plate composer](https://gangleri42.github.io/studio/textplate/),
-  or [`write-nfc.py`](../cmd/textplate/write-nfc.py) with a USB reader.
+  or [`write-nfc.py`](../cmd/textplate/write-nfc.py) with a USB NFC reader
+  (an [ACR122U](../README.md#host-setup)).
   Typing on the device needs none of these.
 
 ## Compose

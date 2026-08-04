@@ -12,7 +12,8 @@ Draw on the canvas, place and edit text, import an SVG, or write markdown in
 the rich-text pane; the preview uses the same fonts and speed model the machine
 does (firmware code compiled to WebAssembly). Send writes over Web NFC on
 Android; on desktop, the [NFC bridge](../cmd/nfc-bridge/README.md) routes
-Send to a USB reader (`./install.sh send` installs it as a user service).
+Send to a USB NFC reader (an [ACR122U](../README.md#host-setup);
+`./install.sh send` installs the bridge as a user service).
 
 ## The CLI way: svgplate
 

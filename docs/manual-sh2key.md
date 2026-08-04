@@ -34,9 +34,11 @@ no picotool. `build` wraps `nix run .#build-firmware`, so it is the
 one command that needs nix itself. Sending plates to the machine
 (`-nfc`, or the engrave keys in the tool) runs
 `cmd/textplate/write-nfc.py`, which needs
-`python3` with `nfcpy` and `ndeflib` and a USB NFC reader. The
-installer creates that stack in `~/.nfc-venv`, and the tool prefers
-that venv's python by itself; nothing to activate.
+`python3` with `nfcpy` and `ndeflib` and a USB NFC reader — an **ACS
+ACR122U**, the reader this repo's udev rule, senders and bench
+results all assume. The installer creates that stack in
+`~/.nfc-venv`, and the tool prefers that venv's python by itself;
+nothing to activate.
 
 First run on Linux: `sh2key setup-udev`, once. It shows and installs
 the single udev rule that lets picotool open the board without sudo;

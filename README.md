@@ -161,6 +161,21 @@ with `picotool`, leaving official firmware bootable alongside.
 
 ## Host setup
 
+**Get an NFC reader.** The machine has no camera and no data port: NFC is the
+only way anything reaches it, so without a reader the desktop tooling here can
+build and sign firmware but cannot send a descriptor, a seed, a key or a
+drawing. An **ACS ACR122U** is the one to buy. It is what everything here is
+written and tested against — `install.sh` writes a udev rule for its USB id
+(072f:2200) and warns when `pcscd` is holding it, `write-nfc.py` and the
+[bridge](cmd/nfc-bridge) drive it through nfcpy, and every bench result in this
+repo came off one. nfcpy supports other readers and they usually work, but the
+permissions rule and the troubleshooting are yours to write.
+
+An Android phone with Chrome is the alternative for sending: it speaks Web NFC
+directly from [Studio](https://gangleri42.github.io/studio/), no reader and no
+bridge. It cannot replace the reader for `sh2key`'s plate sends or the CLI
+senders, which talk to the reader over USB.
+
 The desktop tooling installs in one pass. From the checkout, on Linux or
 macOS:
 

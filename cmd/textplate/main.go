@@ -39,6 +39,13 @@ type sizeEntry struct {
 	Rows int     `json:"rows"`
 }
 
+type plateEntry struct {
+	Name  string      `json:"name"`
+	WMM   int         `json:"wMM"`
+	HMM   int         `json:"hMM"`
+	Sizes []sizeEntry `json:"sizes"`
+}
+
 type fontData struct {
 	Height   int               `json:"height"`
 	Ascent   int               `json:"ascent"`
@@ -48,6 +55,11 @@ type fontData struct {
 	StrokeMM float32           `json:"strokeMM"`
 	Sizes    []sizeEntry       `json:"sizes"`
 	Glyphs   map[string]string `json:"glyphs"`
+
+	// Plates lists every plate format with its own line grid. The
+	// top-level PlateMM/Sizes stay the square plate's, so older
+	// consumers keep reading what they always did.
+	Plates []plateEntry `json:"plates"`
 
 	// The seedhammer.com:curves record parameters, for compiling
 	// compositions to vector payloads.
@@ -102,6 +114,24 @@ func render() []byte {
 			Cols: backup.CharsPerLine(params, sh.Font, size),
 			Rows: backup.LinesPerPlate(params, backup.SquarePlate, size),
 		})
+	}
+	for _, p := range []struct {
+		name string
+		size backup.PlateSize
+	}{
+		{"square", backup.SquarePlate},
+		{"small", backup.SmallPlate},
+	} {
+		d := p.size.Dims()
+		e := plateEntry{Name: p.name, WMM: d.X, HMM: d.Y}
+		for _, size := range backup.FontSizes {
+			e.Sizes = append(e.Sizes, sizeEntry{
+				MM:   size,
+				Cols: backup.CharsPerLine(params, sh.Font, size),
+				Rows: backup.LinesPerPlate(params, p.size, size),
+			})
+		}
+		data.Plates = append(data.Plates, e)
 	}
 	for ch := rune(0); ch < 128; ch++ {
 		if _, _, ok := sh.Font.Decode(ch); !ok {

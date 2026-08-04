@@ -4,6 +4,7 @@ package backup
 import (
 	"fmt"
 	"image"
+	"math"
 	"strings"
 
 	qr "github.com/seedhammer/kortschak-qr"
@@ -246,11 +247,21 @@ func frontSideSeed(params engrave.Params, plate Seed, qrc *engrave.ConstantQRCmd
 		metaMargin := params.I(4)
 		if plate.MasterFingerprint != 0 {
 			mfp := fmt.Sprintf("%.8X", plate.MasterFingerprint)
-			offy := (plateDims.Y-col1Height)/2 - metaMargin
 			mfpStr := engrave.String(plate.Font, params.F(plateSmallFontSize), mfp).SourceOrder()
 			mfpszX, mfpszY := mfpStr.Measure()
-			t.Offset((plateDims.X-mfpszX)/2, offy-mfpszY)
-			mfpStr.Engrave(t.Yield)
+			switch plate.Size {
+			case SmallPlate:
+				// No headroom above the column on the small plate: the
+				// fingerprint reads up the left edge, as on the v1
+				// SH01 plates.
+				margin := params.I(outerMargin)
+				off := t.Offset(margin, (plateDims.Y+mfpszX)/2).Rotate(-math.Pi / 2)
+				mfpStr.Engrave(off.Yield)
+			default:
+				offy := (plateDims.Y-col1Height)/2 - metaMargin
+				t.Offset((plateDims.X-mfpszX)/2, offy-mfpszY)
+				mfpStr.Engrave(t.Yield)
+			}
 		}
 
 		// Engrave column 1.
@@ -281,11 +292,19 @@ func frontSideSeed(params engrave.Params, plate Seed, qrc *engrave.ConstantQRCmd
 		// Engrave title.
 		title := strings.ToUpper(plate.Title)
 		{
-			offy := (plateDims.Y+col1Height)/2 + metaMargin
-			title := engrave.String(plate.Font, params.F(plateSmallFontSize), title).SourceOrder()
-			titleWidth, _ := title.Measure()
-			t.Offset((plateDims.X-titleWidth)/2, offy)
-			title.Engrave(t.Yield)
+			titleStr := engrave.String(plate.Font, params.F(plateSmallFontSize), title).SourceOrder()
+			titleWidth, titleHeight := titleStr.Measure()
+			switch plate.Size {
+			case SmallPlate:
+				// Up the right edge, mirroring the fingerprint.
+				margin := params.I(outerMargin)
+				off := t.Offset(plateDims.X-margin-titleHeight, (plateDims.Y+titleWidth)/2).Rotate(-math.Pi / 2)
+				titleStr.Engrave(off.Yield)
+			default:
+				offy := (plateDims.Y+col1Height)/2 + metaMargin
+				t.Offset((plateDims.X-titleWidth)/2, offy)
+				titleStr.Engrave(t.Yield)
+			}
 		}
 	}
 }

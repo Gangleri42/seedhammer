@@ -447,7 +447,7 @@ func TestEngraveSeedUsesPassphrase(t *testing.T) {
 	}
 	params := newPlatform().EngraverParams()
 	digest := func(pass string) string {
-		plan, err := engraveSeed(params, m, pass)
+		plan, err := engraveSeed(params, SquarePlate, m, pass)
 		if err != nil {
 			t.Fatalf("%q: %v", pass, err)
 		}

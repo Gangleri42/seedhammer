@@ -870,7 +870,7 @@ func machineSpline(params engrave.Params, plate Plate) bspline.Curve {
 	}
 }
 
-func engraveSeed(params engrave.Params, m bip39.Mnemonic, passphrase string) (engrave.Engraving, error) {
+func engraveSeed(params engrave.Params, plateSize PlateSize, m bip39.Mnemonic, passphrase string) (engrave.Engraving, error) {
 	// The fingerprint names the wallet the plates actually open, which
 	// with a passphrase is not the one the words alone would.
 	mfp, err := masterFingerprintFor(m, passphrase, &chaincfg.MainNetParams)
@@ -886,6 +886,7 @@ func engraveSeed(params engrave.Params, m bip39.Mnemonic, passphrase string) (en
 		words[i] = bip39.LabelFor(w)
 	}
 	seedDesc := backup.Seed{
+		Size:              plateSize,
 		Mnemonic:          words,
 		ShortestWord:      bip39.ShortestWord,
 		LongestWord:       bip39.LongestWord,
@@ -2450,11 +2451,19 @@ func seedPlateFlow(ctx *Context, th *Colors, ss *SeedScreen, mnemonic bip39.Mnem
 		return true
 	}
 	params := ctx.Platform.EngraverParams()
-	plan, err := engraveSeed(params, mnemonic, passphrase)
+	plan, err := engraveSeed(params, SmallPlate, mnemonic, passphrase)
+	fitsSmall := err == nil && layoutFits(plan, params, SmallPlate)
+	plateSize, sizeOK := askPlateSize(ctx, th, fitsSmall)
+	if !sizeOK {
+		return false
+	}
+	if plateSize != SmallPlate {
+		plan, err = engraveSeed(params, plateSize, mnemonic, passphrase)
+	}
 	var plate Plate
 	var view *CurvesScreen
 	if err == nil {
-		plate, view, err = planPreviewPlate(ctx, th, "Engrave Seed", plan, params, SquarePlate)
+		plate, view, err = planPreviewPlate(ctx, th, "Engrave Seed", plan, params, plateSize)
 	}
 	if err != nil {
 		if errors.Is(err, errPlanCanceled) {

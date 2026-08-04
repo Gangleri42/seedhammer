@@ -183,9 +183,13 @@ func TestText(t *testing.T) {
 func TestSeed(t *testing.T) {
 	tests := []struct {
 		seedLen int
+		size    PlateSize
 	}{
-		{24},
-		{12},
+		{24, SquarePlate},
+		{12, SquarePlate},
+		// The small plate's own 12-word layout: edge-rotated
+		// fingerprint and title.
+		{12, SmallPlate},
 	}
 	for i, test := range tests {
 		name := fmt.Sprintf("%d-words-%d", i, test.seedLen)
@@ -193,6 +197,7 @@ func TestSeed(t *testing.T) {
 			t.Parallel()
 
 			seedDesc := genSeed(t, "Satoshi Stash", test.seedLen)
+			seedDesc.Size = test.size
 			p, err := EngraveSeed(params, seedDesc)
 			if err != nil {
 				t.Fatal(err)

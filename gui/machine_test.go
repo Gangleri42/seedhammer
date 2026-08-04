@@ -1,9 +1,11 @@
 package gui
 
 import (
+	"errors"
 	"image"
 	"testing"
 
+	"seedhammer.com/bip39"
 	"seedhammer.com/bspline"
 )
 
@@ -24,6 +26,42 @@ func TestPreviewAspect(t *testing.T) {
 	if small, square := previewSide(dims, SmallPlate), previewSide(dims, SquarePlate); small < square {
 		t.Errorf("small preview width %d narrower than square %d", small, square)
 	}
+}
+
+// TestSmallSeedGate pins which seed plates the small format takes:
+// 12 words fit with the edge-rotated layout, while 24 words overflow
+// the word column and must be rejected by the margin gate rather
+// than lose words.
+func TestSmallSeedGate(t *testing.T) {
+	for _, test := range []struct {
+		words int
+		fits  bool
+	}{
+		{12, true},
+		{24, false},
+	} {
+		plan, err := engraveSeed(engraverParams, SmallPlate, testMnemonic(t, test.words), "")
+		if err != nil {
+			t.Fatalf("%d words: %v", test.words, err)
+		}
+		if got := layoutFits(plan, engraverParams, SmallPlate); got != test.fits {
+			t.Errorf("%d words on the small plate: fits=%v, want %v", test.words, got, test.fits)
+		}
+		if !test.fits {
+			if _, err := toPlate(plan, engraverParams, SmallPlate); !errors.Is(err, ErrTooLarge) {
+				t.Errorf("%d words: gate error %v, want ErrTooLarge", test.words, err)
+			}
+		}
+	}
+}
+
+func testMnemonic(t *testing.T, words int) bip39.Mnemonic {
+	t.Helper()
+	m := make(bip39.Mnemonic, words)
+	for j := range m {
+		m[j] = bip39.Word(j)
+	}
+	return m.FixChecksum()
 }
 
 // TestMachineSpline pins the plate-to-machine frame contract: the

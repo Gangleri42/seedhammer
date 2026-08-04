@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"seedhammer.com/bezier"
+	"seedhammer.com/bspline"
 	"seedhammer.com/curves"
 	"seedhammer.com/richtext"
 	"seedhammer.com/svgpath"
@@ -174,13 +175,56 @@ func TestSVGRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
+	d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()}, 85, 85)
 	_, _, r, err := finishDrawing(d, true)
 	if err != nil {
 		t.Fatalf("finishDrawing: %v", err)
 	}
 	if r.Strokes != 2 {
 		t.Errorf("want 2 strokes (circle + rect; hidden path skipped), got %d", r.Strokes)
+	}
+}
+
+// TestSmallPlateFit: the small-plate auto-fit centers inside the
+// 85x55 frame with the per-axis slack, so what it places always
+// passes the small-frame bound the converter enforces for -plate
+// small.
+func TestSmallPlateFit(t *testing.T) {
+	const doc = `<svg viewBox="0 0 100 100">
+	  <rect x="0" y="0" width="100" height="60"/>
+	</svg>`
+	raw, err := extractSVG([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()}, 85, 55)
+	b := d.bounds()
+	fw, fh := fitBox(85, 55)
+	if got := b.width(); got > fw+1e-6 {
+		t.Errorf("fitted width %.3f exceeds the box %.3f", got, fw)
+	}
+	if got := b.height(); got > fh+1e-6 {
+		t.Errorf("fitted height %.3f exceeds the box %.3f", got, fh)
+	}
+	// Height binds this 100x60 source on 85x55: the width must not
+	// stretch to the square-plate box.
+	if cx := (b.min.X + b.max.X) / 2; !approx(cx, 85.0/2, 1e-6) {
+		t.Errorf("horizontal center %.3f, want %.3f", cx, 85.0/2)
+	}
+	if cy := (b.min.Y + b.max.Y) / 2; !approx(cy, 55.0/2, 1e-6) {
+		t.Errorf("vertical center %.3f, want %.3f", cy, 55.0/2)
+	}
+	_, _, r, err := finishDrawing(d, true)
+	if err != nil {
+		t.Fatalf("finishDrawing: %v", err)
+	}
+	m := curves.SafetyMarginMM * sh2.Millimeter
+	limit := bspline.Bounds{
+		Min: bezier.Pt(m, m),
+		Max: bezier.Pt(85*sh2.Millimeter-m, 55*sh2.Millimeter-m),
+	}
+	if !r.Bounds.In(limit) {
+		t.Errorf("placed bounds %v leave the small frame %v", r.Bounds, limit)
 	}
 }
 
@@ -562,7 +606,7 @@ func TestCopiedShapesShareADictionaryEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
+	d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()}, 85, 85)
 	dict, _, r, err := finishDrawing(d, true)
 	if err != nil {
 		t.Fatal(err)
@@ -592,7 +636,7 @@ func TestSVGDictionaryCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
+	d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()}, 85, 85)
 	dict, _, r, err := finishDrawing(d, true)
 	if err != nil {
 		t.Fatalf("finishDrawing: %v", err)
@@ -635,7 +679,7 @@ func placedMatchesFlat(t *testing.T, pl placement) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := layoutOnPlate(raw, pl)
+	d := layoutOnPlate(raw, pl, 85, 85)
 	dict, parsed, _, err := finishDrawing(d, false)
 	if err != nil {
 		t.Fatal(err)
@@ -686,7 +730,7 @@ func TestRealLogos(t *testing.T) {
 			t.Errorf("%s: extract: %v", f, err)
 			continue
 		}
-		d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
+		d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()}, 85, 85)
 		if _, _, _, err := finishDrawing(d, true); err != nil {
 			t.Errorf("%s: finishDrawing: %v", f, err)
 		}

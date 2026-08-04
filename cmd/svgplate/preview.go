@@ -14,14 +14,15 @@ import (
 
 // writePreview renders the drawing as the device would engrave it,
 // planned strokes sampled to a black-on-white PNG of the whole plate.
-// side is the plate's pixel size.
-func writePreview(path string, d *curves.Drawing, side int) error {
+// side is the plate's pixel width; the height follows the plate's
+// aspect.
+func writePreview(path string, d *curves.Drawing, side int, plateW, plateH float64) error {
 	const pen = 1 // stroke half-width in pixels.
-	img := image.NewGray(image.Rect(0, 0, side, side))
+	img := image.NewGray(image.Rect(0, 0, side, int(float64(side)*plateH/plateW+0.5)))
 	for i := range img.Pix {
 		img.Pix[i] = 0xff
 	}
-	plate := float64(curves.PlateMM * sh2.Millimeter)
+	plate := plateW * float64(sh2.Millimeter)
 	px := func(p bezier.Point) (int, int) {
 		return int(float64(p.X) / plate * float64(side)), int(float64(p.Y) / plate * float64(side))
 	}

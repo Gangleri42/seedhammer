@@ -21,6 +21,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"seedhammer.com/backup"
+	"seedhammer.com/bezier"
+	"seedhammer.com/bspline"
 	"seedhammer.com/curves"
 	"seedhammer.com/richtext"
 )
@@ -36,8 +39,20 @@ func main() {
 		body    = flag.Float64("size", 4, "body text height in mm (rich text)")
 		side    = flag.Int("previewpx", 1024, "preview size in pixels")
 		noorder = flag.Bool("noorder", false, "skip travel-optimizing stroke ordering")
+		plate   = flag.String("plate", "square", "target plate: square (85x85) or small (85x55)")
 	)
 	flag.Parse()
+	var plateSize backup.PlateSize
+	switch strings.ToLower(*plate) {
+	case "square":
+		plateSize = backup.SquarePlate
+	case "small":
+		plateSize = backup.SmallPlate
+	default:
+		die(fmt.Errorf("bad -plate %q, want square or small", *plate))
+	}
+	pd := plateSize.Dims()
+	plateW, plateH := float64(pd.X), float64(pd.Y)
 	if flag.NArg() != 1 {
 		flag.Usage()
 		os.Exit(2)
@@ -79,7 +94,20 @@ func main() {
 		if perr != nil {
 			die(perr)
 		}
-		payload, d, r, verr = finishDrawing(layoutOnPlate(raw, pl), !*noorder)
+		payload, d, r, verr = finishDrawing(layoutOnPlate(raw, pl, plateW, plateH), !*noorder)
+	}
+	if verr == nil && plateSize == backup.SmallPlate && !r.Bounds.Empty() {
+		// The wire format carries no plate; a small-plate payload is
+		// simply one whose coordinates stay inside the small frame,
+		// which the device offers to cut small.
+		m := curves.SafetyMarginMM * sh2.Millimeter
+		limit := bspline.Bounds{
+			Min: bezier.Pt(m, m),
+			Max: bezier.Pt(pd.X*sh2.Millimeter-m, pd.Y*sh2.Millimeter-m),
+		}
+		if !r.Bounds.In(limit) {
+			verr = fmt.Errorf("the drawing runs outside the small plate's %dmm margin", curves.SafetyMarginMM)
+		}
 	}
 	report(in, payload, r, warn, verr)
 
@@ -92,7 +120,7 @@ func main() {
 		}
 		fmt.Fprintf(os.Stderr, "wrote %s\n", *out)
 		if *preview != "" {
-			if err := writePreview(*preview, d, *side); err != nil {
+			if err := writePreview(*preview, d, *side, plateW, plateH); err != nil {
 				die(err)
 			}
 			fmt.Fprintf(os.Stderr, "wrote %s\n", *preview)

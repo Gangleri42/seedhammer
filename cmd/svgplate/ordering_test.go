@@ -99,7 +99,7 @@ func TestPlacementOrderingMatchesFlat(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
+			d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()}, 85, 85)
 
 			grouped, _, gr, err := finishDrawing(d, true)
 			if err != nil {
@@ -160,7 +160,7 @@ func TestAutoFitClearsMarginAfterQuantization(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()})
+		d := layoutOnPlate(raw, placement{posX: math.NaN(), posY: math.NaN()}, 85, 85)
 		if _, _, r, err := finishDrawing(d, true); err != nil {
 			t.Errorf("%d stamps: %v (size %v)", n, err, r.Bounds)
 		}

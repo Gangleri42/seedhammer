@@ -61,9 +61,12 @@ const Version = 2
 // keeps the head on the plate.
 const (
 	MaxMinutes = 60
-	// PlateMM is the square plate side and SafetyMarginMM its
-	// engravable keepout, both in millimeters. A gui test asserts
-	// these match the firmware's own plate geometry.
+	// PlateMM is the plate width every format shares (and the square
+	// plate's side) and SafetyMarginMM its engravable keepout, both
+	// in millimeters. Payload coordinates are bounded by the square
+	// plate; which physical plate they land on is decided on the
+	// device. A gui test asserts these match the firmware's own
+	// plate geometry.
 	PlateMM        = 85
 	SafetyMarginMM = 3
 )

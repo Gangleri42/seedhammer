@@ -114,6 +114,21 @@ func Split(data Data, keyIdx int) (urs []string) {
 	return
 }
 
+// HasScheme reports whether Split partitions a threshold-of-shards
+// backup into shares smaller than the whole, rather than falling
+// back to a full copy per share. 1-of-n backups always report false:
+// a full copy per share IS the optimal 1-of-n split, so the fallback
+// is not a compromise there.
+func HasScheme(threshold, shards int) bool {
+	m, n := threshold, shards
+	if m <= 1 {
+		// The m == n-1 scheme degenerates to seqLen 1 for m == 1,
+		// which is the full-copy fallback by another route.
+		return false
+	}
+	return n-m <= 1 || (n == 4 && m == 2) || (n == 5 && m == 3)
+}
+
 func Encode(_type string, message []byte, seqNum, seqLen int) string {
 	if seqLen == 1 {
 		return fmt.Sprintf("ur:%s/%s", _type, bytewords.Encode(message))

@@ -12,6 +12,7 @@ import (
 )
 
 type Seed struct {
+	Size              PlateSize
 	Title             string
 	Mnemonic          []string
 	ShortestWord      int
@@ -22,6 +23,7 @@ type Seed struct {
 }
 
 type SeedString struct {
+	Size              PlateSize
 	Title             string
 	Seed              string
 	MasterFingerprint uint32
@@ -29,6 +31,7 @@ type SeedString struct {
 }
 
 type Text struct {
+	Size       PlateSize
 	Paragraphs []Paragraph
 	Font       *vector.Face
 	// FontSize is the text size in millimeters. If zero, it defaults
@@ -165,10 +168,7 @@ func engraveSeedString(params engrave.Params, plate SeedString, qrc *engrave.Con
 	pfs := params.F(plateFontSize)
 	constant := engrave.NewConstantStringer(plate.Font, params, pfs)
 	return func(yield func(engrave.Command) bool) {
-		plateDims := image.Point{
-			X: params.F(85),
-			Y: params.F(85),
-		}
+		plateDims := plate.Size.dims(params)
 		t := engrave.NewTransform(yield)
 
 		const (
@@ -229,10 +229,7 @@ func engraveSeedString(params engrave.Params, plate SeedString, qrc *engrave.Con
 
 func frontSideSeed(params engrave.Params, plate Seed, qrc *engrave.ConstantQRCmd) engrave.Engraving {
 	return func(yield func(engrave.Command) bool) {
-		plateDims := image.Point{
-			X: params.F(85),
-			Y: params.F(85),
-		}
+		plateDims := plate.Size.dims(params)
 		t := engrave.NewTransform(yield)
 		pfs := params.F(plateFontSize)
 		constant := engrave.NewConstantStringer(plate.Font, params, pfs)
@@ -337,10 +334,7 @@ func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 
 		charWidth := fixedCharWidth(fnt, fontSize)
 		margin := params.I(outerMargin)
-		plateDims := image.Point{
-			X: params.F(plateSize),
-			Y: params.F(plateSize),
-		}
+		plateDims := plate.Size.dims(params)
 		width := plateDims.X - 2*margin
 		charPerLine := CharsPerLine(params, fnt, fontMM)
 		offy := params.I(outerMargin)

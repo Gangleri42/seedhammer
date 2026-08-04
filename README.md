@@ -58,13 +58,14 @@ plate. For an nsec the device derives the npub, engraves the secret plate, and
 then offers a second plate for the public key.
 [How-to](docs/howto-nostr-keys.md).
 
-### Seed phrases generated with nothing but the machine
+### The checksum word for a hand-drawn seed
 
-The last word of a seed phrase carries a checksum, so it cannot be drawn by
-hand: only 128 of the 2048 words complete a 12-word phrase, and only 8 complete
-a 24-word one. Draw the other 11 or 23 from tiles, dice or coins, type them in,
-and the machine computes the final word, drawing the few bits it is free to
-choose from the RP2350's hardware random number generator.
+The machine does not generate seed phrases; you do, by hand. What it adds is
+the one word you cannot draw: the last word carries a checksum, so only 128 of
+the 2048 words complete a 12-word phrase, and only 8 complete a 24-word one.
+Draw the other 11 or 23 from tiles, dice or coins, type them in, and the
+machine computes the final word, drawing the few bits it is free to choose
+from the RP2350's hardware random number generator.
 
 The split is the point. Your 23 drawn words fix 253 of the 256 bits; the machine
 supplies 3 and cannot influence the rest, so even a broken generator leaves an
@@ -95,6 +96,22 @@ fit. The fork walks a fallback ladder (text at 3.8/3.4/3.0 mm, QR module scale
 973-character 5-of-7 descriptor engraved and transcribed back without errors.
 The Type-4 tag emulator also replays retransmitted frames instead of aborting
 the write, so long writes from phone apps complete.
+
+### Multisig descriptors split across the cosigner plates
+
+The original SeedHammer partitioned a multisig descriptor over the cosigner
+plates so that any signing quorum of plates recovers the wallet; SeedHammer II
+reduced that to a single descriptor plate. The fork brings the partition back.
+Scan a multisig setup and choose SPLIT: the machine cuts one share plate per
+cosigner, each carrying its fragment as engraved text wrapped around a QR
+code, under a header naming the plate number and the cosigner fingerprint it
+belongs with. Keep each share with its cosigner's seed plate (the back of the
+plate is the natural spot) and recovery needs no electronics beyond a phone:
+scan any quorum of plate QRs into Sparrow or another UR-capable wallet as one
+animated code. The partition covers every n-1-of-n and n-of-n quorum plus
+2-of-4 and 3-of-5; the rest (a 5-of-7, say) fall back to one full descriptor
+plate per cosigner, where any single plate recovers.
+[How-to](docs/howto-multisig-plates.md).
 
 ### Engraving quality and speed
 

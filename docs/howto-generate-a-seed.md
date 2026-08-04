@@ -1,7 +1,8 @@
-# Generate a seed phrase with nothing but the machine
+# Complete a hand-drawn seed phrase on the machine
 
-Draw your own words by hand, type them in, and let the machine compute the last
-one. No computer, no phone, no second signing device.
+Draw your own words by hand, type them in, and let the machine compute the
+last one: the checksum word is the only part it generates. No computer, no
+phone, no second signing device.
 
 ## Why the last word is different
 

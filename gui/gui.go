@@ -2404,6 +2404,30 @@ func backupWalletFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic) {
 	}
 }
 
+// askPlateSize offers the plate choice when the layout also fits the
+// small plate; content that only fits the square one keeps its plate
+// without a question. The small plate leads: the question only
+// appears because it fits, so it is the likely answer. Backing out
+// reports false.
+func askPlateSize(ctx *Context, th *Colors, fitsSmall bool) (PlateSize, bool) {
+	if !fitsSmall {
+		return SquarePlate, true
+	}
+	cs := &ChoiceScreen{
+		Title:   "Plate Size",
+		Lead:    "The engraving fits the small plate.",
+		Choices: []string{"SMALL PLATE", "SQUARE PLATE"},
+	}
+	choice, ok := cs.Choose(ctx, th)
+	if !ok {
+		return SquarePlate, false
+	}
+	if choice == 0 {
+		return SmallPlate, true
+	}
+	return SquarePlate, true
+}
+
 // seedPlateFlow offers the seed plate and reports whether to carry on
 // to the other two: skipping does, and so does engraving, while a
 // cancelled engrave goes back to the seed screen so it can be tried
@@ -2447,12 +2471,23 @@ func seedPlateFlow(ctx *Context, th *Colors, ss *SeedScreen, mnemonic bip39.Mnem
 
 func backupSeedStringFlow(ctx *Context, th *Colors, s backup.SeedString) {
 	params := ctx.Platform.EngraverParams()
+	s.Size = SmallPlate
+	small, err := backup.EngraveSeedString(params, s)
+	if err != nil {
+		showError(ctx, th, err, blankScreen)
+		return
+	}
+	plateSize, ok := askPlateSize(ctx, th, layoutFits(small, params, SmallPlate))
+	if !ok {
+		return
+	}
+	s.Size = plateSize
 	p, err := backup.EngraveSeedString(params, s)
 	if err != nil {
 		showError(ctx, th, err, blankScreen)
 		return
 	}
-	plate, view, err := planPreviewPlate(ctx, th, "Engrave Seed", p, params, SquarePlate)
+	plate, view, err := planPreviewPlate(ctx, th, "Engrave Seed", p, params, plateSize)
 	if err != nil {
 		if !errors.Is(err, errPlanCanceled) {
 			showError(ctx, th, err, blankScreen)
@@ -2577,7 +2612,13 @@ func textFlow(ctx *Context, th *Colors, txt plainText) bool {
 	// reports true; a refused plate, a cancelled plan or a backed-out
 	// engrave screen reports false so a typed text can return to its
 	// editor.
-	plate, preview, err := planText(ctx, th, ctx.Platform.EngraverParams(), SquarePlate, string(txt))
+	params := ctx.Platform.EngraverParams()
+	_, _, smallErr := fitText(params, SmallPlate, string(txt))
+	plateSize, ok := askPlateSize(ctx, th, smallErr == nil)
+	if !ok {
+		return false
+	}
+	plate, preview, err := planText(ctx, th, params, plateSize, string(txt))
 	if err != nil {
 		if errors.Is(err, errPlanCanceled) {
 			return false
@@ -2675,7 +2716,7 @@ func nostrFlow(ctx *Context, th *Colors, key nip19.Key) {
 		if !scr.Confirm(ctx, th) {
 			return
 		}
-		if !nostrEngrave(ctx, th, scr, backupNsecPlan(ctx, key)) {
+		if !nostrEngrave(ctx, th, scr, func(ps PlateSize) nostrPlan { return backupNsecPlan(ctx, key, ps) }) {
 			return
 		}
 		// Re-use the confirmation screen for the public-plate prompt so
@@ -2685,12 +2726,12 @@ func nostrFlow(ctx *Context, th *Colors, key nip19.Key) {
 		if !scr.Confirm(ctx, th) {
 			return
 		}
-		nostrEngrave(ctx, th, scr, backupNpubPlan(ctx, npub))
+		nostrEngrave(ctx, th, scr, func(ps PlateSize) nostrPlan { return backupNpubPlan(ctx, npub, ps) })
 	} else {
 		if !scr.Confirm(ctx, th) {
 			return
 		}
-		nostrEngrave(ctx, th, scr, backupNpubPlan(ctx, key))
+		nostrEngrave(ctx, th, scr, func(ps PlateSize) nostrPlan { return backupNpubPlan(ctx, key, ps) })
 	}
 }
 
@@ -2701,8 +2742,9 @@ type nostrPlan struct {
 	fail error
 }
 
-func backupNsecPlan(ctx *Context, nsec nip19.Key) nostrPlan {
+func backupNsecPlan(ctx *Context, nsec nip19.Key, plateSize PlateSize) nostrPlan {
 	plan, err := backup.EngraveNsec(ctx.Platform.EngraverParams(), backup.Nsec{
+		Size:  plateSize,
 		Title: "NSEC",
 		Key:   nsec,
 		Font:  constant.Font,
@@ -2710,8 +2752,9 @@ func backupNsecPlan(ctx *Context, nsec nip19.Key) nostrPlan {
 	return nostrPlan{plan: plan, err: err, fail: errNsecPlate}
 }
 
-func backupNpubPlan(ctx *Context, npub nip19.Key) nostrPlan {
+func backupNpubPlan(ctx *Context, npub nip19.Key, plateSize PlateSize) nostrPlan {
 	plan, err := backup.EngraveNpub(ctx.Platform.EngraverParams(), backup.Npub{
+		Size:  plateSize,
 		Title: "NPUB",
 		Key:   npub,
 		Font:  constant.Font,
@@ -2719,16 +2762,29 @@ func backupNpubPlan(ctx *Context, npub nip19.Key) nostrPlan {
 	return nostrPlan{plan: plan, err: err, fail: errNpubPlate}
 }
 
-func nostrEngrave(ctx *Context, th *Colors, scr *NostrScreen, p nostrPlan) bool {
+func nostrEngrave(ctx *Context, th *Colors, scr *NostrScreen, mk func(PlateSize) nostrPlan) bool {
+	params := ctx.Platform.EngraverParams()
+	p := mk(SmallPlate)
 	if p.err != nil {
 		showError(ctx, th, p.fail, scr.Draw)
 		return false
+	}
+	plateSize, ok := askPlateSize(ctx, th, layoutFits(p.plan, params, SmallPlate))
+	if !ok {
+		return false
+	}
+	if plateSize != SmallPlate {
+		p = mk(plateSize)
+		if p.err != nil {
+			showError(ctx, th, p.fail, scr.Draw)
+			return false
+		}
 	}
 	title := "Engrave Nostr Key"
 	if scr.Key.HRP == nip19.HRPPub {
 		title = "Engrave Public Key"
 	}
-	plate, view, err := planPreviewPlate(ctx, th, title, p.plan, ctx.Platform.EngraverParams(), SquarePlate)
+	plate, view, err := planPreviewPlate(ctx, th, title, p.plan, params, plateSize)
 	if err != nil {
 		if errors.Is(err, errPlanCanceled) {
 			return false
@@ -3143,10 +3199,26 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (plannedPlate, *spl
 			labels []string
 			texts  []backup.Text
 			qrText string
+
+			// The small plate's own ladder outcome: its variant list
+			// can be shorter than the square one's, so the operator
+			// must choose from the plate they picked.
+			smallLabels []string
+			smallTexts  []backup.Text
+			smallQR     string
+			fitsSmall   bool
 		}
 		fit, err := runJob(ctx, th, func(pump func(done, total int) bool) (fitResult, error) {
 			labels, texts, qrText, err := fitDescriptor(params, SquarePlate, desc, pump)
-			return fitResult{labels, texts, qrText}, err
+			res := fitResult{labels: labels, texts: texts, qrText: qrText}
+			// The small ladder rides the tail of the gauge: it walks
+			// fewer accepted cells and stays planner-free.
+			smLabels, smTexts, smQR, smErr := fitDescriptor(params, SmallPlate, desc, nil)
+			if smErr == nil && len(smLabels) > 0 {
+				res.smallLabels, res.smallTexts, res.smallQR = smLabels, smTexts, smQR
+				res.fitsSmall = true
+			}
+			return res, err
 		}, planFrame(ctx, th, s.Draw))
 		labels, texts := fit.labels, fit.texts
 		n := len(desc.Keys)
@@ -3208,20 +3280,35 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (plannedPlate, *spl
 				wantCopies = true
 			}
 		}
+		plateSize := SquarePlate
+		useLabels, useTexts, useQR := labels, texts, fit.qrText
+		if !wantCopies {
+			// Full copies engrave the same layout once per cosigner and
+			// stay on the square plate; the single plate is the small
+			// format's customer.
+			var ok bool
+			plateSize, ok = askPlateSize(ctx, th, fit.fitsSmall)
+			if !ok {
+				return plannedPlate{}, false, nil
+			}
+			if plateSize == SmallPlate {
+				useLabels, useTexts, useQR = fit.smallLabels, fit.smallTexts, fit.smallQR
+			}
+		}
 		cs := &ChoiceScreen{
 			Title:   "Engrave",
 			Lead:    "Choose engraving",
-			Choices: labels,
+			Choices: useLabels,
 		}
 		choice, ok := cs.Choose(ctx, th)
 		if !ok {
 			return plannedPlate{}, false, nil
 		}
 		if wantCopies {
-			split = &splitPlan{copies: true, copyText: texts[choice], copyQR: fit.qrText}
+			split = &splitPlan{copies: true, copyText: useTexts[choice], copyQR: useQR}
 			return plannedPlate{}, true, nil
 		}
-		plate, view, err := planDescriptorPlate(ctx, th, params, SquarePlate, texts[choice], []string{fit.qrText}, "Engrave Descriptor")
+		plate, view, err := planDescriptorPlate(ctx, th, params, plateSize, useTexts[choice], []string{useQR}, "Engrave Descriptor")
 		if err != nil {
 			if errors.Is(err, errPlanCanceled) {
 				return plannedPlate{}, false, nil

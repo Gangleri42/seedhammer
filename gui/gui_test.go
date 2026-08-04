@@ -1116,6 +1116,12 @@ func TestTextNoticeGate(t *testing.T) {
 			frame()
 			time.Sleep(confirmDelay)
 		}
+		// The short text fits the small plate, so the size question
+		// precedes the plan; stay on the square plate.
+		awaitUI(t, frame, "Plate Size")
+		click(&ctx.Router, Down)
+		frame()
+		click(&ctx.Router, Button3)
 		awaitUI(t, frame, "mm") // the idle preview's dims line
 		hold()
 		awaitUI(t, frame, "corrupted descriptor")
@@ -1200,6 +1206,20 @@ func TestEngraveTextEntryFlow(t *testing.T) {
 	confirm := func(step string) {
 		t.Helper()
 		click(&ctx.Router, Button2)
+		// The typed text fits the small plate, so the size question
+		// precedes the plan; stay on the square plate.
+		for range 10000 {
+			content, ok = frame()
+			if !ok {
+				t.Fatalf("%s: flow ended before the size question", step)
+			}
+			if uiContains(content, "Plate Size") {
+				break
+			}
+		}
+		click(&ctx.Router, Down)
+		frame()
+		click(&ctx.Router, Button3)
 		for range 10000 {
 			content, ok = frame()
 			if !ok {

@@ -12,6 +12,7 @@ import (
 // Nsec is a Nostr secret-key engraving plate. Font must be a
 // constant-stroke face; the timing invariant relies on it.
 type Nsec struct {
+	Size  PlateSize
 	Title string
 	Key   nip19.Key
 	Font  *vector.Face
@@ -20,6 +21,7 @@ type Nsec struct {
 // Npub is a Nostr public-key engraving plate. The public key is not
 // secret, so the engraving is not constant-time.
 type Npub struct {
+	Size  PlateSize
 	Title string
 	Key   nip19.Key
 	Font  *vector.Face
@@ -38,6 +40,7 @@ func EngraveNsec(params engrave.Params, plate Nsec) (engrave.Engraving, error) {
 		return nil, fmt.Errorf("backup: %w", errNotNsec)
 	}
 	return EngraveSeedString(params, SeedString{
+		Size:  plate.Size,
 		Title: plate.Title,
 		Seed:  plate.Key.Bech32(),
 		Font:  plate.Font,
@@ -53,6 +56,7 @@ func EngraveNpub(params engrave.Params, plate Npub) (engrave.Engraving, error) {
 		return nil, fmt.Errorf("backup: %w", errNotNpub)
 	}
 	return EngraveSeedString(params, SeedString{
+		Size:  plate.Size,
 		Title: plate.Title,
 		Seed:  plate.Key.Bech32(),
 		Font:  plate.Font,

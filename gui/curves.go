@@ -55,8 +55,21 @@ func blankScreen(ctx *Context, th *Colors, dims image.Point) op.Op {
 
 func curvesPathFlow(ctx *Context, th *Colors, payload curvesPayload) {
 	params := ctx.Platform.EngraverParams()
+	// A drawing whose own coordinates stay inside the small plate's
+	// frame can be cut on either; the payload carries no plate, so the
+	// operator's answer decides which frame the coordinates mean. A
+	// bad payload falls through to the scan, whose error screen it is.
+	fitsSmall := false
+	if d, err := curves.Open(payload, params); err == nil {
+		m := bezier.Pt(safetyMargin*params.Millimeter, safetyMargin*params.Millimeter)
+		fitsSmall = d.Bounds.In(bspline.Bounds{Min: m, Max: plateDims(SmallPlate, params.Millimeter).Sub(m)})
+	}
+	plateSize, ok := askPlateSize(ctx, th, fitsSmall)
+	if !ok {
+		return
+	}
 	cs := &CurvesScreen{title: "Engrave Curves"}
-	plate, err := scanCurves(ctx, th, cs, payload, params)
+	plate, err := scanCurves(ctx, th, cs, payload, params, plateSize)
 	if err != nil {
 		if errors.Is(err, errPlanCanceled) {
 			return
@@ -70,10 +83,10 @@ func curvesPathFlow(ctx *Context, th *Colors, payload curvesPayload) {
 // scanCurves validates the payload behind the progress screen: the
 // preview raster fills stroke by stroke as the walk streams under
 // the walked-percentage label; the back button abandons the scan.
-func scanCurves(ctx *Context, th *Colors, cs *CurvesScreen, payload []byte, params engrave.Params) (Plate, error) {
+func scanCurves(ctx *Context, th *Colors, cs *CurvesScreen, payload []byte, params engrave.Params, plateSize PlateSize) (Plate, error) {
 	dims := ctx.Platform.DisplaySize()
 	return runJob(ctx, th, func(pump func(done, total int) bool) (Plate, error) {
-		return validateCurves(cs, payload, params, SquarePlate, dims, pump)
+		return validateCurves(cs, payload, params, plateSize, dims, pump)
 	}, planFrame(ctx, th, cs.Draw))
 }
 

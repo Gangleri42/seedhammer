@@ -347,7 +347,13 @@ func passphrasePlateFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, pass
 		fp = "UNAVAILABLE"
 	}
 	text := passphrasePlate(pass, fp, path)
-	plate, preview, err := planText(ctx, th, ctx.Platform.EngraverParams(), SquarePlate, text)
+	params := ctx.Platform.EngraverParams()
+	_, _, smallErr := fitText(params, SmallPlate, text)
+	plateSize, sizeOK := askPlateSize(ctx, th, smallErr == nil)
+	if !sizeOK {
+		return
+	}
+	plate, preview, err := planText(ctx, th, params, plateSize, text)
 	if err != nil {
 		if !errors.Is(err, errPlanCanceled) {
 			showError(ctx, th, err, blankScreen)

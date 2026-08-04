@@ -119,6 +119,7 @@ func validateCurves(cs *CurvesScreen, payload []byte, params engrave.Params, pla
 		return Plate{}, fmt.Errorf("The engraving would run %d minutes; at most %d are allowed.", mins, curvesMaxMinutes)
 	}
 	plate := Plate{
+		Size:     plateSize,
 		Duration: duration,
 		// A fresh plan for the engraver's own re-iterations; the walk
 		// above already proved it.

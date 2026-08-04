@@ -845,8 +845,29 @@ func planText(ctx *Context, th *Colors, params engrave.Params, plateSize PlateSi
 }
 
 type Plate struct {
+	Size     PlateSize
 	Duration uint
 	Spline   bspline.Curve
+}
+
+// machineSpline places a plate-local spline in the machine frame.
+// The machine origin is the square plate's top-left corner and only
+// the top edge moves between formats: smaller plates keep the bottom
+// and side edges, so their frame starts lower by the height
+// difference.
+func machineSpline(params engrave.Params, plate Plate) bspline.Curve {
+	dy := (SquarePlate.Dims().Y - plate.Size.Dims().Y) * params.Millimeter
+	if dy == 0 {
+		return plate.Spline
+	}
+	return func(yield func(bspline.Knot) bool) {
+		for k := range plate.Spline {
+			k.Ctrl.Y += dy
+			if !yield(k) {
+				return
+			}
+		}
+	}
 }
 
 func engraveSeed(params engrave.Params, m bip39.Mnemonic, passphrase string) (engrave.Engraving, error) {
@@ -3313,7 +3334,7 @@ func NewEngraveScreen(ctx *Context, plate Plate, view *CurvesScreen) *EngraveScr
 	}
 	return &EngraveScreen{
 		duration: plate.Duration,
-		job:      newEngraverJob(ctx.Platform, plate.Spline, 0),
+		job:      newEngraverJob(ctx.Platform, machineSpline(ctx.Platform.EngraverParams(), plate), 0),
 		view:     view,
 	}
 }
@@ -3727,6 +3748,7 @@ func toPlate(plan engrave.Engraving, params engrave.Params, plateSize PlateSize)
 		return Plate{}, ErrTooLarge
 	}
 	return Plate{
+		Size:     plateSize,
 		Duration: attrs.Duration,
 		Spline:   spline,
 	}, nil
@@ -3829,6 +3851,7 @@ func planPlateWalk(plan engrave.Engraving, params engrave.Params, plateSize Plat
 		return Plate{}, ErrTooLarge
 	}
 	return Plate{
+		Size:     plateSize,
 		Duration: attrs.Duration,
 		// A fresh plan for the engraver's own re-iterations.
 		Spline: engrave.PlanEngraving(params.StepperConfig, plan),

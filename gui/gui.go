@@ -3304,58 +3304,63 @@ func NewEngraveScreen(ctx *Context, plate Plate) *EngraveScreen {
 type EngraveScreen struct {
 	duration uint
 	job      *engraveJob
+
+	// The hold-to-confirm gesture, in ConfirmWarningScreen's shape:
+	// edge-detect the press, arm the delay, a release disarms.
+	pressed bool
+	confirm ConfirmDelay
 }
 
 func (s *EngraveScreen) Engrave(ctx *Context, th *Colors) bool {
 	defer s.job.Stop()
-	inp := new(InputTracker)
 	backBtn := &Clickable{Button: Button1}
 	selectBtn := &Clickable{Button: Button3, AltButton: Center}
-frames:
 	for !ctx.Done {
 		for backBtn.Clicked(ctx) {
 			st := s.job.Status()
 			if st.State != engraveRunning {
-				break frames
+				return false
 			}
 			s.job.Stop()
 		}
+		progress := float32(0)
 		switch s.job.Status().State {
 		case engraveDone:
 			if selectBtn.Clicked(ctx) {
 				return true
 			}
-		default:
-			if _, ok := selectBtn.Next(ctx); !ok {
-				break
-			}
-			if !selectBtn.Pressed {
-				break
-			}
-			confirm := new(ConfirmDelay)
-			confirm.Start(ctx, confirmDelay)
-			inp.Pressed[selectBtn.Button] = false
-			selectBtn.Pressed = false
-			for !ctx.Done {
-				p := confirm.Progress(ctx)
-				if p == 1. {
-					s.job.Start()
+		case engraveIdle, engraveStopped, engraveFailed:
+			for {
+				if _, ok := selectBtn.Next(ctx); !ok {
 					break
 				}
-				for {
-					_, ok := selectBtn.Next(ctx)
-					if !ok {
-						break
-					}
-					if !selectBtn.Pressed {
-						continue frames
+				if selectBtn.Pressed != s.pressed {
+					s.pressed = selectBtn.Pressed
+					if s.pressed {
+						s.confirm.Start(ctx, confirmDelay)
+					} else {
+						s.confirm = ConfirmDelay{}
 					}
 				}
-				dims := ctx.Platform.DisplaySize()
-				nav := s.drawNav(&ctx.B, th, dims, p, backBtn, selectBtn)
-				content := s.draw(ctx, th, dims)
-				ctx.Frame(op.Layer(nav, content))
 			}
+			progress = s.confirm.Progress(ctx)
+			if progress == 1 {
+				s.confirm = ConfirmDelay{}
+				s.pressed = false
+				progress = 0
+				s.job.Start()
+			}
+		default:
+			// Running and stopping ignore the confirm button; drain its
+			// events so a stray press cannot arm a stale hold when an
+			// armable state returns.
+			for {
+				if _, ok := selectBtn.Next(ctx); !ok {
+					break
+				}
+				s.pressed = selectBtn.Pressed
+			}
+			s.confirm = ConfirmDelay{}
 		}
 
 		if s.job.Status().State == engraveRunning {
@@ -3364,7 +3369,7 @@ frames:
 		}
 
 		dims := ctx.Platform.DisplaySize()
-		nav := s.drawNav(&ctx.B, th, dims, 0, backBtn, selectBtn)
+		nav := s.drawNav(&ctx.B, th, dims, progress, backBtn, selectBtn)
 		content := s.draw(ctx, th, dims)
 
 		ctx.Frame(op.Layer(nav, content))

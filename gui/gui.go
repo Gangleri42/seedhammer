@@ -577,7 +577,7 @@ func darkCode(size int) *qr.Code {
 // carries into the returned view for the engrave screen.
 func planDescriptorPlate(ctx *Context, th *Colors, params engrave.Params, plateSize PlateSize, txt backup.Text, qrTexts []string, title string) (Plate, *CurvesScreen, error) {
 	cs := &CurvesScreen{title: title}
-	r := newSplineRasterizer(previewSide(ctx.Platform.DisplaySize()), params, plateSize)
+	r := newSplineRasterizer(previewSide(ctx.Platform.DisplaySize(), plateSize), params, plateSize)
 	cs.preview = r.preview
 	plate, err := runJob(ctx, th, func(pump func(done, total int) bool) (Plate, error) {
 		collected := false
@@ -828,7 +828,7 @@ func planText(ctx *Context, th *Colors, params engrave.Params, plateSize PlateSi
 		})
 		// A fresh raster per ladder size: a failed larger fit must not
 		// leave its strokes in the preview.
-		r := newSplineRasterizer(previewSide(dims), params, plateSize)
+		r := newSplineRasterizer(previewSide(dims, plateSize), params, plateSize)
 		cs.preview = r.preview
 		plate, err := planPlate(ctx, th, cs.Draw, plan, params, plateSize, r.knot)
 		if err != nil {
@@ -3983,7 +3983,7 @@ func planFrame(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Poin
 // for the engrave screen.
 func planPreviewPlate(ctx *Context, th *Colors, title string, plan engrave.Engraving, params engrave.Params, plateSize PlateSize) (Plate, *CurvesScreen, error) {
 	cs := &CurvesScreen{title: title}
-	r := newSplineRasterizer(previewSide(ctx.Platform.DisplaySize()), params, plateSize)
+	r := newSplineRasterizer(previewSide(ctx.Platform.DisplaySize(), plateSize), params, plateSize)
 	cs.preview = r.preview
 	plate, err := planPlate(ctx, th, cs.Draw, plan, params, plateSize, r.knot)
 	if err != nil {

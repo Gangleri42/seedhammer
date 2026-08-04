@@ -1,10 +1,30 @@
 package gui
 
 import (
+	"image"
 	"testing"
 
 	"seedhammer.com/bspline"
 )
+
+// TestPreviewAspect pins the preview raster's shape: one scale for
+// both axes anchored at the shared plate width, so the square plate
+// keeps its square raster and the small plate's carries the 85:55
+// aspect.
+func TestPreviewAspect(t *testing.T) {
+	r := newSplineRasterizer(240, engraverParams, SquarePlate)
+	if got, want := r.preview.Bounds().Size(), image.Pt(240, 240); got != want {
+		t.Errorf("square raster %v, want %v", got, want)
+	}
+	r = newSplineRasterizer(240, engraverParams, SmallPlate)
+	if got, want := r.preview.Bounds().Size(), image.Pt(240, 155); got != want {
+		t.Errorf("small raster %v, want %v", got, want)
+	}
+	dims := image.Pt(480, 320)
+	if small, square := previewSide(dims, SmallPlate), previewSide(dims, SquarePlate); small < square {
+		t.Errorf("small preview width %d narrower than square %d", small, square)
+	}
+}
 
 // TestMachineSpline pins the plate-to-machine frame contract: the
 // machine origin is the square plate's top-left corner, so a square

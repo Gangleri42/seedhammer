@@ -158,7 +158,7 @@ func newTestEngraveScreen(t testing.TB, ctx *Context) *EngraveScreen {
 		t.Fatal(err)
 	}
 	view := &CurvesScreen{title: "Engrave Descriptor"}
-	r := newSplineRasterizer(previewSide(ctx.Platform.DisplaySize()), params, SquarePlate)
+	r := newSplineRasterizer(previewSide(ctx.Platform.DisplaySize(), SquarePlate), params, SquarePlate)
 	view.preview = r.preview
 	plate, err := planPlateWalk(backup.EngraveText(params, texts[0]), params, SquarePlate, nil, r.knot)
 	if err != nil {

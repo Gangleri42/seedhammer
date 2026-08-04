@@ -89,7 +89,7 @@ func validateCurves(cs *CurvesScreen, payload []byte, params engrave.Params, pla
 	if err != nil {
 		return Plate{}, err
 	}
-	r := newSplineRasterizer(previewSide(dims), params, plateSize)
+	r := newSplineRasterizer(previewSide(dims, plateSize), params, plateSize)
 	// Shared with the pumping frame loop as it fills; the cooperative
 	// scheduler serializes the access.
 	cs.preview = r.preview
@@ -179,10 +179,15 @@ func (s *CurvesScreen) initText(plate Plate, r *splineRasterizer, params engrave
 	s.info = fmt.Sprintf("%d x %d mm   %d:%.2d", w, h, secs/60, secs%60)
 }
 
-// previewSide is the pixel size of the square plate preview.
-func previewSide(dims image.Point) int {
+// previewSide is the pixel width of the plate preview: the width
+// that fills the display's height budget at the plate's aspect,
+// capped at half the display width. For the square plate the two
+// budgets coincide; wider-than-tall plates hit the width cap.
+func previewSide(dims image.Point, plateSize PlateSize) int {
 	const infoSpace = 32
-	return min(dims.Y-leadingSize-infoSpace, dims.X/2)
+	d := plateSize.Dims()
+	budget := dims.Y - leadingSize - infoSpace
+	return min(budget*d.X/d.Y, dims.X/2)
 }
 
 func (s *CurvesScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {
@@ -206,16 +211,18 @@ func (s *CurvesScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {
 // per engrave state. The preview must be non-nil.
 func (s *CurvesScreen) plateOp(ctx *Context, th *Colors, dims image.Point, strip string) op.Op {
 	side := s.preview.Bounds().Dx()
+	height := s.preview.Bounds().Dy()
 	pos := image.Pt((dims.X-side)/2, leadingSize+4)
 	plate := s.preview.Bounds()
-	// The plate outline, with its 3mm corner radius to scale.
+	// The plate outline, with its 3mm corner radius to scale. The
+	// radius keys off the width because every plate format shares it.
 	outline := op.Compose(
 		op.Color(&ctx.B, th.Primary),
-		op.RoundedOutline2(&ctx.B, plate, 3*side/85, 1).Offset(pos),
+		op.RoundedOutline2(&ctx.B, plate, 3*side/curves.PlateMM, 1).Offset(pos),
 	)
 	info, infosz := widget.Label(&ctx.B, ctx.Styles.subtitle, th.Text, strip)
-	space := dims.Y - pos.Y - side
-	info = info.Offset(image.Pt((dims.X-infosz.X)/2, pos.Y+side+(space-infosz.Y)/2))
+	space := dims.Y - pos.Y - height
+	info = info.Offset(image.Pt((dims.X-infosz.X)/2, pos.Y+height+(space-infosz.Y)/2))
 	m := s.mask()
 	if m == nil {
 		return op.Layer(outline, info)
@@ -247,13 +254,16 @@ type splineRasterizer struct {
 }
 
 func newSplineRasterizer(side int, params engrave.Params, plateSize PlateSize) *splineRasterizer {
-	plate := plateDims(plateSize, params.Millimeter).X
+	d := plateDims(plateSize, params.Millimeter)
+	// One scale for both axes, anchored to the width every plate
+	// format shares; the raster's height carries the aspect.
+	h := (side*d.Y + d.X/2) / d.X
 	return &splineRasterizer{
-		preview: op.NewBitMask(image.Pt(side, side)),
-		plate:   plate,
+		preview: op.NewBitMask(image.Pt(side, h)),
+		plate:   d.X,
 		// Sample at a third of a pixel so plotted points form
 		// contiguous strokes without a line rasterizer.
-		spacing: max(1, plate/(side*3)),
+		spacing: max(1, d.X/(side*3)),
 	}
 }
 

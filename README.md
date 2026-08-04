@@ -47,7 +47,8 @@ itself, ENGRAVE TEXT in the input menu, on a three-layer ASCII keyboard with
 a return key for multi-line plates. The firmware sets it at the
 largest of six sizes (6.0 down to 3.0 mm) whose grid holds the composition,
 wraps overlong lines without reflowing lines you sized deliberately, and
-confirms with the exact plate layout. Text that resembles a damaged descriptor
+confirms on the engrave screen with the exact plate layout, which stays up
+with the time counting down while it cuts. Text that resembles a damaged descriptor
 or seed phrase gets a warning before it engraves.
 [How-to](docs/howto-text-plates.md).
 
@@ -87,6 +88,17 @@ passphrase can be engraved on a third plate of its own, under its character
 count, which is the only check the passphrase carries on its own. Its length is
 not capped: BIP39 sets no limit, so the machine sets none either.
 [How-to](docs/howto-generate-a-seed.md).
+
+### One plate preview, on every flow
+
+Every plate now ends on the same screen. The plan walk fills a preview of the
+plate stroke by stroke, and the engrave screen holds it: the plate under its
+dimensions and duration, hold to start, then the same picture with the time
+counting down. Seed, descriptor, share, passphrase, key, codex32, text and
+drawing plates all take this path, where five of them previously planned
+blind and showed only instructions. A checkbox on the middle button hides
+the plate's content — outline and figures stay, everything engraved goes —
+for a plate you are leaving to run unattended.
 
 ### Larger descriptors, reliable phone writes
 

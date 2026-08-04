@@ -81,5 +81,7 @@ stamped shapes deduplicate through the payload dictionary.
 ## On the machine
 
 Scanning and planning run behind a progress screen while a live preview fills
-in. Then the confirm screen: the rendered drawing, its size, and the engraving
-duration. Back cancels. Confirm engraves.
+in, and the engrave screen keeps that preview: the rendered drawing, its size,
+and the engraving duration. Back cancels. Hold the button to engrave, and the
+drawing stays up with the duration counting down. The middle button hides the
+content if you would rather not leave it on screen while the machine runs.

@@ -69,16 +69,22 @@ above applies to every share plate equally.
    ONLY / QR ONLY) as usual and the set engraves that plate N times.
 3. **Per plate.** Each plate opens on a gate titled "Plate k of N" with the
    cosigner fingerprint it belongs to. ENGRAVE PLATE plans the layout and
-   hands over to the engrave screen: insert the blank (or the cosigner's
-   seed plate, back side up), close the lock, hold the button. SKIP passes
-   over a plate, which is how an aborted set resumes: rescan, split again,
-   and skip the plates you already cut.
+   hands over to the engrave screen, which shows the share as it will be
+   cut — the header, the wrapped text and the code — with its dimensions and
+   duration. Insert the blank (or the cosigner's seed plate, back side up),
+   close the lock, hold the button. SKIP passes over a plate, which is how an
+   aborted set resumes: rescan, split again, and skip the plates you already
+   cut.
 4. **Copies.** After each finished plate: NEXT PLATE (or DONE on the last)
    moves on, ANOTHER COPY routes back through the gate to cut the same share
    again. Copies of the same plate are identical and interchangeable.
 
 All plates of a set engrave at one matched text size and QR scale, chosen so
 the largest share fits.
+
+Share plates carry no secrets, so the middle button's hide toggle matters
+less here than on a seed plate; it is there on every plate for the times you
+would rather the room did not read the screen.
 
 ## Keep the pairing straight
 

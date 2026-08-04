@@ -81,13 +81,22 @@ parses as a structured record rather than plate text.
 
 ## On the machine
 
-The machine plans the plate behind a progress screen, then shows the layout
-confirm: the composed lines at the fitted size, wraps and all, with plate
-dimensions and engraving duration. What you approve is the plate itself, not
-a display-width rendering of the text.
+The machine plans the plate behind a progress screen while a preview of it
+fills in stroke by stroke, then holds that preview: the composed lines at the
+fitted size, wraps and all, under the plate's dimensions and how long it will
+take. What you approve is the plate itself, not a display-width rendering of
+the text. Hold the button to start; the same preview stays up with the
+duration counting down.
+
+The middle button hides the plate's content: the outline and the figures
+stay, everything engraved goes. It is meant for a plate you are leaving to
+run — a quarter hour is a long time for a screen full of your words to sit in
+an empty room — and it holds through the engraving. Press it again to read
+the plate.
 
 If the text looks like a damaged backup (a descriptor fragment, a codex32
-string, a seed phrase with a bad word), the confirm screen says so. Intact
-backups never land here; the structured parsers catch them first. The warning
-is a nudge to re-check the source, not a block: confirm and it engraves as
-plain text.
+string, a seed phrase with a bad word), a warning page appears when you
+complete the hold, before anything starts; backing out returns to the plate.
+Intact backups never land here; the structured parsers catch them first. The
+warning is a nudge to re-check the source, not a block: confirm and it
+engraves as plain text.

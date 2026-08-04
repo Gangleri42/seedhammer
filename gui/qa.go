@@ -15,7 +15,7 @@ func qaEngraveFlow(ctx *Context) {
 	p := ctx.Platform
 	const sz = SquarePlate
 	params := p.EngraverParams()
-	dims := sz.Dims(params.Millimeter)
+	dims := plateDims(sz, params.Millimeter)
 	plan := engrave.PlanEngraving(params.StepperConfig,
 		qaPlan(params.Millimeter, dims))
 	e := newEngraverJob(p, plan, suppressStalls)

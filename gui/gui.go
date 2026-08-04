@@ -752,7 +752,7 @@ func fitText(params engrave.Params, text string) (sizes []float32, wrapped bool,
 	}
 	for i := ceiling; i < len(backup.FontSizes); i++ {
 		size := backup.FontSizes[i]
-		if wrappedLines(params, text, size) <= backup.LinesPerPlate(params, size) {
+		if wrappedLines(params, text, size) <= backup.LinesPerPlate(params, SquarePlate, size) {
 			return backup.FontSizes[i:], wrapped, nil
 		}
 	}
@@ -3719,7 +3719,7 @@ func rgb(c uint32) color.RGBA {
 
 func toPlate(plan engrave.Engraving, params engrave.Params) (Plate, error) {
 	size := SquarePlate
-	sz := size.Dims(params.Millimeter)
+	sz := plateDims(size, params.Millimeter)
 	spline := engrave.PlanEngraving(params.StepperConfig, plan)
 	attrs := bspline.Measure(spline)
 	safetyMargin := bezier.Pt(safetyMargin*params.Millimeter, safetyMargin*params.Millimeter)
@@ -3768,7 +3768,7 @@ func measureLayout(plan engrave.Engraving) (bspline.Bounds, int) {
 
 // plateBounds is the engravable region inside the safety margin.
 func plateBounds(params engrave.Params) bspline.Bounds {
-	sz := SquarePlate.Dims(params.Millimeter)
+	sz := plateDims(SquarePlate, params.Millimeter)
 	m := bezier.Pt(safetyMargin*params.Millimeter, safetyMargin*params.Millimeter)
 	return bspline.Bounds{Min: m, Max: sz.Sub(m)}
 }
@@ -3970,18 +3970,19 @@ func planPreviewPlate(ctx *Context, th *Colors, title string, plan engrave.Engra
 	return plate, cs, nil
 }
 
-type PlateSize int
+// PlateSize aliases backup.PlateSize; the plate geometry lives with
+// the layouts.
+type PlateSize = backup.PlateSize
 
 const (
-	SquarePlate PlateSize = iota
+	SquarePlate = backup.SquarePlate
+	SmallPlate  = backup.SmallPlate
 )
 
-func (p PlateSize) Dims(mm int) bezier.Point {
-	switch p {
-	case SquarePlate:
-		return bezier.Pt(85*mm, 85*mm)
-	}
-	panic("unreachable")
+// plateDims returns the plate dimensions in machine units.
+func plateDims(p PlateSize, mm int) bezier.Point {
+	d := p.Dims()
+	return bezier.Pt(d.X*mm, d.Y*mm)
 }
 
 type scanResult struct {

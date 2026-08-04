@@ -326,22 +326,25 @@ func TestTextGrid(t *testing.T) {
 	// The plate text grid contract: composition tools (the plate
 	// editor, the NFC writer CLI) rely on these dimensions.
 	tests := []struct {
-		fontMM     float32
-		cols, rows int
+		fontMM                float32
+		cols, rows, rowsSmall int
 	}{
-		{6.0, 22, 13},
-		{5.0, 26, 15},
-		{4.4, 30, 17},
-		{3.8, 34, 20},
-		{3.4, 38, 23},
-		{3.0, 44, 26},
+		{6.0, 22, 13, 8},
+		{5.0, 26, 15, 9},
+		{4.4, 30, 17, 11},
+		{3.8, 34, 20, 12},
+		{3.4, 38, 23, 14},
+		{3.0, 44, 26, 16},
 	}
 	for _, test := range tests {
 		if got := CharsPerLine(params, sh.Font, test.fontMM); got != test.cols {
 			t.Errorf("CharsPerLine(%.1fmm) = %d, want %d", test.fontMM, got, test.cols)
 		}
-		if got := LinesPerPlate(params, test.fontMM); got != test.rows {
-			t.Errorf("LinesPerPlate(%.1fmm) = %d, want %d", test.fontMM, got, test.rows)
+		if got := LinesPerPlate(params, SquarePlate, test.fontMM); got != test.rows {
+			t.Errorf("LinesPerPlate(square, %.1fmm) = %d, want %d", test.fontMM, got, test.rows)
+		}
+		if got := LinesPerPlate(params, SmallPlate, test.fontMM); got != test.rowsSmall {
+			t.Errorf("LinesPerPlate(small, %.1fmm) = %d, want %d", test.fontMM, got, test.rowsSmall)
 		}
 	}
 }

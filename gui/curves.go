@@ -109,7 +109,7 @@ func validateCurves(cs *CurvesScreen, payload []byte, params engrave.Params, dim
 	// including travel, to keep the head on the plate.
 	mm := params.Millimeter
 	margin := bezier.Pt(safetyMargin*mm, safetyMargin*mm)
-	sz := SquarePlate.Dims(mm)
+	sz := plateDims(SquarePlate, mm)
 	if !drawing.Bounds.In(bspline.Bounds{Min: margin, Max: sz.Sub(margin)}) {
 		return Plate{}, ErrTooLarge
 	}
@@ -246,7 +246,7 @@ type splineRasterizer struct {
 }
 
 func newSplineRasterizer(side int, params engrave.Params) *splineRasterizer {
-	plate := SquarePlate.Dims(params.Millimeter).X
+	plate := plateDims(SquarePlate, params.Millimeter).X
 	return &splineRasterizer{
 		preview: op.NewBitMask(image.Pt(side, side)),
 		plate:   plate,

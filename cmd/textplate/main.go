@@ -100,7 +100,7 @@ func render() []byte {
 		data.Sizes = append(data.Sizes, sizeEntry{
 			MM:   size,
 			Cols: backup.CharsPerLine(params, sh.Font, size),
-			Rows: backup.LinesPerPlate(params, size),
+			Rows: backup.LinesPerPlate(params, backup.SquarePlate, size),
 		})
 	}
 	for ch := rune(0); ch < 128; ch++ {

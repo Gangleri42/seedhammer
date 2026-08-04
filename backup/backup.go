@@ -47,8 +47,38 @@ const MaxTitleLen = 18
 const outerMargin = 3
 const innerMargin = 10
 
-// plateSize is the width and height of a plate in millimeters.
+// plateSize is the width of every plate and the side of the square
+// one in millimeters.
 const plateSize = 85
+
+// PlateSize enumerates the physical plate formats the machine takes.
+// The zero value is the square plate.
+type PlateSize int
+
+const (
+	SquarePlate PlateSize = iota
+	SmallPlate
+)
+
+// Dims returns the plate dimensions in millimeters. Every plate
+// shares the same width; the small plate is the square one with the
+// top 30mm removed, its bottom and side edges staying put in the
+// machine.
+func (p PlateSize) Dims() image.Point {
+	switch p {
+	case SquarePlate:
+		return image.Pt(plateSize, plateSize)
+	case SmallPlate:
+		return image.Pt(plateSize, 55)
+	}
+	panic("unreachable")
+}
+
+// dims returns the plate dimensions in machine units.
+func (p PlateSize) dims(params engrave.Params) image.Point {
+	d := p.Dims()
+	return image.Point{X: params.I(d.X), Y: params.I(d.Y)}
+}
 
 // FontSizes is the descending ladder of plate text sizes in
 // millimeters, tried largest-first until an engraving fits its plate.
@@ -65,11 +95,12 @@ func CharsPerLine(params engrave.Params, fnt *vector.Face, fontMM float32) int {
 	return width / fixedCharWidth(fnt, params.F(fontMM))
 }
 
-// LinesPerPlate returns the number of text lines that fit a plate at
-// the given text size in millimeters. Together with CharsPerLine it
-// defines the character grid composition tools rely on.
-func LinesPerPlate(params engrave.Params, fontMM float32) int {
-	height := params.F(plateSize) - 2*params.I(outerMargin)
+// LinesPerPlate returns the number of text lines that fit the plate
+// at the given text size in millimeters. Together with CharsPerLine
+// it defines the character grid composition tools rely on. Width is
+// the same on every plate, so only the line count varies with size.
+func LinesPerPlate(params engrave.Params, plate PlateSize, fontMM float32) int {
+	height := params.I(plate.Dims().Y) - 2*params.I(outerMargin)
 	return height / params.F(fontMM)
 }
 

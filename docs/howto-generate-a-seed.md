@@ -213,7 +213,9 @@ down the same ladder as any other text plate. That ladder has a bottom: around
 880 characters alongside a standard derivation path, fewer with a long one.
 Past it the machine says the text does not fit and declines the plate. The
 wallet is unaffected and the seed plate is already cut, so a passphrase that
-long has to be recorded some other way.
+long has to be recorded some other way. A passphrase plate that fits the
+small 85 x 55 mm plate (up to 704 characters of text) offers the plate
+choice before engraving, like any other text plate.
 
 **This plate is exactly as sensitive as the seed plate.** The two together are
 the whole wallet. Storing them in the same place converts a passphrase back into

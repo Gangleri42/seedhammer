@@ -22,14 +22,19 @@ The plate font covers the 95 printable ASCII characters. The grid depends on
 the text size, and the firmware picks the largest size whose grid holds your
 composition:
 
-| size (mm) | grid (cols x rows) |
-|-----------|--------------------|
-| 6.0       | 22 x 13            |
-| 5.0       | 26 x 15            |
-| 4.4       | 30 x 17            |
-| 3.8       | 34 x 20            |
-| 3.4       | 38 x 23            |
-| 3.0       | 44 x 26            |
+| size (mm) | square (cols x rows) | small (cols x rows) |
+|-----------|----------------------|---------------------|
+| 6.0       | 22 x 13              | 22 x 8              |
+| 5.0       | 26 x 15              | 26 x 9              |
+| 4.4       | 30 x 17              | 30 x 11             |
+| 3.8       | 34 x 20              | 34 x 12             |
+| 3.4       | 38 x 23              | 38 x 14             |
+| 3.0       | 44 x 26              | 44 x 16             |
+
+Every plate shares the same width, so columns match across formats; the
+85 x 55 mm small plate only has fewer rows. When a composition fits the
+small grid the machine asks which plate to cut; the biggest small-plate
+text is 704 characters (44 x 16 at 3.0 mm) against 1144 on the square.
 
 Two rules worth knowing:
 

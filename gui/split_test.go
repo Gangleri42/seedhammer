@@ -74,7 +74,7 @@ func TestFitShares(t *testing.T) {
 				}
 				p.QR = qrc
 			}
-			if _, err := toPlate(backup.EngraveText(engraverParams, txt), engraverParams); err != nil {
+			if _, err := toPlate(backup.EngraveText(engraverParams, txt), engraverParams, SquarePlate); err != nil {
 				t.Errorf("%d-of-%d share %d: fit accepted but planning rejects: %v",
 					test.threshold, test.nkeys, k, err)
 			}

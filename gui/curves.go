@@ -73,7 +73,7 @@ func curvesPathFlow(ctx *Context, th *Colors, payload curvesPayload) {
 func scanCurves(ctx *Context, th *Colors, cs *CurvesScreen, payload []byte, params engrave.Params) (Plate, error) {
 	dims := ctx.Platform.DisplaySize()
 	return runJob(ctx, th, func(pump func(done, total int) bool) (Plate, error) {
-		return validateCurves(cs, payload, params, dims, pump)
+		return validateCurves(cs, payload, params, SquarePlate, dims, pump)
 	}, planFrame(ctx, th, cs.Draw))
 }
 
@@ -84,12 +84,12 @@ func scanCurves(ctx *Context, th *Colors, cs *CurvesScreen, payload []byte, para
 // dictates all geometry, so everything is checked up front: the
 // confirm screen preview is the operator's only verification. pump,
 // if not nil, observes the walk and cancels it by returning false.
-func validateCurves(cs *CurvesScreen, payload []byte, params engrave.Params, dims image.Point, pump func(done, total int) bool) (Plate, error) {
+func validateCurves(cs *CurvesScreen, payload []byte, params engrave.Params, plateSize PlateSize, dims image.Point, pump func(done, total int) bool) (Plate, error) {
 	drawing, err := curves.Open(payload, params)
 	if err != nil {
 		return Plate{}, err
 	}
-	r := newSplineRasterizer(previewSide(dims), params)
+	r := newSplineRasterizer(previewSide(dims), params, plateSize)
 	// Shared with the pumping frame loop as it fills; the cooperative
 	// scheduler serializes the access.
 	cs.preview = r.preview
@@ -109,7 +109,7 @@ func validateCurves(cs *CurvesScreen, payload []byte, params engrave.Params, dim
 	// including travel, to keep the head on the plate.
 	mm := params.Millimeter
 	margin := bezier.Pt(safetyMargin*mm, safetyMargin*mm)
-	sz := plateDims(SquarePlate, mm)
+	sz := plateDims(plateSize, mm)
 	if !drawing.Bounds.In(bspline.Bounds{Min: margin, Max: sz.Sub(margin)}) {
 		return Plate{}, ErrTooLarge
 	}
@@ -245,8 +245,8 @@ type splineRasterizer struct {
 	any      bool
 }
 
-func newSplineRasterizer(side int, params engrave.Params) *splineRasterizer {
-	plate := plateDims(SquarePlate, params.Millimeter).X
+func newSplineRasterizer(side int, params engrave.Params, plateSize PlateSize) *splineRasterizer {
+	plate := plateDims(plateSize, params.Millimeter).X
 	return &splineRasterizer{
 		preview: op.NewBitMask(image.Pt(side, side)),
 		plate:   plate,

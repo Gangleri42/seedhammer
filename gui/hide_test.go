@@ -138,8 +138,8 @@ func testSeedView(t *testing.T) (*CurvesScreen, Plate) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := newSplineRasterizer(previewSide(image.Pt(480, 320)), params)
-	plate, err := planPlateWalk(plan, params, nil, r.knot)
+	r := newSplineRasterizer(previewSide(image.Pt(480, 320)), params, SquarePlate)
+	plate, err := planPlateWalk(plan, params, SquarePlate, nil, r.knot)
 	if err != nil {
 		t.Fatal(err)
 	}

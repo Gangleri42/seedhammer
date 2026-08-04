@@ -153,14 +153,14 @@ func newTestEngraveScreen(t testing.TB, ctx *Context) *EngraveScreen {
 	}
 
 	params := ctx.Platform.EngraverParams()
-	_, texts, _, err := fitDescriptor(params, desc, nil)
+	_, texts, _, err := fitDescriptor(params, SquarePlate, desc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	view := &CurvesScreen{title: "Engrave Descriptor"}
-	r := newSplineRasterizer(previewSide(ctx.Platform.DisplaySize()), params)
+	r := newSplineRasterizer(previewSide(ctx.Platform.DisplaySize()), params, SquarePlate)
 	view.preview = r.preview
-	plate, err := planPlateWalk(backup.EngraveText(params, texts[0]), params, nil, r.knot)
+	plate, err := planPlateWalk(backup.EngraveText(params, texts[0]), params, SquarePlate, nil, r.knot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestValidateDescriptorFallback(t *testing.T) {
 		{5, 7, []string{"TEXT ONLY", "QR ONLY"}},
 	}
 	for _, test := range tests {
-		labels, texts, qrText, err := fitDescriptor(engraverParams, multisig(test.threshold, test.nkeys), nil)
+		labels, texts, qrText, err := fitDescriptor(engraverParams, SquarePlate, multisig(test.threshold, test.nkeys), nil)
 		if err != nil {
 			t.Fatalf("%d-of-%d: %v", test.threshold, test.nkeys, err)
 		}
@@ -243,13 +243,13 @@ func TestValidateDescriptorFallback(t *testing.T) {
 				}
 				p.QR = qrc
 			}
-			if _, err := toPlate(backup.EngraveText(engraverParams, txt), engraverParams); err != nil {
+			if _, err := toPlate(backup.EngraveText(engraverParams, txt), engraverParams, SquarePlate); err != nil {
 				t.Errorf("%d-of-%d %s: fit accepted but planning rejects: %v", test.threshold, test.nkeys, labels[i], err)
 			}
 		}
 	}
 	// Beyond the largest QR code that fits the plate.
-	if _, _, _, err := fitDescriptor(engraverParams, multisig(9, 16), nil); !errors.Is(err, ErrTooLarge) {
+	if _, _, _, err := fitDescriptor(engraverParams, SquarePlate, multisig(9, 16), nil); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("16-key descriptor: got %v, want ErrTooLarge", err)
 	}
 
@@ -284,8 +284,8 @@ func TestValidateDescriptorFallback(t *testing.T) {
 						Font:       sh.Font,
 						FontSize:   size,
 					})
-					fits := layoutFits(plan, engraverParams)
-					_, perr := toPlate(plan, engraverParams)
+					fits := layoutFits(plan, engraverParams, SquarePlate)
+					_, perr := toPlate(plan, engraverParams, SquarePlate)
 					if fits != (perr == nil) {
 						t.Errorf("%d-of-%d qr=%v text=%v scale=%d size=%v: fit says %v, planner says %v",
 							cfg[0], cfg[1], p.QR != nil, p.Text != "", scale, size, fits, perr)
@@ -298,7 +298,7 @@ func TestValidateDescriptorFallback(t *testing.T) {
 							Font:       sh.Font,
 							FontSize:   size,
 						})
-						if sfits := layoutFits(plan, engraverParams); sfits != fits {
+						if sfits := layoutFits(plan, engraverParams, SquarePlate); sfits != fits {
 							t.Errorf("%d-of-%d text=%v scale=%d size=%v: stand-in fit %v, real fit %v",
 								cfg[0], cfg[1], p.Text != "", scale, size, sfits, fits)
 						}
@@ -316,12 +316,12 @@ func TestPlanPlateWalk(t *testing.T) {
 		FontSize:   3.8,
 	}
 	plan := backup.EngraveText(engraverParams, plate)
-	ref, err := toPlate(plan, engraverParams)
+	ref, err := toPlate(plan, engraverParams, SquarePlate)
 	if err != nil {
 		t.Fatal(err)
 	}
 	calls, lastDone, total := 0, -1, 0
-	got, err := planPlateWalk(plan, engraverParams, func(done, tot int) bool {
+	got, err := planPlateWalk(plan, engraverParams, SquarePlate, func(done, tot int) bool {
 		calls++
 		if done < lastDone {
 			t.Fatalf("pump went backwards: %d after %d", done, lastDone)
@@ -340,7 +340,7 @@ func TestPlanPlateWalk(t *testing.T) {
 	}
 
 	// A pump returning false abandons the plan.
-	if _, err := planPlateWalk(plan, engraverParams, func(done, tot int) bool {
+	if _, err := planPlateWalk(plan, engraverParams, SquarePlate, func(done, tot int) bool {
 		return false
 	}, nil); !errors.Is(err, errPlanCanceled) {
 		t.Errorf("cancelled plan: %v, want errPlanCanceled", err)
@@ -352,7 +352,7 @@ func TestPlanPlateWalk(t *testing.T) {
 		Font:       sh.Font,
 		FontSize:   6.0,
 	})
-	if _, err := planPlateWalk(big, engraverParams, nil, nil); !errors.Is(err, ErrTooLarge) {
+	if _, err := planPlateWalk(big, engraverParams, SquarePlate, nil, nil); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("oversized layout: %v, want ErrTooLarge", err)
 	}
 }
@@ -374,7 +374,7 @@ func TestValidateText(t *testing.T) {
 			Font:       sh.Font,
 			FontSize:   size,
 		})
-		plate, err := toPlate(plan, engraverParams)
+		plate, err := toPlate(plan, engraverParams, SquarePlate)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -411,7 +411,7 @@ func TestValidateText(t *testing.T) {
 		{"mid-ladder anchor pins the fit", grid(30, 1) + "\n" + strings.Repeat("W", 60), 4.4},
 	}
 	for _, test := range fits {
-		plate, err := validateText(engraverParams, test.text)
+		plate, err := validateText(engraverParams, SquarePlate, test.text)
 		if err != nil {
 			t.Fatalf("%s: %v", test.name, err)
 		}
@@ -427,7 +427,7 @@ func TestValidateText(t *testing.T) {
 		{"too long to wrap", strings.Repeat("W", 44*26+1)},
 	}
 	for _, test := range tooLarge {
-		if _, err := validateText(engraverParams, test.text); !errors.Is(err, ErrTooLarge) {
+		if _, err := validateText(engraverParams, SquarePlate, test.text); !errors.Is(err, ErrTooLarge) {
 			t.Errorf("%s: got %v, want ErrTooLarge", test.name, err)
 		}
 	}
@@ -839,7 +839,7 @@ func TestFitDescriptorScaleFilter(t *testing.T) {
 		fillDescriptor(t, desc, desc.Script.DerivationPath(), 12, 0)
 		return desc
 	}
-	box := plateBounds(engraverParams)
+	box := plateBounds(engraverParams, SquarePlate)
 	span := min(box.Max.X-box.Min.X, box.Max.Y-box.Min.Y)
 	droppedAny := false
 	for _, cfg := range [][2]int{{2, 3}, {4, 6}, {5, 7}, {9, 16}} {
@@ -861,7 +861,7 @@ func TestFitDescriptorScaleFilter(t *testing.T) {
 						Font:       sh.Font,
 						FontSize:   size,
 					})
-					if layoutFits(plan, engraverParams) {
+					if layoutFits(plan, engraverParams, SquarePlate) {
 						t.Errorf("%d-of-%d scale %d text=%v size %v: dropped scale fits the plate",
 							cfg[0], cfg[1], scale, text != "", size)
 					}

@@ -106,11 +106,11 @@ func TestCurvesTextModeMatchesTextRecord(t *testing.T) {
 		t.Fatalf("text mode canonicalized to %q, record to %q", viaCurves, viaRecord)
 	}
 
-	pc, err := validateText(engraverParams, string(viaCurves))
+	pc, err := validateText(engraverParams, SquarePlate, string(viaCurves))
 	if err != nil {
 		t.Fatal(err)
 	}
-	pr, err := validateText(engraverParams, string(viaRecord))
+	pr, err := validateText(engraverParams, SquarePlate, string(viaRecord))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestValidateCurves(t *testing.T) {
 	dims := image.Pt(480, 320)
 	cs := new(CurvesScreen)
 	payload := curvesTestPayload("M 1000 1000 L 4000 1000 L 4000 4000 C 4000 5000 1000 5000 1000 4000 Z")
-	plate, err := validateCurves(cs, payload, engraverParams, dims, nil)
+	plate, err := validateCurves(cs, payload, engraverParams, SquarePlate, dims, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestValidateCurvesPump(t *testing.T) {
 	payload := curvesTestPayload("M 1000 1000 L 4000 1000 L 4000 4000 C 4000 5000 1000 5000 1000 4000 Z")
 	cs := new(CurvesScreen)
 	calls, lastDone, total := 0, -1, 0
-	plate, err := validateCurves(cs, payload, engraverParams, dims, func(done, tot int) bool {
+	plate, err := validateCurves(cs, payload, engraverParams, SquarePlate, dims, func(done, tot int) bool {
 		calls++
 		if done < lastDone {
 			t.Fatalf("pump went backwards: %d after %d", done, lastDone)
@@ -190,7 +190,7 @@ func TestValidateCurvesPump(t *testing.T) {
 	}
 
 	// A pump returning false abandons the scan.
-	if _, err := validateCurves(new(CurvesScreen), payload, engraverParams, dims, func(done, tot int) bool {
+	if _, err := validateCurves(new(CurvesScreen), payload, engraverParams, SquarePlate, dims, func(done, tot int) bool {
 		return false
 	}); !errors.Is(err, curves.ErrCanceled) {
 		t.Fatalf("cancelled scan: %v, want curves.ErrCanceled", err)
@@ -202,12 +202,12 @@ func TestValidateCurvesErrors(t *testing.T) {
 
 	// Inside the 3mm safety margin.
 	payload := curvesTestPayload("M 100 100 L 4000 4000")
-	if _, err := validateCurves(new(CurvesScreen), payload, engraverParams, dims, nil); !errors.Is(err, ErrTooLarge) {
+	if _, err := validateCurves(new(CurvesScreen), payload, engraverParams, SquarePlate, dims, nil); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("margin violation: %v, expected ErrTooLarge", err)
 	}
 
 	// Malformed payloads surface their parse error.
-	if _, err := validateCurves(new(CurvesScreen), []byte("2 100 30\nM 0 0 L 1 1"), engraverParams, dims, nil); err == nil {
+	if _, err := validateCurves(new(CurvesScreen), []byte("2 100 30\nM 0 0 L 1 1"), engraverParams, SquarePlate, dims, nil); err == nil {
 		t.Error("unsupported version passed validation")
 	}
 
@@ -218,7 +218,7 @@ func TestValidateCurvesErrors(t *testing.T) {
 		y := 500 + i*16
 		fmt.Fprintf(&b, "M 500 %d L 8000 %d ", y, y)
 	}
-	if _, err := validateCurves(new(CurvesScreen), curvesTestPayload(b.String()), engraverParams, dims, nil); err == nil || !strings.Contains(err.Error(), "minutes") {
+	if _, err := validateCurves(new(CurvesScreen), curvesTestPayload(b.String()), engraverParams, SquarePlate, dims, nil); err == nil || !strings.Contains(err.Error(), "minutes") {
 		t.Errorf("duration cap: %v, expected a duration error", err)
 	}
 }

@@ -249,7 +249,7 @@ func TestPassphrasePlateSetsOffTheSecret(t *testing.T) {
 	if !strings.Contains(txt, itoa(len(long))+" CHARACTERS") {
 		t.Errorf("character count missing for a %d-char passphrase:\n%s", len(long), txt)
 	}
-	if _, _, err := fitText(newPlatform().EngraverParams(), txt); err != nil {
+	if _, _, err := fitText(newPlatform().EngraverParams(), SquarePlate, txt); err != nil {
 		t.Errorf("a %d-char passphrase does not fit any size: %v", len(long), err)
 	}
 }
@@ -451,7 +451,7 @@ func TestEngraveSeedUsesPassphrase(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%q: %v", pass, err)
 		}
-		plate, err := toPlate(plan, params)
+		plate, err := toPlate(plan, params, SquarePlate)
 		if err != nil {
 			t.Fatalf("%q: %v", pass, err)
 		}
@@ -530,10 +530,10 @@ func TestUncappedPassphraseStaysInBounds(t *testing.T) {
 
 	// The plate is the one real ceiling. It must take a long passphrase
 	// and refuse an impossible one with an error, never silently.
-	if _, _, err := fitText(engrave.SH2Params, passphrasePlate(strings.Repeat("a", 800), "64493BC6", "m/84h/0h/0h")); err != nil {
+	if _, _, err := fitText(engrave.SH2Params, SquarePlate, passphrasePlate(strings.Repeat("a", 800), "64493BC6", "m/84h/0h/0h")); err != nil {
 		t.Errorf("800 characters should still fit a plate: %v", err)
 	}
-	if _, _, err := fitText(engrave.SH2Params, passphrasePlate(strings.Repeat("a", 4000), "64493BC6", "m/84h/0h/0h")); err == nil {
+	if _, _, err := fitText(engrave.SH2Params, SquarePlate, passphrasePlate(strings.Repeat("a", 4000), "64493BC6", "m/84h/0h/0h")); err == nil {
 		t.Error("4000 characters must be refused by the plate, not engraved")
 	}
 }

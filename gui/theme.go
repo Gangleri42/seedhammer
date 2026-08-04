@@ -24,7 +24,6 @@ type Styles struct {
 	keyboard text.Style
 	warning  text.Style
 	debug    text.Style
-	progress text.Style
 }
 
 type Colors struct {
@@ -111,11 +110,6 @@ func NewStyles() Styles {
 		},
 		keyboard: text.Style{
 			Face: poppins.Bold25,
-		},
-		progress: text.Style{
-			Face:          poppins.Boldprogress45,
-			Alignment:     text.AlignCenter,
-			LetterSpacing: -1,
 		},
 	}
 }

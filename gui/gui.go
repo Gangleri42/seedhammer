@@ -571,9 +571,14 @@ func darkCode(size int) *qr.Code {
 // first swapping each paragraph's stand-in code for the real
 // encoding of its qrTexts entry. The encodes run in the plan's
 // worker, behind the progress screen: the heap-heaviest step of the
-// whole flow, deferred until the operator picked a variant.
-func planDescriptorPlate(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Point) op.Op, params engrave.Params, txt backup.Text, qrTexts []string) (Plate, error) {
-	return runJob(ctx, th, func(pump func(done, total int) bool) (Plate, error) {
+// whole flow, deferred until the operator picked a variant. The
+// preview raster fills stroke by stroke under the progress label and
+// carries into the returned view for the engrave screen.
+func planDescriptorPlate(ctx *Context, th *Colors, params engrave.Params, txt backup.Text, qrTexts []string, title string) (Plate, *CurvesScreen, error) {
+	cs := &CurvesScreen{title: title}
+	r := newSplineRasterizer(previewSide(ctx.Platform.DisplaySize()), params)
+	cs.preview = r.preview
+	plate, err := runJob(ctx, th, func(pump func(done, total int) bool) (Plate, error) {
 		collected := false
 		for i := range txt.Paragraphs {
 			p := &txt.Paragraphs[i]
@@ -593,8 +598,13 @@ func planDescriptorPlate(ctx *Context, th *Colors, draw func(*Context, *Colors, 
 			}
 			p.QR = qrc
 		}
-		return planPlateWalk(backup.EngraveText(params, txt), params, pump, nil)
-	}, planFrame(ctx, th, draw))
+		return planPlateWalk(backup.EngraveText(params, txt), params, pump, r.knot)
+	}, planFrame(ctx, th, cs.Draw))
+	if err != nil {
+		return Plate{}, nil, err
+	}
+	cs.initText(plate, r, params)
+	return plate, cs, nil
 }
 
 // shareText composes cosigner k's descriptor share plate: a pairing
@@ -836,16 +846,16 @@ type Plate struct {
 	Spline   bspline.Curve
 }
 
-func engraveSeed(params engrave.Params, m bip39.Mnemonic, passphrase string) (Plate, error) {
+func engraveSeed(params engrave.Params, m bip39.Mnemonic, passphrase string) (engrave.Engraving, error) {
 	// The fingerprint names the wallet the plates actually open, which
 	// with a passphrase is not the one the words alone would.
 	mfp, err := masterFingerprintFor(m, passphrase, &chaincfg.MainNetParams)
 	if err != nil {
-		return Plate{}, err
+		return nil, err
 	}
 	qrc, err := qr.Encode(string(seedqr.QR(m)), qr.M)
 	if err != nil {
-		return Plate{}, err
+		return nil, err
 	}
 	words := make([]string, len(m))
 	for i, w := range m {
@@ -859,11 +869,7 @@ func engraveSeed(params engrave.Params, m bip39.Mnemonic, passphrase string) (Pl
 		MasterFingerprint: mfp,
 		Font:              constant.Font,
 	}
-	seedSide, err := backup.EngraveSeed(params, seedDesc)
-	if err != nil {
-		return Plate{}, err
-	}
-	return toPlate(seedSide, params)
+	return backup.EngraveSeed(params, seedDesc)
 }
 
 func masterFingerprintFor(m bip39.Mnemonic, passphrase string, network *chaincfg.Params) (uint32, error) {
@@ -2395,14 +2401,23 @@ func seedPlateFlow(ctx *Context, th *Colors, ss *SeedScreen, mnemonic bip39.Mnem
 	if choice == 1 {
 		return true
 	}
-	plate, err := engraveSeed(ctx.Platform.EngraverParams(), mnemonic, passphrase)
+	params := ctx.Platform.EngraverParams()
+	plan, err := engraveSeed(params, mnemonic, passphrase)
+	var plate Plate
+	var view *CurvesScreen
+	if err == nil {
+		plate, view, err = planPreviewPlate(ctx, th, "Engrave Seed", plan, params)
+	}
 	if err != nil {
+		if errors.Is(err, errPlanCanceled) {
+			return false
+		}
 		showError(ctx, th, err, func(ctx *Context, th *Colors, dims image.Point) op.Op {
 			return ss.Draw(ctx, th, dims, mnemonic)
 		})
 		return false
 	}
-	done := NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme)
+	done := NewEngraveScreen(ctx, plate, view).Engrave(ctx, &engraveTheme)
 	return done
 }
 
@@ -2410,18 +2425,17 @@ func backupSeedStringFlow(ctx *Context, th *Colors, s backup.SeedString) {
 	params := ctx.Platform.EngraverParams()
 	p, err := backup.EngraveSeedString(params, s)
 	if err != nil {
+		showError(ctx, th, err, blankScreen)
 		return
 	}
-	plate, err := toPlate(p, params)
+	plate, view, err := planPreviewPlate(ctx, th, "Engrave Seed", p, params)
 	if err != nil {
+		if !errors.Is(err, errPlanCanceled) {
+			showError(ctx, th, err, blankScreen)
+		}
 		return
 	}
-	for {
-		completed := NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme)
-		if completed {
-			return
-		}
-	}
+	NewEngraveScreen(ctx, plate, view).Engrave(ctx, &engraveTheme)
 }
 
 func descriptorFlow(ctx *Context, th *Colors, desc *bip380.Descriptor) {
@@ -2429,7 +2443,7 @@ func descriptorFlow(ctx *Context, th *Colors, desc *bip380.Descriptor) {
 		Descriptor: desc,
 	}
 	for {
-		plate, split, ok := ds.Confirm(ctx, th)
+		pp, split, ok := ds.Confirm(ctx, th)
 		if !ok {
 			break
 		}
@@ -2439,7 +2453,7 @@ func descriptorFlow(ctx *Context, th *Colors, desc *bip380.Descriptor) {
 			}
 			continue
 		}
-		completed := NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme)
+		completed := NewEngraveScreen(ctx, pp.plate, pp.view).Engrave(ctx, &engraveTheme)
 		if completed {
 			return
 		}
@@ -2460,6 +2474,7 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 	desc := ds.Descriptor
 	n := len(desc.Keys)
 	var plate Plate
+	var view *CurvesScreen
 	planned := false
 	for k := 0; k < n; k++ {
 		if !sp.copies {
@@ -2493,7 +2508,7 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 			if !planned {
 				txt, qrTexts, err := sp.plateContent(desc, k)
 				if err == nil {
-					plate, err = planDescriptorPlate(ctx, th, ds.Draw, params, txt, qrTexts)
+					plate, view, err = planDescriptorPlate(ctx, th, params, txt, qrTexts, fmt.Sprintf("Plate %d of %d", k+1, n))
 				}
 				if err != nil {
 					if errors.Is(err, errPlanCanceled) {
@@ -2504,7 +2519,7 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 				}
 				planned = true
 			}
-			if !NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme) {
+			if !NewEngraveScreen(ctx, plate, view).Engrave(ctx, &engraveTheme) {
 				continue
 			}
 			next := "NEXT PLATE"
@@ -2530,14 +2545,14 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 }
 
 func textFlow(ctx *Context, th *Colors, txt plainText) bool {
-	// Text plates confirm exactly like scanned drawings: the plan walk
-	// fills the plate preview behind the progress label, then one
-	// layout confirm shows the engraved grid — the composed lines at
-	// the fitted size, wraps and all — with its dimensions and
+	// The plan walk fills the plate preview behind the progress label,
+	// then the engrave screen holds that preview — the composed lines
+	// at the fitted size, wraps and all — with its dimensions and
 	// duration. What the operator approves is the plate, not a
 	// display-width rendering of the text. Completing the engrave
 	// reports true; a refused plate, a cancelled plan or a backed-out
-	// confirm reports false so a typed text can return to its editor.
+	// engrave screen reports false so a typed text can return to its
+	// editor.
 	plate, preview, err := planText(ctx, th, ctx.Platform.EngraverParams(), string(txt))
 	if err != nil {
 		if errors.Is(err, errPlanCanceled) {
@@ -2547,23 +2562,7 @@ func textFlow(ctx *Context, th *Colors, txt plainText) bool {
 		return false
 	}
 	preview.notice = textNotice(string(txt))
-	return engraveConfirmed(ctx, th, preview, plate)
-}
-
-// engraveConfirmed runs the plate-layout confirm and the engrave
-// screen as one unit: back on the confirm reports false, an aborted
-// engrave re-shows the confirm with the planned plate in hand (no
-// replanning), a completed engrave reports true.
-func engraveConfirmed(ctx *Context, th *Colors, preview *CurvesScreen, plate Plate) bool {
-	for {
-		plate, ok := preview.Confirm(ctx, th, plate)
-		if !ok {
-			return false
-		}
-		if NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme) {
-			return true
-		}
-	}
+	return NewEngraveScreen(ctx, plate, preview).Engrave(ctx, &engraveTheme)
 }
 
 // NostrScreen confirms a scanned Nostr key before engraving. For an
@@ -2701,12 +2700,19 @@ func nostrEngrave(ctx *Context, th *Colors, scr *NostrScreen, p nostrPlan) bool 
 		showError(ctx, th, p.fail, scr.Draw)
 		return false
 	}
-	plate, err := toPlate(p.plan, ctx.Platform.EngraverParams())
+	title := "Engrave Nostr Key"
+	if scr.Key.HRP == nip19.HRPPub {
+		title = "Engrave Public Key"
+	}
+	plate, view, err := planPreviewPlate(ctx, th, title, p.plan, ctx.Platform.EngraverParams())
 	if err != nil {
+		if errors.Is(err, errPlanCanceled) {
+			return false
+		}
 		showError(ctx, th, p.fail, scr.Draw)
 		return false
 	}
-	return NewEngraveScreen(ctx, plate).Engrave(ctx, &engraveTheme)
+	return NewEngraveScreen(ctx, plate, view).Engrave(ctx, &engraveTheme)
 }
 
 func newInputFlow(ctx *Context, th *Colors) (any, bool) {
@@ -3036,11 +3042,18 @@ func showError(ctx *Context, th *Colors, err error, draw func(*Context, *Colors,
 	}
 }
 
+// plannedPlate pairs a planned plate with the preview view the
+// engrave screen renders it through.
+type plannedPlate struct {
+	plate Plate
+	view  *CurvesScreen
+}
+
 // confirmScreen drives a back/confirm navigation loop over draw. The
 // confirm button calls validate: an error overlays the screen and the
 // loop continues; ok reports whether the plate is ready, and false
 // with a nil error re-enters the loop (e.g. a cancelled choice).
-func confirmScreen(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Point) op.Op, validate func() (Plate, bool, error)) (Plate, bool) {
+func confirmScreen(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Point) op.Op, validate func() (plannedPlate, bool, error)) (plannedPlate, bool) {
 	backBtn := &Clickable{Button: Button1}
 	confirmBtn := &Clickable{Button: Button3}
 	for !ctx.Done {
@@ -3066,7 +3079,7 @@ func confirmScreen(ctx *Context, th *Colors, draw func(*Context, *Colors, image.
 		}...)
 		ctx.Frame(op.Layer(nav, draw(ctx, th, dims)))
 	}
-	return Plate{}, false
+	return plannedPlate{}, false
 }
 
 // splitPlan carries the operator's choice to cut the descriptor
@@ -3096,9 +3109,9 @@ func (sp *splitPlan) plateContent(desc *bip380.Descriptor, k int) (backup.Text, 
 	return shareText(desc, sp.data, k, sp.fontSize, sp.scale)
 }
 
-func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (Plate, *splitPlan, bool) {
+func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (plannedPlate, *splitPlan, bool) {
 	var split *splitPlan
-	plate, ok := confirmScreen(ctx, th, s.Draw, func() (Plate, bool, error) {
+	plate, ok := confirmScreen(ctx, th, s.Draw, func() (plannedPlate, bool, error) {
 		split = nil
 		params := ctx.Platform.EngraverParams()
 		desc := s.Descriptor
@@ -3116,10 +3129,10 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (Plate, *splitPlan,
 		scheme := n > 1 && ur.HasScheme(desc.Threshold, n)
 		if err != nil {
 			if errors.Is(err, errPlanCanceled) {
-				return Plate{}, false, nil
+				return plannedPlate{}, false, nil
 			}
 			if !scheme || !errors.Is(err, ErrTooLarge) {
-				return Plate{}, false, err
+				return plannedPlate{}, false, err
 			}
 			// No single-plate variant fits, but the partition's smaller
 			// shares still can: offer the split alone.
@@ -3148,7 +3161,7 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (Plate, *splitPlan,
 			}
 			mchoice, ok := mc.Choose(ctx, th)
 			if !ok {
-				return Plate{}, false, nil
+				return plannedPlate{}, false, nil
 			}
 			if mchoice == len(choices)-1 {
 				if scheme {
@@ -3161,12 +3174,12 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (Plate, *splitPlan,
 					}, planFrame(ctx, th, s.Draw))
 					if err != nil {
 						if errors.Is(err, errPlanCanceled) {
-							return Plate{}, false, nil
+							return plannedPlate{}, false, nil
 						}
-						return Plate{}, false, err
+						return plannedPlate{}, false, err
 					}
 					split = sp
-					return Plate{}, true, nil
+					return plannedPlate{}, true, nil
 				}
 				wantCopies = true
 			}
@@ -3178,20 +3191,20 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (Plate, *splitPlan,
 		}
 		choice, ok := cs.Choose(ctx, th)
 		if !ok {
-			return Plate{}, false, nil
+			return plannedPlate{}, false, nil
 		}
 		if wantCopies {
 			split = &splitPlan{copies: true, copyText: texts[choice], copyQR: fit.qrText}
-			return Plate{}, true, nil
+			return plannedPlate{}, true, nil
 		}
-		plate, err := planDescriptorPlate(ctx, th, s.Draw, params, texts[choice], []string{fit.qrText})
+		plate, view, err := planDescriptorPlate(ctx, th, params, texts[choice], []string{fit.qrText}, "Engrave Descriptor")
 		if err != nil {
 			if errors.Is(err, errPlanCanceled) {
-				return Plate{}, false, nil
+				return plannedPlate{}, false, nil
 			}
-			return Plate{}, false, err
+			return plannedPlate{}, false, err
 		}
-		return plate, true, nil
+		return plannedPlate{plate: plate, view: view}, true, nil
 	})
 	return plate, split, ok
 }
@@ -3291,19 +3304,29 @@ type plateRecorder interface {
 	RecordPlate(Plate)
 }
 
-func NewEngraveScreen(ctx *Context, plate Plate) *EngraveScreen {
+func NewEngraveScreen(ctx *Context, plate Plate, view *CurvesScreen) *EngraveScreen {
 	if r, ok := ctx.Platform.(plateRecorder); ok {
 		r.RecordPlate(plate)
 	}
 	return &EngraveScreen{
 		duration: plate.Duration,
 		job:      newEngraverJob(ctx.Platform, plate.Spline, 0),
+		view:     view,
 	}
 }
 
 type EngraveScreen struct {
 	duration uint
 	job      *engraveJob
+
+	// view is the plate preview the screen renders through: the idle
+	// state is the plate confirm, the countdown runs over the same
+	// preview. nil falls back to a text layout, as does the failed
+	// state whose error must stay readable at full width.
+	view *CurvesScreen
+	// warned records that the view's notice was shown, so a paused and
+	// resumed engraving is not re-warned about its own content.
+	warned bool
 
 	// The hold-to-confirm gesture, in ConfirmWarningScreen's shape:
 	// edge-detect the press, arm the delay, a release disarms.
@@ -3348,6 +3371,15 @@ func (s *EngraveScreen) Engrave(ctx *Context, th *Colors) bool {
 				s.confirm = ConfirmDelay{}
 				s.pressed = false
 				progress = 0
+				if s.job.Status().State == engraveIdle && !s.warned && s.view != nil && s.view.notice != "" {
+					// The content warning gets its own page, between
+					// the completed hold and the first start; backing
+					// out returns to the idle preview.
+					if !s.confirmNotice(ctx, th) {
+						continue
+					}
+					s.warned = true
+				}
 				s.job.Start()
 			}
 		default:
@@ -3377,58 +3409,109 @@ func (s *EngraveScreen) Engrave(ctx *Context, th *Colors) bool {
 	return false
 }
 
-func (s *EngraveScreen) draw(ctx *Context, th *Colors, dims image.Point) op.Op {
-	r := layout.Rectangle{Max: dims}
+// countdown is the remaining engraving time, rounded up to whole
+// seconds, as m:ss.
+func (s *EngraveScreen) countdown(ctx *Context, st engraveStatus) (int, uint) {
+	rem := s.duration - st.Completed
+	tps := ctx.Platform.EngraverParams().TicksPerSecond
+	remSec := (rem + tps - 1) / tps
+	return int(remSec / 60), remSec % 60
+}
 
-	const margin = 8
-	_, content := r.CutTop(leadingSize)
-
-	st := s.job.Status()
-	var contentOp op.Op
-	switch st.State {
-	default:
-		content := content.Shrink(0, margin, 0, margin)
-		content, _ = content.CutBottom(leadingSize)
-		var bodysz image.Point
-		var bodyOp op.Op
-		switch st.State {
-		case engraveIdle:
-			const body = "Insert a blank plate and close the lock.\n\nHold button to start the engraving process. The process is loud, use hearing protection."
-			bodyOp, bodysz = widget.Labelw(&ctx.B, ctx.Styles.lead, content.Dx(), th.Text, body)
-		case engraveDone:
-			const body = "Engraving completed successfully."
-			bodyOp, bodysz = widget.Labelw(&ctx.B, ctx.Styles.lead, content.Dx(), th.Text, body)
-		case engraveStopped:
-			const body = "Engraving paused.\nHold button to resume."
-			bodyOp, bodysz = widget.Labelw(&ctx.B, ctx.Styles.lead, content.Dx(), th.Text, body)
-		case engraveStopping:
-			const body = "Engraving stopping..."
-			bodyOp, bodysz = widget.Labelw(&ctx.B, ctx.Styles.lead, content.Dx(), th.Text, body)
-		case engraveFailed:
-			bodyOp, bodysz = widget.Labelwf(&ctx.B, ctx.Styles.lead, content.Dx(), th.Text,
-				"Engraving failed.\nHold button to retry.\n\nError: %s", st.Error)
-		}
-		contentOp = bodyOp.Offset(content.Center(bodysz))
-	case engraveRunning:
-		middle, lead := content.CutBottom(leadingSize)
-		// Remaining seconds, rounded up.
-		rem := s.duration - st.Completed
-		tps := ctx.Platform.EngraverParams().TicksPerSecond
-		remSec := (rem + tps - 1) / tps
-		min, sec := remSec/60, remSec%60
-		remOp, sz := widget.Labelf(&ctx.B, ctx.Styles.progress, th.Text, "%d:%.2d", min, sec)
-		remOp = remOp.Offset(middle.Center(sz))
-		const leadTxt = "Engraving plate"
-		leadOp, leadsz := widget.Labelw(&ctx.B, ctx.Styles.lead, dims.X-2*margin, th.Text, leadTxt)
-		leadOp = leadOp.Offset(lead.Center(leadsz))
-		contentOp = op.Layer(remOp, leadOp)
+// confirmNotice interposes the view's content warning between the
+// completed hold and the first start: the plate preview was on
+// screen up to the hold, the warning gets a page of its own, and
+// confirming it begins the engraving.
+func (s *EngraveScreen) confirmNotice(ctx *Context, th *Colors) bool {
+	gate := &noticeScreen{
+		Title: s.view.title,
+		Body:  s.view.notice,
+		Icon:  assets.IconHammer,
 	}
-	title, _ := layoutTitle(ctx, dims.X, th.Text, "Engrave Plate")
+	for !ctx.Done {
+		dims := ctx.Platform.DisplaySize()
+		d, res := gate.Layout(ctx, th, dims)
+		switch res {
+		case ConfirmYes:
+			return true
+		case ConfirmNo:
+			return false
+		}
+		ctx.Frame(d)
+	}
+	return false
+}
+
+func (s *EngraveScreen) draw(ctx *Context, th *Colors, dims image.Point) op.Op {
+	st := s.job.Status()
+	title := "Engrave Plate"
+	if s.view != nil && s.view.title != "" {
+		title = s.view.title
+	}
+	titleOp, _ := layoutTitle(ctx, dims.X, th.Text, title)
+	if s.view == nil || s.view.preview == nil || st.State == engraveFailed {
+		return op.Layer(
+			s.drawBody(ctx, th, dims, st),
+			titleOp,
+			op.Color(&ctx.B, th.Background),
+		)
+	}
+	// The preview is the screen; the strip under the plate carries the
+	// state. Idle shows the dims/duration line — the idle screen IS
+	// the plate confirm — and running counts the same line down.
+	// One line under the plate; the strip has no wrap, so its texts
+	// stay short enough for the narrowest display.
+	strip := s.view.info
+	switch st.State {
+	case engraveRunning:
+		min, sec := s.countdown(ctx, st)
+		strip = fmt.Sprintf("%d:%.2d", min, sec)
+	case engraveDone:
+		strip = "Engraving completed."
+	case engraveStopped:
+		strip = "Paused. Hold to resume."
+	case engraveStopping:
+		strip = "Stopping..."
+	}
 	return op.Layer(
-		contentOp,
-		title,
+		s.view.plateOp(ctx, th, dims, strip),
+		titleOp,
 		op.Color(&ctx.B, th.Background),
 	)
+}
+
+// drawBody is the text layout for states without a preview: a
+// viewless screen, and the failed state, whose error must stay
+// readable at full width.
+func (s *EngraveScreen) drawBody(ctx *Context, th *Colors, dims image.Point, st engraveStatus) op.Op {
+	r := layout.Rectangle{Max: dims}
+	const margin = 8
+	_, content := r.CutTop(leadingSize)
+	content = content.Shrink(0, margin, 0, margin)
+	content, _ = content.CutBottom(leadingSize)
+	var bodysz image.Point
+	var bodyOp op.Op
+	switch st.State {
+	case engraveIdle:
+		const body = "Hold button to start the engraving."
+		bodyOp, bodysz = widget.Labelw(&ctx.B, ctx.Styles.lead, content.Dx(), th.Text, body)
+	case engraveRunning:
+		min, sec := s.countdown(ctx, st)
+		bodyOp, bodysz = widget.Labelf(&ctx.B, ctx.Styles.lead, th.Text, "Engraving plate   %d:%.2d", min, sec)
+	case engraveDone:
+		const body = "Engraving completed successfully."
+		bodyOp, bodysz = widget.Labelw(&ctx.B, ctx.Styles.lead, content.Dx(), th.Text, body)
+	case engraveStopped:
+		const body = "Engraving paused.\nHold button to resume."
+		bodyOp, bodysz = widget.Labelw(&ctx.B, ctx.Styles.lead, content.Dx(), th.Text, body)
+	case engraveStopping:
+		const body = "Engraving stopping..."
+		bodyOp, bodysz = widget.Labelw(&ctx.B, ctx.Styles.lead, content.Dx(), th.Text, body)
+	case engraveFailed:
+		bodyOp, bodysz = widget.Labelwf(&ctx.B, ctx.Styles.lead, content.Dx(), th.Text,
+			"Engraving failed.\nHold button to retry.\n\nError: %s", st.Error)
+	}
+	return bodyOp.Offset(content.Center(bodysz))
 }
 
 func (s *EngraveScreen) drawNav(b *op.Buffer, th *Colors, dims image.Point, progress float32, backBtn, selectBtn *Clickable) op.Op {
@@ -3849,6 +3932,22 @@ func planFrame(ctx *Context, th *Colors, draw func(*Context, *Colors, image.Poin
 		r := layout.Rectangle{Max: dims}
 		return op.Layer(label.Offset(r.S(lsz).Sub(image.Pt(0, 16))), draw(ctx, th, dims))
 	}
+}
+
+// planPreviewPlate plans an engraving with its preview filling under
+// the progress label — the funnel every simple plate flow shares.
+// The returned view carries the raster and the dims/duration line
+// for the engrave screen.
+func planPreviewPlate(ctx *Context, th *Colors, title string, plan engrave.Engraving, params engrave.Params) (Plate, *CurvesScreen, error) {
+	cs := &CurvesScreen{title: title}
+	r := newSplineRasterizer(previewSide(ctx.Platform.DisplaySize()), params)
+	cs.preview = r.preview
+	plate, err := planPlate(ctx, th, cs.Draw, plan, params, r.knot)
+	if err != nil {
+		return Plate{}, nil, err
+	}
+	cs.initText(plate, r, params)
+	return plate, cs, nil
 }
 
 type PlateSize int

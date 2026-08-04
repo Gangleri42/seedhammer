@@ -10,7 +10,6 @@ import (
 	"seedhammer.com/bspline"
 	"seedhammer.com/curves"
 	"seedhammer.com/engrave"
-	"seedhammer.com/gui/assets"
 	"seedhammer.com/gui/op"
 	"seedhammer.com/gui/widget"
 )
@@ -63,25 +62,20 @@ func curvesPathFlow(ctx *Context, th *Colors, payload curvesPayload) {
 		if errors.Is(err, errPlanCanceled) {
 			return
 		}
-		cs.info = ""
 		showError(ctx, th, err, cs.Draw)
 		return
 	}
-	engraveConfirmed(ctx, th, cs, plate)
+	NewEngraveScreen(ctx, plate, cs).Engrave(ctx, &engraveTheme)
 }
 
 // scanCurves validates the payload behind the progress screen: the
-// preview raster fills stroke by stroke as the walk streams and the
-// info line carries the walked fraction; the back button abandons
-// the scan.
+// preview raster fills stroke by stroke as the walk streams under
+// the walked-percentage label; the back button abandons the scan.
 func scanCurves(ctx *Context, th *Colors, cs *CurvesScreen, payload []byte, params engrave.Params) (Plate, error) {
 	dims := ctx.Platform.DisplaySize()
 	return runJob(ctx, th, func(pump func(done, total int) bool) (Plate, error) {
 		return validateCurves(cs, payload, params, dims, pump)
-	}, func(pct int) op.Op {
-		cs.info = fmt.Sprintf("Preparing %d%%", pct)
-		return cs.Draw(ctx, th, dims)
-	})
+	}, planFrame(ctx, th, cs.Draw))
 }
 
 // validateCurves parses and validates a curves payload and fills in
@@ -168,12 +162,6 @@ func (s *CurvesScreen) initText(plate Plate, r *splineRasterizer, params engrave
 	s.info = fmt.Sprintf("%d x %d mm   %d:%.2d", w, h, secs/60, secs%60)
 }
 
-func (s *CurvesScreen) Confirm(ctx *Context, th *Colors, plate Plate) (Plate, bool) {
-	return confirmScreen(ctx, th, s.Draw, func() (Plate, bool, error) {
-		return plate, true, nil
-	})
-}
-
 // previewSide is the pixel size of the square plate preview.
 func previewSide(dims image.Point) int {
 	const infoSpace = 32
@@ -189,6 +177,17 @@ func (s *CurvesScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {
 	if s.preview == nil {
 		return content
 	}
+	return op.Layer(
+		s.plateOp(ctx, th, dims, s.info),
+		content,
+	)
+}
+
+// plateOp renders the preview raster in its plate outline with a
+// strip line centered beneath — the plate rendering shared by the
+// plan progress screen and the engrave screen, which swaps the strip
+// per engrave state. The preview must be non-nil.
+func (s *CurvesScreen) plateOp(ctx *Context, th *Colors, dims image.Point, strip string) op.Op {
 	side := s.preview.sz.X
 	pos := image.Pt((dims.X-side)/2, leadingSize+4)
 	plate := image.Rectangle{Max: s.preview.sz}
@@ -201,31 +200,13 @@ func (s *CurvesScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {
 		op.Color(&ctx.B, th.Text),
 		op.Mask(&ctx.B, s.preview).Offset(pos),
 	)
-	info, infosz := widget.Label(&ctx.B, ctx.Styles.subtitle, th.Text, s.info)
+	info, infosz := widget.Label(&ctx.B, ctx.Styles.subtitle, th.Text, strip)
 	space := dims.Y - pos.Y - side
-	if s.notice == "" {
-		info = info.Offset(image.Pt((dims.X-infosz.X)/2, pos.Y+side+(space-infosz.Y)/2))
-		return op.Layer(
-			drawing,
-			outline,
-			info,
-			content,
-		)
-	}
-	// The corruption notice shares the foot with the info line, kept
-	// clear of the nav buttons in the corners.
-	btnw := assets.NavBtnPrimary.Bounds().Dx()
-	notice, nsz := widget.Labelw(&ctx.B, ctx.Styles.subtitle, dims.X-2*btnw, th.Text, s.notice)
-	total := infosz.Y + 4 + nsz.Y
-	y0 := pos.Y + side + (space-total)/2
-	info = info.Offset(image.Pt((dims.X-infosz.X)/2, y0))
-	notice = notice.Offset(image.Pt((dims.X-nsz.X)/2, y0+infosz.Y+4))
+	info = info.Offset(image.Pt((dims.X-infosz.X)/2, pos.Y+side+(space-infosz.Y)/2))
 	return op.Layer(
 		drawing,
 		outline,
 		info,
-		notice,
-		content,
 	)
 }
 

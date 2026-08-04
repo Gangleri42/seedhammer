@@ -139,6 +139,24 @@ func TestShareRecovery(t *testing.T) {
 	}
 }
 
+// awaitUI pumps frames until marker renders, failing with the last
+// frame when it never does.
+func awaitUI(t *testing.T, frame func() (string, bool), marker string) {
+	t.Helper()
+	last := ""
+	for range 10000 {
+		content, ok := frame()
+		if !ok {
+			t.Fatalf("flow ended waiting for %q", marker)
+		}
+		if uiContains(content, marker) {
+			return
+		}
+		last = content
+	}
+	t.Fatalf("%q never appeared; last frame: %q", marker, last)
+}
+
 // splitFlowHarness drives descriptorFlow far enough to exercise the
 // per-plate loop with a mock engraver under a synctest clock.
 func splitFlowHarness(t *testing.T, desc *bip380.Descriptor, script func(ctx *Context, await func(string), engrave func())) {
@@ -155,22 +173,14 @@ func splitFlowHarness(t *testing.T, desc *bip380.Descriptor, script func(ctx *Co
 	defer quit()
 	await := func(marker string) {
 		t.Helper()
-		last := ""
-		for range 10000 {
-			content, ok := frame()
-			if !ok {
-				t.Fatalf("flow ended waiting for %q", marker)
-			}
-			if uiContains(content, marker) {
-				return
-			}
-			last = content
-		}
-		t.Fatalf("%q never appeared; last frame: %q", marker, last)
+		awaitUI(t, frame, marker)
 	}
 	engrave := func() {
 		t.Helper()
-		await("close the lock")
+		// The engrave screen's idle strip is the dims/duration line
+		// under the plate preview; "mm" marks it, since no choice or
+		// progress screen in the flow renders dimensions.
+		await("mm")
 		press(&ctx.Router, Button3)
 		frame()
 		time.Sleep(confirmDelay)
@@ -186,7 +196,7 @@ func splitFlowHarness(t *testing.T, desc *bip380.Descriptor, script func(ctx *Co
 			case <-p.wakeups:
 			}
 		}
-		await("completed successfully")
+		await("Engraving completed")
 		click(&ctx.Router, Button3)
 	}
 	script(ctx, await, engrave)

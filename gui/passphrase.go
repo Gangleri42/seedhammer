@@ -354,5 +354,6 @@ func passphrasePlateFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, pass
 		}
 		return
 	}
-	engraveConfirmed(ctx, th, preview, plate)
+	preview.title = "Engrave Passphrase"
+	NewEngraveScreen(ctx, plate, preview).Engrave(ctx, &engraveTheme)
 }

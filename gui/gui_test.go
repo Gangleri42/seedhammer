@@ -157,13 +157,18 @@ func newTestEngraveScreen(t *testing.T, ctx *Context) *EngraveScreen {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plate, err := toPlate(backup.EngraveText(params, texts[0]), params)
+	view := &CurvesScreen{title: "Engrave Descriptor"}
+	r := newSplineRasterizer(previewSide(ctx.Platform.DisplaySize()), params)
+	view.preview = r.preview
+	plate, err := planPlateWalk(backup.EngraveText(params, texts[0]), params, nil, r.knot)
 	if err != nil {
 		t.Fatal(err)
 	}
+	view.initText(plate, r, params)
 	return NewEngraveScreen(
 		ctx,
 		plate,
+		view,
 	)
 }
 
@@ -449,6 +454,7 @@ func TestEngraveScreenCancel(t *testing.T) {
 						time.Sleep(10 * time.Second)
 					},
 				},
+				nil,
 			)
 			if ok := scr.Engrave(ctx, &engraveTheme); ok {
 				t.Error("EngraveScreen: succeeded unexpectedly")
@@ -1066,6 +1072,63 @@ func TestBackupWalletAsksPassphraseOnce(t *testing.T) {
 		}
 	}
 	t.Fatalf("flow never returned to the seed plate: asks=%d backs=%d", asks, backs)
+}
+
+// TestTextNoticeGate: a text resembling a damaged backup engraves
+// only through the warning page. The hold on the idle preview
+// surfaces it, back returns to the preview without starting the job,
+// and confirming it starts the engraving.
+func TestTextNoticeGate(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newEngraver()
+		p := newPlatform()
+		p.engraver = e
+		ctx := NewContext(p)
+		completed := false
+		frame, quit := runUI(ctx, func() {
+			completed = textFlow(ctx, &descriptorTheme, plainText("wsh(corrupted"))
+		})
+		defer quit()
+
+		hold := func() {
+			press(&ctx.Router, Button3)
+			frame()
+			time.Sleep(confirmDelay)
+		}
+		awaitUI(t, frame, "mm") // the idle preview's dims line
+		hold()
+		awaitUI(t, frame, "corrupted descriptor")
+		click(&ctx.Router, Button1)
+		awaitUI(t, frame, "mm")
+		select {
+		case <-e.opens:
+			t.Fatal("backing out of the warning still started the job")
+		default:
+		}
+		hold()
+		awaitUI(t, frame, "corrupted descriptor")
+		click(&ctx.Router, Button3)
+	loop:
+		for {
+			frame()
+			select {
+			case <-e.closes:
+				break loop
+			case <-p.wakeups:
+			}
+		}
+		awaitUI(t, frame, "Engraving completed")
+		click(&ctx.Router, Button3)
+		for range 10 {
+			if _, ok := frame(); !ok {
+				break
+			}
+		}
+		synctest.Wait()
+		if !completed {
+			t.Error("the gated engraving did not complete the text flow")
+		}
+	})
 }
 
 // TestEngraveTextEntryFlow drives the menu row end to end: ENGRAVE

@@ -135,6 +135,23 @@ type CurvesScreen struct {
 	// notice warns about content that resembles a corrupted structured
 	// backup (the text flow; see textNotice).
 	notice string
+
+	// hidden withholds what the plate says while keeping that it is a
+	// plate: the operator's toggle for one they are about to leave
+	// engraving unattended. Coarsening the raster into blocks was
+	// tried on the bench and rejected — quantizing a 1-bit mask only
+	// ever adds ink, so a hidden plate read as a white slab.
+	hidden bool
+}
+
+// mask is the raster to draw, or nil while the content is hidden:
+// then the plate keeps its outline and its figures, and shows
+// nothing engraved inside them.
+func (s *CurvesScreen) mask() *op.BitMask {
+	if s.hidden {
+		return nil
+	}
+	return s.preview
 }
 
 func (s *CurvesScreen) init(plate Plate, drawing *curves.Drawing, params engrave.Params) {
@@ -195,13 +212,17 @@ func (s *CurvesScreen) plateOp(ctx *Context, th *Colors, dims image.Point, strip
 		op.Color(&ctx.B, th.Primary),
 		op.RoundedOutline2(&ctx.B, plate, 3*side/85, 1).Offset(pos),
 	)
-	drawing := op.Compose(
-		op.Color(&ctx.B, th.Text),
-		op.Mask(&ctx.B, s.preview).Offset(pos),
-	)
 	info, infosz := widget.Label(&ctx.B, ctx.Styles.subtitle, th.Text, strip)
 	space := dims.Y - pos.Y - side
 	info = info.Offset(image.Pt((dims.X-infosz.X)/2, pos.Y+side+(space-infosz.Y)/2))
+	m := s.mask()
+	if m == nil {
+		return op.Layer(outline, info)
+	}
+	drawing := op.Compose(
+		op.Color(&ctx.B, th.Text),
+		op.Mask(&ctx.B, m).Offset(pos),
+	)
 	return op.Layer(
 		drawing,
 		outline,

@@ -3337,8 +3337,16 @@ type EngraveScreen struct {
 func (s *EngraveScreen) Engrave(ctx *Context, th *Colors) bool {
 	defer s.job.Stop()
 	backBtn := &Clickable{Button: Button1}
+	hideBtn := &Clickable{Button: Button2}
 	selectBtn := &Clickable{Button: Button3, AltButton: Center}
 	for !ctx.Done {
+		for hideBtn.Clicked(ctx) {
+			// Hides what the plate says, not that it is engraving: the
+			// toggle holds through the run, which is the point of it.
+			if s.view != nil && s.view.preview != nil {
+				s.view.hidden = !s.view.hidden
+			}
+		}
 		for backBtn.Clicked(ctx) {
 			st := s.job.Status()
 			if st.State != engraveRunning {
@@ -3401,7 +3409,7 @@ func (s *EngraveScreen) Engrave(ctx *Context, th *Colors) bool {
 		}
 
 		dims := ctx.Platform.DisplaySize()
-		nav := s.drawNav(&ctx.B, th, dims, progress, backBtn, selectBtn)
+		nav := s.drawNav(&ctx.B, th, dims, progress, backBtn, hideBtn, selectBtn)
 		content := s.draw(ctx, th, dims)
 
 		ctx.Frame(op.Layer(nav, content))
@@ -3514,26 +3522,38 @@ func (s *EngraveScreen) drawBody(ctx *Context, th *Colors, dims image.Point, st 
 	return bodyOp.Offset(content.Center(bodysz))
 }
 
-func (s *EngraveScreen) drawNav(b *op.Buffer, th *Colors, dims image.Point, progress float32, backBtn, selectBtn *Clickable) op.Op {
+func (s *EngraveScreen) drawNav(b *op.Buffer, th *Colors, dims image.Point, progress float32, backBtn, hideBtn, selectBtn *Clickable) op.Op {
 	st := s.job.Status()
-	var nav op.Op
+	// A button's slot comes from which button it is, so the rows are
+	// built by appending: the hide toggle takes the middle slot
+	// wherever a preview is on screen, and its icon is the checkbox —
+	// filled while the plate's content is withheld, empty while the
+	// plate reads plainly.
+	btns := make([]NavButton, 0, 3)
 	switch st.State {
 	case engraveRunning:
-		nav, _ = layoutNavigation(b, th, dims, NavButton{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconLeft})
-	case engraveDone:
-		nav, _ = layoutNavigation(b, th, dims, NavButton{
-			Clickable: selectBtn,
-			Style:     StylePrimary,
-			Icon:      assets.IconRight,
-		})
+		btns = append(btns, NavButton{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconLeft})
 	case engraveStopping:
-		nav, _ = layoutNavigation(b, th, dims, NavButton{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack})
+		btns = append(btns, NavButton{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack})
+	case engraveDone:
 	default:
-		nav, _ = layoutNavigation(b, th, dims,
-			NavButton{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack},
-			NavButton{Clickable: selectBtn, Style: StylePrimary, Icon: assets.IconHammer, Progress: progress},
-		)
+		btns = append(btns, NavButton{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack})
 	}
+	if s.view != nil && s.view.preview != nil && st.State != engraveStopping {
+		icon := assets.Circle
+		if s.view.hidden {
+			icon = assets.CircleFilled
+		}
+		btns = append(btns, NavButton{Clickable: hideBtn, Style: StyleSecondary, Icon: icon})
+	}
+	switch st.State {
+	case engraveDone:
+		btns = append(btns, NavButton{Clickable: selectBtn, Style: StylePrimary, Icon: assets.IconRight})
+	case engraveRunning, engraveStopping:
+	default:
+		btns = append(btns, NavButton{Clickable: selectBtn, Style: StylePrimary, Icon: assets.IconHammer, Progress: progress})
+	}
+	nav, _ := layoutNavigation(b, th, dims, btns...)
 	return nav
 }
 

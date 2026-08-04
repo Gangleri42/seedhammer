@@ -1067,3 +1067,84 @@ func TestBackupWalletAsksPassphraseOnce(t *testing.T) {
 	}
 	t.Fatalf("flow never returned to the seed plate: asks=%d backs=%d", asks, backs)
 }
+
+// TestEngraveTextEntryFlow drives the menu row end to end: ENGRAVE
+// TEXT sits below the word counts, typing spans a newline, the plate
+// confirm shows the planned grid, and backing out of the confirm
+// returns to the editor with the text intact rather than discarding a
+// composition one press from being engraved.
+func TestEngraveTextEntryFlow(t *testing.T) {
+	ctx := NewContext(newPlatform())
+	frame, quit := runUI(ctx, func() {
+		newInputFlow(ctx, &descriptorTheme)
+	})
+	defer quit()
+	content, ok := frame()
+	if !ok {
+		t.Fatal("input menu drew no frame")
+	}
+	rows := strings.ToUpper(strings.ReplaceAll(content, " ", ""))
+	i12 := strings.Index(rows, "12WORDS")
+	i24 := strings.Index(rows, "24WORDS")
+	itxt := strings.Index(rows, "ENGRAVETEXT")
+	if i12 < 0 || i24 < 0 || itxt < 0 {
+		t.Fatalf("input menu misses a row: %q", content)
+	}
+	if !(i12 < i24 && i24 < itxt) {
+		t.Errorf("ENGRAVE TEXT is not below the word counts: %q", content)
+	}
+	// The cursor moves and the choice land in separate frames: Choose
+	// tests its confirm button before it reads the cursor keys.
+	click(&ctx.Router, Down)
+	frame()
+	click(&ctx.Router, Down)
+	frame()
+	click(&ctx.Router, Button3)
+	// The square test display clips the keyboard's left columns, so
+	// the marker is the tail of the qwerty row.
+	content, ok = frame()
+	if !ok || !uiContains(content, "ertyuiop") {
+		t.Fatalf("choosing ENGRAVE TEXT did not open the editor: %q", content)
+	}
+	// The test display is too short for the fragment box (tailFitting
+	// draws it empty), so typed text is asserted by behaviour: OK only
+	// leads to a plate confirm when a non-empty text was typed.
+	runes(&ctx.Router, "hi\nmom")
+	frame()
+	// The plan draws progress frames until the confirm shows the plate
+	// dimensions line.
+	confirm := func(step string) {
+		t.Helper()
+		click(&ctx.Router, Button2)
+		for range 10000 {
+			content, ok = frame()
+			if !ok {
+				t.Fatalf("%s: flow ended during the plan", step)
+			}
+			if uiContains(content, "mm") && !uiContains(content, "ertyuiop") {
+				return
+			}
+		}
+		t.Fatalf("%s: the plate confirm never appeared", step)
+	}
+	confirm("typed text")
+	// Back returns to the editor with the text intact: OK leads to a
+	// second confirm without any retyping.
+	click(&ctx.Router, Button1)
+	content, ok = frame()
+	if !ok || !uiContains(content, "ertyuiop") {
+		t.Fatalf("backing out of the confirm did not return to the editor: %q", content)
+	}
+	confirm("carried text")
+	click(&ctx.Router, Button1)
+	frame()
+	click(&ctx.Router, Button1)
+	content, ok = frame()
+	if !ok || !uiContains(content, "12 WORDS") {
+		t.Fatalf("backing out of the editor did not return to the menu: %q", content)
+	}
+	click(&ctx.Router, Button1)
+	if _, ok := frame(); ok {
+		t.Error("backing out of the menu kept the flow alive")
+	}
+}

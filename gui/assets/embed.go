@@ -130,6 +130,13 @@ var (
 	//go:embed key-backspace.bin
 	KeyBackspaceData string
 
+	KeyReturn = &alpha4.Image{
+		Pix:  unsafe.Slice(unsafe.StringData(KeyReturnData), len(KeyReturnData)),
+		Rect: alpha4.Rectangle{MinX: 1, MinY: 0, MaxX: 13, MaxY: 9},
+	}
+	//go:embed key-return.bin
+	KeyReturnData string
+
 	LogoSmall = &alpha4.Image{
 		Pix:  unsafe.Slice(unsafe.StringData(LogoSmallData), len(LogoSmallData)),
 		Rect: alpha4.Rectangle{MinX: 0, MinY: 0, MaxX: 21, MaxY: 21},

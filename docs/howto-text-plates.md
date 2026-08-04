@@ -2,9 +2,10 @@
 
 Write a plain NFC Text record to the machine and it engraves the text as a
 plate: one record line per plate line, set at the largest size that fits. No
-app pairing, no cable, no file format. This is a fork feature; upstream
-firmware rejects anything that is not a descriptor, seed phrase, or codex32
-share. (use NFC Tools APP, add text --> send, done. preview renders on screen)
+app pairing, no cable, no file format. Or skip the tag entirely and type the
+text on the machine itself. This is a fork feature; upstream firmware rejects
+anything that is not a descriptor, seed phrase, or codex32 share. (use NFC
+Tools APP, add text --> send, done. preview renders on screen)
 
 ## What you need
 
@@ -12,6 +13,7 @@ share. (use NFC Tools APP, add text --> send, done. preview renders on screen)
 - Something that writes NFC Text records: a phone app (NFC Tools works),
   [Studio's plate composer](https://gangleri42.github.io/studio/textplate/),
   or [`write-nfc.py`](../cmd/textplate/write-nfc.py) with a USB reader.
+  Typing on the device needs none of these.
 
 ## Compose
 
@@ -43,6 +45,14 @@ Don't start the first line with `command: `; that prefix is the firmware's
 debug channel and will not engrave.
 
 ## Write it
+
+**On the device.** Press the checkmark on the start screen, then choose
+ENGRAVE TEXT below the word counts. The keyboard covers all 95 printable
+ASCII characters in three layers; the layer key sits bottom-left, next to the
+back button, and the letter layers carry a return key for a new line (after a
+symbol, cycle back to a letter layer for it). OK plans the plate. Backing out
+of the confirm, or a plate that refuses an overlong text, returns to the
+editor with the text intact.
 
 **Phone.** In NFC Tools: Write, Add a record, Text, write or paste your text,
 then press Write and hold the phone against the machine's reader. The machine

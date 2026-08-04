@@ -564,3 +564,94 @@ func TestHowtoPlateMatchesTheCode(t *testing.T) {
 		t.Errorf("%s does not show the plate this code produces:\n--- want ---\n%s\n--- end ---", howto, want)
 	}
 }
+
+// The layer key opens every bottom row, next to the back button.
+// NewKeyboard appends backspace to the final authored row, so the
+// check is on that row's first key.
+func TestLayerKeySitsBottomLeft(t *testing.T) {
+	ctx := NewContext(newPlatform())
+	for name, layers := range map[string]*[3]string{"passphrase": &passLayers, "text": &textLayers} {
+		for i, alph := range layers {
+			rows := NewKeyboard(ctx, alph).keys
+			last := rows[len(rows)-1]
+			if last[0].r != layerKey {
+				t.Errorf("%s layer %d: bottom row starts with %q, want the layer key", name, i, last[0].r)
+			}
+			for j, row := range rows[:len(rows)-1] {
+				for _, k := range row {
+					if k.r == layerKey {
+						t.Errorf("%s layer %d: layer key sits on row %d, not the bottom row", name, i, j)
+					}
+				}
+			}
+		}
+	}
+}
+
+// The return key types the newline the plate honours. It is a
+// sentinel: alphabet rows split on '\n', so the key cannot be the
+// literal newline, and rune events translate so typed input reaches
+// the same key.
+func TestTextKeyboardTypesNewline(t *testing.T) {
+	ctx := NewContext(newPlatform())
+	kbd := NewKeyboard(ctx, textLayers[0])
+	kbd.Verbatim = true
+	runes(&ctx.Router, "hi\nmom")
+	for kbd.Update(ctx) {
+	}
+	if kbd.Fragment != "hi\nmom" {
+		t.Errorf("typed %q, want %q", kbd.Fragment, "hi\nmom")
+	}
+	// CR arrives from CRLF-minded sources; it is the same key.
+	kbd.Clear()
+	runes(&ctx.Router, "a\rb")
+	for kbd.Update(ctx) {
+	}
+	if kbd.Fragment != "a\nb" {
+		t.Errorf("typed %q, want %q", kbd.Fragment, "a\nb")
+	}
+	// A passphrase is one line by construction; its layers must not
+	// gain the key. The text letter layers both carry it, so only the
+	// symbols layer costs a cycle to reach it.
+	for i, alph := range passLayers {
+		if strings.ContainsRune(alph, newlineKey) {
+			t.Errorf("passphrase layer %d carries the return key", i)
+		}
+	}
+	for _, i := range []int{0, 1} {
+		if !strings.ContainsRune(textLayers[i], newlineKey) {
+			t.Errorf("text layer %d misses the return key", i)
+		}
+	}
+}
+
+// Free text must reach every printable ASCII character plus the
+// newline, or a payload the NFC path accepts could not be typed on
+// the device.
+func TestTextAlphabetCoversPlainText(t *testing.T) {
+	ctx := NewContext(newPlatform())
+	typeable := map[rune]bool{}
+	for _, alph := range textLayers {
+		for _, row := range NewKeyboard(ctx, alph).keys {
+			for _, key := range row {
+				r := key.r
+				if r == newlineKey {
+					r = '\n'
+				}
+				typeable[r] = true
+			}
+		}
+	}
+	var missing []rune
+	for r := rune(0x20); r <= 0x7e; r++ {
+		if !typeable[r] {
+			missing = append(missing, r)
+		}
+	}
+	if !typeable['\n'] {
+		missing = append(missing, '\n')
+	}
+	if len(missing) > 0 {
+		t.Errorf("cannot type %d plain-text runes: %q", len(missing), string(missing))
+	}
+}

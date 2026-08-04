@@ -17,15 +17,28 @@ import (
 
 // The passphrase alphabet is every printable ASCII character, split
 // across three layers because one keyboard holding 95 keys would not fit
-// the screen. The digits row carries the layer key, so cycling never
-// costs access to the numbers.
+// the screen. The layer key opens every bottom row, next to the back
+// button; the digits stay on every layer so cycling never costs access
+// to the numbers. The symbols layer parks '~' on its digits row: its
+// bottom row is at the 12 cells the screen fits once the layer key,
+// space and backspace are on it.
 //
 // ASCII is the whole domain: bip39.MnemonicSeed does not normalise, and
 // normalising ASCII is the identity. See its doc comment.
 var passLayers = [3]string{
-	"1234567890" + string(layerKey) + "\nqwertyuiop\nasdfghjkl\nzxcvbnm" + string(spaceKey),
-	"1234567890" + string(layerKey) + "\nQWERTYUIOP\nASDFGHJKL\nZXCVBNM" + string(spaceKey),
-	"1234567890" + string(layerKey) + "\n!\"#$%&'()*+\n,-./:;<=>?@\n[\\]^_`{|}~" + string(spaceKey),
+	"1234567890\nqwertyuiop\nasdfghjkl\n" + string(layerKey) + "zxcvbnm" + string(spaceKey),
+	"1234567890\nQWERTYUIOP\nASDFGHJKL\n" + string(layerKey) + "ZXCVBNM" + string(spaceKey),
+	"1234567890~\n!\"#$%&'()*+\n,-./:;<=>?@\n" + string(layerKey) + "[\\]^_`{|}" + string(spaceKey),
+}
+
+// textLayers is the free-text alphabet: the passphrase layers plus a
+// return key on the letter layers. The symbols bottom row is already at
+// the screen's width, so a newline after a symbol costs one layer
+// cycle, which suits how rare it is.
+var textLayers = [3]string{
+	passLayers[0] + string(newlineKey),
+	passLayers[1] + string(newlineKey),
+	passLayers[2],
 }
 
 // spaceKey types a space. Spaced passphrases are ordinary, and without
@@ -62,7 +75,7 @@ func passphraseFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic) (string, 
 		var ok bool
 		// Carried back in on edit: the screen exists to catch a typo,
 		// and retyping from memory is how a second one gets made.
-		pass, ok = inputPassphraseFlow(ctx, th, pass)
+		pass, ok = inputTextFlow(ctx, th, "Passphrase", &passLayers, pass)
 		if !ok {
 			return "", false
 		}
@@ -75,10 +88,12 @@ func passphraseFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic) (string, 
 	}
 }
 
-// inputPassphraseFlow types a passphrase across the three layers.
-func inputPassphraseFlow(ctx *Context, th *Colors, initial string) (string, bool) {
-	var kbds [len(passLayers)]*Keyboard
-	for i, alph := range passLayers {
+// inputTextFlow types free text across keyboard layers, seeded with
+// initial and carried between the layers as one field. OK asks for at
+// least one character; back reports false.
+func inputTextFlow(ctx *Context, th *Colors, title string, layers *[3]string, initial string) (string, bool) {
+	var kbds [len(layers)]*Keyboard
+	for i, alph := range layers {
 		kbds[i] = NewKeyboard(ctx, alph)
 		kbds[i].Verbatim = true
 		kbds[i].Fragment = initial
@@ -147,12 +162,12 @@ func inputPassphraseFlow(ctx *Context, th *Colors, initial string) (string, bool
 				NavButton{Clickable: okBtn, Style: StylePrimary, Icon: assets.IconCheckmark})
 			nav = op.Layer(nav, nav2)
 		}
-		title, _ := layoutTitle(ctx, dims.X, th.Text, "Passphrase")
+		titleOp, _ := layoutTitle(ctx, dims.X, th.Text, title)
 		ctx.Frame(op.Layer(
 			kbdOp,
 			box,
 			nav,
-			title,
+			titleOp,
 			op.Color(&ctx.B, th.Background),
 		))
 	}

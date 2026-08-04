@@ -42,7 +42,9 @@ used two hundred times ships once. Produce payloads in
 A plain NDEF Text record engraves as a multi-line text plate. Write one from
 any phone NFC app, from
 [Studio's composer](https://gangleri42.github.io/studio/textplate/), or with
-[`write-nfc.py`](cmd/textplate/write-nfc.py). The firmware sets it at the
+[`write-nfc.py`](cmd/textplate/write-nfc.py); or type it on the machine
+itself, ENGRAVE TEXT in the input menu, on a three-layer ASCII keyboard with
+a return key for multi-line plates. The firmware sets it at the
 largest of six sizes (6.0 down to 3.0 mm) whose grid holds the composition,
 wraps overlong lines without reflowing lines you sized deliberately, and
 confirms with the exact plate layout. Text that resembles a damaged descriptor

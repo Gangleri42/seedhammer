@@ -1445,6 +1445,9 @@ func (k *Keyboard) Update(ctx *Context) bool {
 			// A Verbatim keyboard's layers hold both cases, so folding
 			// here would make the upper-case layer drop every letter.
 			r := e.Rune
+			if r == '\n' || r == '\r' {
+				r = newlineKey
+			}
 			if !k.Verbatim {
 				r = unicode.ToLower(r)
 			}
@@ -1470,6 +1473,8 @@ func (k *Keyboard) rune() {
 		k.Fragment = k.Fragment[:len(k.Fragment)-n]
 	case r == layerKey:
 		k.Layer = true
+	case r == newlineKey:
+		k.Fragment += "\n"
 	case k.Verbatim:
 		k.Fragment += string(r)
 	default:
@@ -1480,6 +1485,11 @@ func (k *Keyboard) rune() {
 // layerKey is outside printable ASCII so it cannot collide with a
 // character a passphrase might contain.
 const layerKey = '\x01'
+
+// newlineKey is the return key. It is a sentinel for the same reason
+// layerKey is, plus one of its own: rows of an alphabet split on '\n',
+// so the key cannot be the literal newline it types.
+const newlineKey = '\x02'
 
 // adjust resets the row and column to the nearest valid key, if any.
 func (k *Keyboard) adjust(allowBackspace bool) {
@@ -1570,6 +1580,13 @@ func (k *Keyboard) Layout(ctx *Context, th *Colors) (op.Op, image.Point) {
 				)
 			case key.r == layerKey:
 				icn := assets.ArrowUp
+				sz = icn.Bounds().Size()
+				keyOp = op.Compose(
+					op.Color(&ctx.B, col),
+					op.Mask(&ctx.B, icn),
+				)
+			case key.r == newlineKey:
+				icn := assets.KeyReturn
 				sz = icn.Bounds().Size()
 				keyOp = op.Compose(
 					op.Color(&ctx.B, col),
@@ -2312,23 +2329,25 @@ func descriptorFlow(ctx *Context, th *Colors, desc *bip380.Descriptor) {
 	}
 }
 
-func textFlow(ctx *Context, th *Colors, txt plainText) {
+func textFlow(ctx *Context, th *Colors, txt plainText) bool {
 	// Text plates confirm exactly like scanned drawings: the plan walk
 	// fills the plate preview behind the progress label, then one
 	// layout confirm shows the engraved grid — the composed lines at
 	// the fitted size, wraps and all — with its dimensions and
 	// duration. What the operator approves is the plate, not a
-	// display-width rendering of the text.
+	// display-width rendering of the text. Completing the engrave
+	// reports true; a refused plate, a cancelled plan or a backed-out
+	// confirm reports false so a typed text can return to its editor.
 	plate, preview, err := planText(ctx, th, ctx.Platform.EngraverParams(), string(txt))
 	if err != nil {
 		if errors.Is(err, errPlanCanceled) {
-			return
+			return false
 		}
 		showError(ctx, th, err, blankScreen)
-		return
+		return false
 	}
 	preview.notice = textNotice(string(txt))
-	engraveConfirmed(ctx, th, preview, plate)
+	return engraveConfirmed(ctx, th, preview, plate)
 }
 
 // engraveConfirmed runs the plate-layout confirm and the engrave
@@ -2493,9 +2512,9 @@ func nostrEngrave(ctx *Context, th *Colors, scr *NostrScreen, p nostrPlan) bool 
 func newInputFlow(ctx *Context, th *Colors) (any, bool) {
 	for {
 		cs := &ChoiceScreen{
-			Title:   "Input Seed",
-			Lead:    "Choose number of words",
-			Choices: []string{"12 WORDS", "24 WORDS" /* , "CODEX32", "SLIP-39" */},
+			Title:   "Input",
+			Lead:    "Choose what to enter",
+			Choices: []string{"12 WORDS", "24 WORDS", "ENGRAVE TEXT" /* , "CODEX32", "SLIP-39" */},
 		}
 		for {
 			choice, ok := cs.Choose(ctx, th)
@@ -2510,6 +2529,29 @@ func newInputFlow(ctx *Context, th *Colors) (any, bool) {
 					return mnemonic, true
 				}
 			case 2:
+				// Free text typed on the device engraves exactly like
+				// a scanned text payload: the same canonicalization,
+				// plan, confirm and engrave. Backing out of the
+				// confirm, cancelling the plan or a refused plate
+				// carries the text back into the editor; a completed
+				// engrave ends at the start screen.
+				txt := ""
+				for {
+					var ok bool
+					txt, ok = inputTextFlow(ctx, th, "Engrave Text", &textLayers, txt)
+					if !ok {
+						break
+					}
+					t, ok := parsePlainText([]byte(txt))
+					if !ok {
+						// Nothing visible to engrave; keep editing.
+						continue
+					}
+					if textFlow(ctx, th, t) {
+						return nil, false
+					}
+				}
+			case 3:
 				s, ok := inputCodex32Flow(ctx, th)
 				if ok {
 					return s, true
@@ -2517,7 +2559,7 @@ func newInputFlow(ctx *Context, th *Colors) (any, bool) {
 				// SLIP-39 keyboard entry stays disabled with the scan
 				// path: producing a share to engrave needs go-slip39
 				// (external dep, see scan.go). Kept for reference.
-				// case 3:
+				// case 4:
 				// 	mnemonic := emptySLIP39Mnemonic(20)
 				// 	if ok := inputSLIP39Flow(ctx, th, mnemonic, 0); !ok {
 				// 		break

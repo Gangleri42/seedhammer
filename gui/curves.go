@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/color"
 
 	"seedhammer.com/bezier"
 	"seedhammer.com/bspline"
@@ -130,7 +129,7 @@ func validateCurves(cs *CurvesScreen, payload []byte, params engrave.Params, dim
 }
 
 type CurvesScreen struct {
-	preview *curvesPreview
+	preview *op.BitMask
 	info    string
 	title   string
 	// notice warns about content that resembles a corrupted structured
@@ -188,9 +187,9 @@ func (s *CurvesScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.Op {
 // plan progress screen and the engrave screen, which swaps the strip
 // per engrave state. The preview must be non-nil.
 func (s *CurvesScreen) plateOp(ctx *Context, th *Colors, dims image.Point, strip string) op.Op {
-	side := s.preview.sz.X
+	side := s.preview.Bounds().Dx()
 	pos := image.Pt((dims.X-side)/2, leadingSize+4)
-	plate := image.Rectangle{Max: s.preview.sz}
+	plate := s.preview.Bounds()
 	// The plate outline, with its 3mm corner radius to scale.
 	outline := op.Compose(
 		op.Color(&ctx.B, th.Primary),
@@ -210,17 +209,10 @@ func (s *CurvesScreen) plateOp(ctx *Context, th *Colors, dims image.Point, strip
 	)
 }
 
-// curvesPreview is a 1-bit raster of the engraved strokes of a
-// planned spline, scaled to the display.
-type curvesPreview struct {
-	sz   image.Point
-	bits []uint32
-}
-
 // splineRasterizer accumulates the preview from planned spline knots
 // as they stream by, so the raster costs no walk of its own.
 type splineRasterizer struct {
-	preview *curvesPreview
+	preview *op.BitMask
 	seg     bspline.Segment
 	samples []bezier.Point
 	plate   int
@@ -235,11 +227,8 @@ type splineRasterizer struct {
 func newSplineRasterizer(side int, params engrave.Params) *splineRasterizer {
 	plate := SquarePlate.Dims(params.Millimeter).X
 	return &splineRasterizer{
-		preview: &curvesPreview{
-			sz:   image.Pt(side, side),
-			bits: make([]uint32, (side*side+31)/32),
-		},
-		plate: plate,
+		preview: op.NewBitMask(image.Pt(side, side)),
+		plate:   plate,
 		// Sample at a third of a pixel so plotted points form
 		// contiguous strokes without a line rasterizer.
 		spacing: max(1, plate/(side*3)),
@@ -253,9 +242,9 @@ func (r *splineRasterizer) knot(k bspline.Knot) {
 	}
 	r.samples = append(r.samples[:0], c.C0)
 	r.samples = bezier.Sample(r.samples, c, r.spacing)
-	side := r.preview.sz.X
+	side := r.preview.Bounds().Dx()
 	for _, pt := range r.samples {
-		r.preview.set(pt.X*side/r.plate, pt.Y*side/r.plate)
+		r.preview.Set(pt.X*side/r.plate, pt.Y*side/r.plate)
 		if !r.any {
 			r.min, r.max, r.any = pt, pt, true
 			continue
@@ -265,40 +254,4 @@ func (r *splineRasterizer) knot(k bspline.Knot) {
 		r.max.X = max(r.max.X, pt.X)
 		r.max.Y = max(r.max.Y, pt.Y)
 	}
-}
-
-func (p *curvesPreview) set(x, y int) {
-	if x < 0 || y < 0 || x >= p.sz.X || y >= p.sz.Y {
-		return
-	}
-	i := y*p.sz.X + x
-	p.bits[i/32] |= 1 << (i % 32)
-}
-
-func (p *curvesPreview) alpha(x, y int) uint8 {
-	if x < 0 || y < 0 || x >= p.sz.X || y >= p.sz.Y {
-		return 0
-	}
-	i := y*p.sz.X + x
-	if p.bits[i/32]&(1<<(i%32)) != 0 {
-		return 0xff
-	}
-	return 0
-}
-
-func (p *curvesPreview) ColorModel() color.Model {
-	return color.AlphaModel
-}
-
-func (p *curvesPreview) Bounds() image.Rectangle {
-	return image.Rectangle{Max: p.sz}
-}
-
-func (p *curvesPreview) At(x, y int) color.Color {
-	return color.Alpha{A: p.alpha(x, y)}
-}
-
-func (p *curvesPreview) RGBA64At(x, y int) color.RGBA64 {
-	a := p.alpha(x, y)
-	return color.RGBA64{A: uint16(a)<<8 | uint16(a)}
 }

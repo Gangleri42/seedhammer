@@ -134,13 +134,13 @@ func TestValidateCurves(t *testing.T) {
 		t.Errorf("confirm screen not initialized: preview %v, info %q", cs.preview, cs.info)
 	}
 	set := 0
-	side := cs.preview.sz.X
+	side := cs.preview.Bounds().Dx()
 	// The drawing spans 10-50mm; every lit pixel must fall inside,
 	// with a pixel of slack for rounding.
 	lo, hi := 10*side/85-1, 50*side/85+1
 	for y := 0; y < side; y++ {
 		for x := 0; x < side; x++ {
-			if cs.preview.alpha(x, y) == 0 {
+			if cs.preview.RGBA64At(x, y).A == 0 {
 				continue
 			}
 			set++

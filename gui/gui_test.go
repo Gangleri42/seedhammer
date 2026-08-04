@@ -119,7 +119,7 @@ func dumpUI(t testing.TB, o op.Op, path string) {
 	}
 }
 
-func newTestEngraveScreen(t *testing.T, ctx *Context) *EngraveScreen {
+func newTestEngraveScreen(t testing.TB, ctx *Context) *EngraveScreen {
 	desc := &bip380.Descriptor{
 		Script:    bip380.P2WSH,
 		Threshold: 2,
@@ -170,6 +170,27 @@ func newTestEngraveScreen(t *testing.T, ctx *Context) *EngraveScreen {
 		plate,
 		view,
 	)
+}
+
+// BenchmarkEngraveFrame guards the unified engrave screen's frame:
+// the idle state draws the preview mask, the outline and the info
+// strip, and the frame loop must not allocate (op.Mask boxes a
+// pointer-sized value without allocating; anything larger would).
+func BenchmarkEngraveFrame(b *testing.B) {
+	ctx := NewContext(newPlatform())
+	scr := newTestEngraveScreen(b, ctx)
+	dims := image.Pt(480, 320)
+	b.ReportAllocs()
+	for b.Loop() {
+		scr.draw(ctx, &engraveTheme, dims)
+		ctx.B.Reset()
+	}
+}
+
+func TestEngraveFrameAllocs(t *testing.T) {
+	if a := testing.Benchmark(BenchmarkEngraveFrame).AllocsPerOp(); a > 0 {
+		t.Errorf("engrave frame allocates %d objects per frame, want 0", a)
+	}
 }
 
 func TestValidateDescriptorFallback(t *testing.T) {

@@ -2,6 +2,7 @@ package op
 
 import (
 	"image"
+	"math/bits"
 
 	"image/color"
 
@@ -77,6 +78,14 @@ func drawMask(dst draw.Image, dr image.Rectangle, src image.Image, pos image.Poi
 					return
 				}
 			}
+		case *BitMask:
+			switch src := src.(type) {
+			case *rgbaUniform:
+				if src.Opaque() && op == draw.Over {
+					drawBitUniformOver(dst, dr, src.C, mask, maskOff)
+					return
+				}
+			}
 		}
 	}
 
@@ -140,6 +149,36 @@ func drawROutlineUniformOver(dst *rgb565.Image, dr image.Rectangle, src color.RG
 			rb := (sb*a + db*a1) / div
 			res := combineRGB565(rr, rg, rb)
 			dstPix[x] = res
+		}
+	}
+}
+
+// drawBitUniformOver draws an opaque uniform color through a 1-bit
+// mask, skipping over runs of clear bits a word at a time: the
+// preview raster is mostly empty plate, and the generic path's
+// per-pixel RGBA64At call costs more than the whole row does here.
+func drawBitUniformOver(dst *rgb565.Image, dr image.Rectangle, src color.RGBA, mask *BitMask, maskOff image.Point) {
+	rgb := rgb565.FromRGB888(src.R, src.G, src.B)
+	dstPix := dst.Pix
+	w := mask.sz.X
+	for y := 0; y < dr.Dy(); y++ {
+		dstOff := dst.PixOffset(dr.Min.X, dr.Min.Y+y)
+		row := dstPix[dstOff : dstOff+dr.Dx()]
+		mi := (maskOff.Y+y)*w + maskOff.X
+		for x := 0; x < len(row); {
+			i := mi + x
+			word := mask.bits[i/32] >> (i % 32)
+			if word == 0 {
+				x += 32 - i%32
+				continue
+			}
+			n := bits.TrailingZeros32(word)
+			x += n
+			if x >= len(row) {
+				break
+			}
+			row[x] = rgb
+			x++
 		}
 	}
 }

@@ -1992,68 +1992,8 @@ const scanStatusTimeout = 1 * time.Second
 
 func (m *StartScreen) Flow(ctx *Context, th *Colors) (startScreenAction, bool) {
 	scans := make(chan scanResult, 1)
-	if r := ctx.Platform.NFCReader(); r != nil {
-		closer := make(chan struct{})
-		closed := make(chan struct{})
-		defer func() {
-			close(closer)
-			r.Close()
-			<-closed
-		}()
-		wakeup := ctx.Platform.Wakeup
-		go func() {
-			s := new(scanner)
-			var lastStatus scanStatus
-			var lastWake time.Time
-			for {
-				select {
-				case <-closer:
-					close(closed)
-					return
-				default:
-				}
-				obj, err := s.Scan(r)
-				scan := scanResult{
-					Object: obj,
-				}
-				switch {
-				case errors.Is(err, errScanInProgress):
-					scan.Status = scanStarted
-				case errors.Is(err, errScanUnknownFormat):
-					scan.Status = scanUnknownFormat
-				case err == nil || err == io.EOF:
-				default:
-					scan.Status = scanFailed
-					log.Printf("nfc scan: %v", err)
-				}
-				// Deliver only news: every wakeup redraws a full frame,
-				// and a redraw per received chunk starves this goroutine
-				// past the writer's frame waiting time. Unchanged status
-				// is refreshed at half the label decay interval.
-				if scan.Object == nil && scan.Status == lastStatus &&
-					time.Since(lastWake) < scanStatusTimeout/2 {
-					continue
-				}
-				// Merge the previous result.
-				select {
-				case old := <-scans:
-					if scan.Object == nil {
-						scan.Object = old.Object
-					}
-					scan.Status = max(scan.Status, old.Status)
-				default:
-				}
-				scans <- scan
-				wakeup()
-				lastStatus = scan.Status
-				lastWake = time.Now()
-				if scan.Status == scanFailed {
-					// Wait a bit before attempting to scan again.
-					time.Sleep(1 * time.Second)
-				}
-			}
-		}()
-	}
+	stop := scanWorker(ctx, scans)
+	defer stop()
 	inp := new(InputTracker)
 	selectBtn := &Clickable{Button: Button3, AltButton: Center}
 	for !ctx.Done {

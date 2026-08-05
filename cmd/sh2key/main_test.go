@@ -294,6 +294,13 @@ ROW 0x004b: OTP_DATA_BOOT_FLAGS1 (RBIT-3)
     field KEY_VALID (bits 0-3) = 3
     field KEY_INVALID (bits 8-11) = 0
 
+ROW 0x0048: OTP_DATA_FLASH_DEVINFO (ECC)
+
+    VALUE 0x00001f
+
+    field CS0_SIZE (bits 8-11) = f
+    field CS1_SIZE (bits 12-15) = 1a
+
 ROW 0x0080: OTP_DATA_BOOTKEY0_0 (Part 1/16)
 
     VALUE 0x0c31c8
@@ -308,6 +315,11 @@ ROW 0x0000: OTP_DATA_CHIPID0 (ECC) (Part 1/4)
 		"CRIT1.GLITCH_DETECTOR_ENABLE": 0,
 		"BOOT_FLAGS1.KEY_VALID":        3,
 		"BOOT_FLAGS1.KEY_INVALID":      0,
+		// picotool prints fields as bare hex: a letter value must
+		// parse (a fully-valid KEY_VALID reads f) and multi-digit
+		// values are hex, not decimal.
+		"FLASH_DEVINFO.CS0_SIZE": 0xf,
+		"FLASH_DEVINFO.CS1_SIZE": 0x1a,
 	} {
 		if got, ok := r.fields[k]; !ok || got != want {
 			t.Errorf("field %s = %#x (present %v), want %#x", k, got, ok, want)

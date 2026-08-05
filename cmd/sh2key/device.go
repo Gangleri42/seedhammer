@@ -91,19 +91,19 @@ func (p *pico) requireDevice() (string, error) {
 //
 //	    VALUE 0x000003
 //
-//	    field KEY_VALID (bits 0-3) = 3
-//	    field KEY_INVALID (bits 8-11) = 0
+//	    field KEY_VALID (bits 0-3) = f
+//	    field KEY_INVALID (bits 8-11) = 4
 //
 // VALUE is the raw 24-bit row (for ECC rows the data is the low 16
-// bits; -e applies correction first); field lines are decoded
-// decimals. -n suppresses the quoted descriptions so free text can
-// never be mistaken for data. With -c, a redundant row also prints a
+// bits; -e applies correction first); field lines are decoded hex.
+// -n suppresses the quoted descriptions so free text can never be
+// mistaken for data. With -c, a redundant row also prints a
 // RAW_VALUE line holding every copy, which is the only way to see a
 // write that reached some copies and not others.
 var (
 	otpRowRe   = regexp.MustCompile(`^ROW (0[xX][0-9a-fA-F]+)(?::\s*OTP_DATA_([A-Za-z0-9_]+))?`)
 	otpValueRe = regexp.MustCompile(`^\s*VALUE 0[xX]([0-9a-fA-F]+)`)
-	otpFieldRe = regexp.MustCompile(`^\s*field ([A-Za-z0-9_]+) \([^)]*\) = (0[xX][0-9a-fA-F]+|\d+)`)
+	otpFieldRe = regexp.MustCompile(`^\s*field ([A-Za-z0-9_]+) \([^)]*\) = (0[xX][0-9a-fA-F]+|[0-9a-fA-F]+)`)
 	otpRawRe   = regexp.MustCompile(`^\s*RAW_VALUE=([0-9a-fA-Fx;X]+)`)
 )
 
@@ -278,15 +278,13 @@ func parseOTPBlocks(out string) otpRead {
 		}
 		if m := otpFieldRe.FindStringSubmatch(line); m != nil {
 			key := current + "." + m[1]
-			val := m[2]
-			var v uint64
-			var perr error
-			if strings.HasPrefix(val, "0x") || strings.HasPrefix(val, "0X") {
-				v, perr = strconv.ParseUint(val[2:], 16, 64)
-			} else {
-				v, perr = strconv.ParseUint(val, 10, 64)
-			}
-			if perr == nil {
+			// picotool prints field values as bare hex, so parse base
+			// 16 whether or not an 0x prefix is present. Reading the
+			// bare form as decimal drops every field whose value holds
+			// a-f, which is what KEY_VALID reports once all four slots
+			// are valid.
+			val := strings.TrimPrefix(strings.TrimPrefix(m[2], "0x"), "0X")
+			if v, perr := strconv.ParseUint(val, 16, 64); perr == nil {
 				r.fields[key] = v
 			}
 		}

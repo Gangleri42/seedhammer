@@ -2,6 +2,7 @@ package gui
 
 import (
 	"image"
+	"strings"
 	"testing"
 
 	qr "github.com/seedhammer/kortschak-qr"
@@ -44,12 +45,25 @@ func TestExportPartsRoundTrip(t *testing.T) {
 		if err != nil || enc == nil {
 			t.Fatalf("%s: decode failed: %v", budget.name, err)
 		}
-		got, err := urtypes.Parse(typ, enc)
+		parsed, err := urtypes.Parse(typ, enc)
 		if err != nil {
 			t.Fatalf("%s: %v", budget.name, err)
 		}
-		if got, want := got.(*bip380.Descriptor).Encode(), desc.Encode(); got != want {
+		recovered := parsed.(*bip380.Descriptor)
+		// The export carries origin-only keys: crypto-output has no
+		// multipath, and importers rebuild the standard branches (see
+		// urtypes.hdkeyFor). The wallet-defining rest is byte-equal.
+		want := strings.ReplaceAll(desc.Encode(), "/<0;1>/*", "")
+		want = want[:strings.LastIndexByte(want, '#')]
+		got := recovered.Encode()
+		got = got[:strings.LastIndexByte(got, '#')]
+		if got != want {
 			t.Errorf("%s: recovered %q, want %q", budget.name, got, want)
+		}
+		for i, k := range recovered.Keys {
+			if len(k.Children) != 0 {
+				t.Errorf("%s: key %d carries children %v over the wire", budget.name, i, k.Children)
+			}
 		}
 	}
 }

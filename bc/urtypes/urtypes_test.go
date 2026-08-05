@@ -325,9 +325,12 @@ func TestIncompleteCryptoAccount(t *testing.T) {
 }
 
 // TestRangeChildrenRoundTrip covers the <0;1>/* children the wallet
-// builder puts in every key. The encoder used to flatten the range
-// into (index, end, hardened), an odd component list the decoder —
-// and the [BCR-2020-007] pair shape — reject.
+// builder puts in every key: a multipath pair has no faithful
+// [BCR-2020-007] encoding (child-index-range means a contiguous
+// span, and importers render the components as stray wildcards —
+// BlueWallet shows a */* tail on the vault key), so the key encodes
+// origin-only, the childless shape multisig exchange runs on, and
+// everything else round-trips intact.
 func TestRangeChildrenRoundTrip(t *testing.T) {
 	desc := &bip380.Descriptor{
 		Script:    bip380.P2WSH,
@@ -369,7 +372,21 @@ func TestRangeChildrenRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatalf("parsed to %T", parsed)
 	}
-	if !reflect.DeepEqual(got, desc) {
-		t.Errorf("descriptor:\n%+v\nroundtripped to\n%+v\n", desc, got)
+	want := &bip380.Descriptor{
+		Script:    desc.Script,
+		Threshold: desc.Threshold,
+		Type:      desc.Type,
+	}
+	for _, k := range desc.Keys {
+		k.Children = nil
+		want.Keys = append(want.Keys, k)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("descriptor:\n%+v\nroundtripped to\n%+v\n", want, got)
+	}
+	for i, k := range got.Keys {
+		if len(k.Children) != 0 {
+			t.Errorf("key %d kept children %v; multipath keys must encode origin-only", i, k.Children)
+		}
 	}
 }

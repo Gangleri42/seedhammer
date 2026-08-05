@@ -84,22 +84,24 @@ func EncodeDescriptor(o *bip380.Descriptor) []byte {
 //
 // [BCR-2020-007]: https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2020-007-hdkey.md
 func hdkeyFor(k bip380.Key) hdKey {
+	// A key whose children hold a receive/change pair encodes with no
+	// children at all. BIP389's <0;1> means alternatives, and
+	// [BCR-2020-007] predates it: its child-index-range means a
+	// contiguous span, so the pair has no faithful encoding here, and
+	// no importer maps a range back — Sparrow ignores the components,
+	// BlueWallet renders them as a stray */* tail on the vault key's
+	// derivation path. Multisig exchange runs on origin-only keys,
+	// the childless shape the split plates have always carried and
+	// wallets rebuild the standard branches from.
 	var children []any
-	for _, c := range k.Children {
-		switch c.Type {
-		case bip380.ChildDerivation:
-			children = append(children, c.Index, c.Hardened)
-		case bip380.RangeDerivation:
-			// A child-index-range is one component, the two-element
-			// array of [BCR-2020-007], then its is-hardened — the pair
-			// shape parseKeypath reads back. The flat
-			// (index, end, hardened) triple this used to emit made the
-			// component list odd and every ranged-children key
-			// undecodable; nothing hit it because no encoded key
-			// carried children until the wallet builder.
-			children = append(children, []any{c.Index, c.End}, c.Hardened)
-		case bip380.WildcardDerivation:
-			children = append(children, []any{}, c.Hardened)
+	if !hasMultipath(k.Children) {
+		for _, c := range k.Children {
+			switch c.Type {
+			case bip380.ChildDerivation:
+				children = append(children, c.Index, c.Hardened)
+			case bip380.WildcardDerivation:
+				children = append(children, []any{}, c.Hardened)
+			}
 		}
 	}
 	depth := len(k.DerivationPath)
@@ -127,6 +129,15 @@ func hdkeyFor(k bip380.Key) hdKey {
 			Components: children,
 		},
 	}
+}
+
+func hasMultipath(children []bip380.Derivation) bool {
+	for _, c := range children {
+		if c.Type == bip380.RangeDerivation {
+			return true
+		}
+	}
+	return false
 }
 
 func pathComponents(p bip32.Path) []any {

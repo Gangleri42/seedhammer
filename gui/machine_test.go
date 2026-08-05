@@ -5,6 +5,7 @@ import (
 	"image"
 	"testing"
 
+	"seedhammer.com/bezier"
 	"seedhammer.com/bip39"
 	"seedhammer.com/bspline"
 )
@@ -64,58 +65,81 @@ func testMnemonic(t *testing.T, words int) bip39.Mnemonic {
 	return m.FixChecksum()
 }
 
-// TestMachineSpline pins the plate-to-machine frame contract: the
-// machine origin is the square plate's top-left corner, so a square
-// plate hands its spline over untouched while a small plate shifts
-// down by the height difference, landing inside the small stock's
-// band of the machine frame.
-func TestMachineSpline(t *testing.T) {
+// TestMachinePlan pins the plate-to-machine contract: the machine
+// origin is the square plate's top-left corner, so a plate's display
+// spline stays in its own frame while the engraver's plan lives in
+// the machine frame — and, the part a bounds check cannot see, the
+// approach from the homing origin to the first engraved stroke must
+// be budgeted travel: the stepper walks at most one step per tick and
+// stamps the current segment's needle state on every tick, so a plan
+// whose early ticks cannot cover the distance hammers the needle
+// while still chasing the start position.
+func TestMachinePlan(t *testing.T) {
 	mm := engraverParams.Millimeter
+
+	approach := func(spline bspline.Curve) (ticks uint, start bezier.Point, found bool) {
+		var seg bspline.Segment
+		for k := range spline {
+			c, dt, engraved := seg.Knot(k)
+			if engraved {
+				return ticks, c.C0, true
+			}
+			ticks += dt
+		}
+		return ticks, bezier.Point{}, false
+	}
+	chebyshev := func(p bezier.Point) uint {
+		dx, dy := p.X, p.Y
+		if dx < 0 {
+			dx = -dx
+		}
+		if dy < 0 {
+			dy = -dy
+		}
+		return uint(max(dx, dy))
+	}
 
 	square, err := validateText(engraverParams, SquarePlate, "MACHINE FRAME")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if square.Size != SquarePlate {
-		t.Errorf("square plate stamped %v", square.Size)
-	}
-	local := bspline.Measure(square.Spline)
-	machine := bspline.Measure(machineSpline(engraverParams, square))
-	if local.Bounds != machine.Bounds {
-		t.Errorf("square plate moved: local %v, machine %v", local.Bounds, machine.Bounds)
+	if got, want := bspline.Measure(square.Machine).Bounds, bspline.Measure(square.Spline).Bounds; got != want {
+		t.Errorf("square machine plan moved: %v, want %v", got, want)
 	}
 
 	small, err := validateText(engraverParams, SmallPlate, "MACHINE FRAME")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if small.Size != SmallPlate {
-		t.Errorf("small plate stamped %v", small.Size)
-	}
+	local := bspline.Measure(small.Spline).Bounds
+	machine := bspline.Measure(small.Machine).Bounds
 	dy := (SquarePlate.Dims().Y - SmallPlate.Dims().Y) * mm
 	if want := 30 * mm; dy != want {
 		t.Fatalf("height difference %d units, want %d", dy, want)
 	}
-	local = bspline.Measure(small.Spline)
-	machine = bspline.Measure(machineSpline(engraverParams, small))
-	if got, want := machine.Bounds.Min.Y, local.Bounds.Min.Y+dy; got != want {
+	if got, want := machine.Min.Y, local.Min.Y+dy; got != want {
 		t.Errorf("machine min Y %d, want %d", got, want)
-	}
-	if got, want := machine.Bounds.Max.Y, local.Bounds.Max.Y+dy; got != want {
-		t.Errorf("machine max Y %d, want %d", got, want)
-	}
-	if machine.Bounds.Min.X != local.Bounds.Min.X || machine.Bounds.Max.X != local.Bounds.Max.X {
-		t.Errorf("X moved: local %v, machine %v", local.Bounds, machine.Bounds)
 	}
 	// The engraving must land on the small stock: below the removed
 	// top 30mm, above the bottom edge, margins included.
-	if got, want := machine.Bounds.Min.Y, 33*mm; got < want {
+	if got, want := machine.Min.Y, 33*mm; got < want {
 		t.Errorf("machine min Y %d enters the removed top band (< %d)", got, want)
 	}
-	if got, want := machine.Bounds.Max.Y, 82*mm; got > want {
+	if got, want := machine.Max.Y, 82*mm; got > want {
 		t.Errorf("machine max Y %d passes the safety margin (> %d)", got, want)
 	}
-	if local.Duration != machine.Duration {
-		t.Errorf("duration changed: %d to %d", local.Duration, machine.Duration)
+
+	// The contract the needle depends on: enough ticks before the
+	// first engraved stroke to cover the distance from the homing
+	// origin at one step per tick.
+	for _, plate := range []Plate{square, small} {
+		ticks, start, found := approach(plate.Machine)
+		if !found {
+			t.Fatalf("%v machine plan engraves nothing", plate.Size)
+		}
+		if need := chebyshev(start); ticks < need {
+			t.Errorf("%v: %d approach ticks cannot cover %d units to the first stroke; the needle would fire mid-travel",
+				plate.Size, ticks, need)
+		}
 	}
 }

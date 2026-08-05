@@ -848,27 +848,43 @@ func planText(ctx *Context, th *Colors, params engrave.Params, plateSize PlateSi
 type Plate struct {
 	Size     PlateSize
 	Duration uint
-	Spline   bspline.Curve
+	// Spline is the planned engraving in the plate's own frame: the
+	// preview, the recorded plate and the duration all read it.
+	Spline bspline.Curve
+	// Machine is the engraver's plan: the same commands planned in
+	// the machine frame, so the approach from the homing origin is
+	// real, budgeted, needle-up travel. Nil for display-only plates.
+	Machine bspline.Curve
 }
 
-// machineSpline places a plate-local spline in the machine frame.
-// The machine origin is the square plate's top-left corner and only
-// the top edge moves between formats: smaller plates keep the bottom
-// and side edges, so their frame starts lower by the height
-// difference.
-func machineSpline(params engrave.Params, plate Plate) bspline.Curve {
-	dy := (SquarePlate.Dims().Y - plate.Size.Dims().Y) * params.Millimeter
+// machinePlan places a plate-local command stream in the machine
+// frame before planning. The machine origin is the square plate's
+// top-left corner and only the top edge moves between formats:
+// smaller plates keep the bottom and side edges, so their frame
+// starts lower by the height difference. The offset must precede the
+// planner: a planned spline carries tick budgets, and geometry moved
+// after planning is distance the stepper can only chase with the
+// needle following the original schedule.
+func machinePlan(params engrave.Params, plateSize PlateSize, plan engrave.Engraving) engrave.Engraving {
+	dy := (SquarePlate.Dims().Y - plateSize.Dims().Y) * params.Millimeter
 	if dy == 0 {
-		return plate.Spline
+		return plan
 	}
-	return func(yield func(bspline.Knot) bool) {
-		for k := range plate.Spline {
-			k.Ctrl.Y += dy
-			if !yield(k) {
-				return
-			}
-		}
+	return func(yield func(engrave.Command) bool) {
+		t := engrave.NewTransform(yield)
+		off := t.Offset(0, dy)
+		plan(off.Yield)
 	}
+}
+
+// machineBounds is plateBounds in the machine frame: the band the
+// engraver plan must stay inside.
+func machineBounds(params engrave.Params, plateSize PlateSize) bspline.Bounds {
+	b := plateBounds(params, plateSize)
+	dy := (SquarePlate.Dims().Y - plateSize.Dims().Y) * params.Millimeter
+	b.Min.Y += dy
+	b.Max.Y += dy
+	return b
 }
 
 // seedPlate does the plate-size-independent work of a seed plate —
@@ -3455,13 +3471,23 @@ type plateRecorder interface {
 	RecordPlate(Plate)
 }
 
+// engraverSpline is the plan the machine runs: tests and the QA flow
+// construct display-only plates without one, and those stay in the
+// plate frame.
+func engraverSpline(plate Plate) bspline.Curve {
+	if plate.Machine != nil {
+		return plate.Machine
+	}
+	return plate.Spline
+}
+
 func NewEngraveScreen(ctx *Context, plate Plate, view *CurvesScreen) *EngraveScreen {
 	if r, ok := ctx.Platform.(plateRecorder); ok {
 		r.RecordPlate(plate)
 	}
 	return &EngraveScreen{
 		duration: plate.Duration,
-		job:      newEngraverJob(ctx.Platform, machineSpline(ctx.Platform.EngraverParams(), plate), 0),
+		job:      newEngraverJob(ctx.Platform, engraverSpline(plate), 0),
 		view:     view,
 	}
 }
@@ -3874,10 +3900,15 @@ func toPlate(plan engrave.Engraving, params engrave.Params, plateSize PlateSize)
 	if !attrs.Bounds.In(plateBounds(params, plateSize)) {
 		return Plate{}, ErrTooLarge
 	}
+	machine := engrave.PlanEngraving(params.StepperConfig, machinePlan(params, plateSize, plan))
+	if !bspline.Measure(machine).Bounds.In(machineBounds(params, plateSize)) {
+		return Plate{}, ErrTooLarge
+	}
 	return Plate{
 		Size:     plateSize,
 		Duration: attrs.Duration,
 		Spline:   spline,
+		Machine:  machine,
 	}, nil
 }
 
@@ -3977,11 +4008,17 @@ func planPlateWalk(plan engrave.Engraving, params engrave.Params, plateSize Plat
 	if !attrs.Bounds.In(plateBounds(params, plateSize)) {
 		return Plate{}, ErrTooLarge
 	}
+	machine := engrave.PlanEngraving(params.StepperConfig, machinePlan(params, plateSize, plan))
+	if !bspline.Measure(machine).Bounds.In(machineBounds(params, plateSize)) {
+		return Plate{}, ErrTooLarge
+	}
 	return Plate{
 		Size:     plateSize,
 		Duration: attrs.Duration,
-		// A fresh plan for the engraver's own re-iterations.
-		Spline: engrave.PlanEngraving(params.StepperConfig, plan),
+		// Fresh plans for the preview's and the engraver's own
+		// re-iterations; the machine one is planned in its frame.
+		Spline:  engrave.PlanEngraving(params.StepperConfig, plan),
+		Machine: machine,
 	}, nil
 }
 

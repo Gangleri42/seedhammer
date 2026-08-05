@@ -149,9 +149,12 @@ func validateCurves(cs *CurvesScreen, payload []byte, params engrave.Params, pla
 	plate := Plate{
 		Size:     plateSize,
 		Duration: duration,
-		// A fresh plan for the engraver's own re-iterations; the walk
-		// above already proved it.
-		Spline: engrave.PlanEngraving(params.StepperConfig, drawing.Engraving()),
+		// Fresh plans for the preview's and the engraver's own
+		// re-iterations; the walk above already proved the geometry,
+		// and the machine plan carries the frame offset as budgeted
+		// travel.
+		Spline:  engrave.PlanEngraving(params.StepperConfig, drawing.Engraving()),
+		Machine: engrave.PlanEngraving(params.StepperConfig, machinePlan(params, plateSize, drawing.Engraving())),
 	}
 	cs.init(plate, drawing, params)
 	return plate, nil

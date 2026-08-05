@@ -10,26 +10,42 @@ import (
 
 // testNFC feeds queued payloads to the scan worker, one NDEF record
 // per queue entry: the whole payload returns in a single Read with
-// io.EOF marking the record end, the shape the poller presents.
-// Close unblocks a pending Read, the contract the worker's stop
-// depends on (a no-op Close deadlocks the flow's cleanup).
+// io.EOF marking the record end, the shape the poller presents. The
+// platform hands out a fresh poller per NFCReader call, so the queue
+// outlives any one connection; Close ends only its own connection,
+// and it must unblock a pending Read (a no-op Close deadlocks the
+// flow's cleanup).
 type testNFC struct {
 	payloads chan []byte
-	done     chan struct{}
 }
 
 func newTestNFC() *testNFC {
 	return &testNFC{
 		payloads: make(chan []byte, 4),
-		done:     make(chan struct{}),
 	}
+}
+
+func (r *testNFC) conn() io.ReadCloser {
+	return &testNFCConn{src: r, done: make(chan struct{})}
+}
+
+type testNFCConn struct {
+	src  *testNFC
+	done chan struct{}
 }
 
 var errNFCClosed = errors.New("testNFC: closed")
 
-func (r *testNFC) Read(p []byte) (int, error) {
+func (r *testNFCConn) Read(p []byte) (int, error) {
+	// A close outranks a queued payload: a payload sent for the NEXT
+	// connection must not race into a closing one.
 	select {
-	case payload := <-r.payloads:
+	case <-r.done:
+		return 0, errNFCClosed
+	default:
+	}
+	select {
+	case payload := <-r.src.payloads:
 		if len(payload) > len(p) {
 			panic("testNFC: payload larger than the scan buffer")
 		}
@@ -40,7 +56,7 @@ func (r *testNFC) Read(p []byte) (int, error) {
 	}
 }
 
-func (r *testNFC) Close() error {
+func (r *testNFCConn) Close() error {
 	select {
 	case <-r.done:
 	default:

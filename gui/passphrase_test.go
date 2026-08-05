@@ -323,7 +323,7 @@ func TestEveryPlateIsDeclinable(t *testing.T) {
 	}
 
 	declines("seed plate", "ENGRAVE SEED", func(ctx *Context) {
-		if !seedPlateFlow(ctx, &descriptorTheme, ss, m, "", "") {
+		if !seedPlateFlow(ctx, &descriptorTheme, ss, m, "", "", "") {
 			t.Error("skipping the seed plate did not continue to the other plates")
 		}
 	})

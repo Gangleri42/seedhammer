@@ -72,6 +72,12 @@ func passphraseFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic) (string, 
 	if !ok || choice == 0 {
 		return "", ok
 	}
+	return passphraseEditFlow(ctx, th, mnemonic)
+}
+
+// passphraseEditFlow is the editor-and-confirm loop shared by the
+// single-seed ask and the multisig per-cosigner ask.
+func passphraseEditFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic) (string, bool) {
 	pass := ""
 	for {
 		var ok bool

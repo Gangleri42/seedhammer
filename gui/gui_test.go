@@ -639,7 +639,7 @@ type testPlatform struct {
 	events   []Event
 	wakeups  chan struct{}
 	engraver *testEngraver
-	nfc      io.ReadCloser
+	nfc      *testNFC
 }
 
 const (
@@ -711,13 +711,13 @@ func (p *testPlatform) EngraverParams() engrave.Params {
 }
 
 func (p *testPlatform) NFCReader() io.ReadCloser {
-	// The explicit nil keeps the interface nil for the default
-	// platform, so flows skip the scan worker as on a reader-less
-	// build.
+	// A fresh connection per call, as the device's poller behaves; nil
+	// for the default platform, so flows skip the scan worker as on a
+	// reader-less build.
 	if p.nfc == nil {
 		return nil
 	}
-	return p.nfc
+	return p.nfc.conn()
 }
 
 func (p *testPlatform) Engraver(stall bool) (Engraver, error) {

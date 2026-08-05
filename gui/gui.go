@@ -2387,7 +2387,7 @@ func backupWalletFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic) {
 		// Three plates, each offered and each declinable. A seed already
 		// on metal may need only a descriptor; a descriptor can be cut
 		// again years later without touching the seed plate.
-		if !seedPlateFlow(ctx, th, ss, mnemonic, passphrase, title) {
+		if !seedPlateFlow(ctx, th, ss, mnemonic, passphrase, title, "") {
 			continue
 		}
 		path := walletDescriptorFlow(ctx, th, mnemonic, passphrase, title)
@@ -2424,14 +2424,17 @@ func askPlateSize(ctx *Context, th *Colors, fitsSmall bool) (PlateSize, bool) {
 // to the other two: skipping does, and so does engraving, while a
 // cancelled engrave goes back to the seed screen so it can be tried
 // again.
-func seedPlateFlow(ctx *Context, th *Colors, ss *SeedScreen, mnemonic bip39.Mnemonic, passphrase, title string) (ok bool) {
+func seedPlateFlow(ctx *Context, th *Colors, ss *SeedScreen, mnemonic bip39.Mnemonic, passphrase, title, lead string) (ok bool) {
 	// Engraving sits first so the selection lands on it, the same reason
 	// walletDescriptorFlow puts its SKIP last. Someone who reached this
 	// screen came to cut a seed plate; skipping is the exception, and an
 	// exception should cost a keypress rather than be the default.
+	if lead == "" {
+		lead = "Engrave the seed phrase?"
+	}
 	cs := &ChoiceScreen{
 		Title:   "Seed Plate",
-		Lead:    "Engrave the seed phrase?",
+		Lead:    lead,
 		Choices: []string{"ENGRAVE SEED", "SKIP"},
 	}
 	choice, ok := cs.Choose(ctx, th)
@@ -2819,7 +2822,7 @@ func newInputFlow(ctx *Context, th *Colors) (any, bool) {
 		cs := &ChoiceScreen{
 			Title:   "Input",
 			Lead:    "Choose what to enter",
-			Choices: []string{"12 WORDS", "24 WORDS", "ENGRAVE TEXT" /* , "CODEX32", "SLIP-39" */},
+			Choices: []string{"12 WORDS", "24 WORDS", "ENGRAVE TEXT", "MULTISIG WALLET" /* , "CODEX32", "SLIP-39" */},
 		}
 		for {
 			choice, ok := cs.Choose(ctx, th)
@@ -2857,6 +2860,12 @@ func newInputFlow(ctx *Context, th *Colors) (any, bool) {
 					}
 				}
 			case 3:
+				// A finished wallet ends at the start screen; backing
+				// out of the builder returns to this menu.
+				if multisigWalletFlow(ctx, th) {
+					return nil, false
+				}
+			case 4:
 				s, ok := inputCodex32Flow(ctx, th)
 				if ok {
 					return s, true
@@ -2887,6 +2896,9 @@ func newInputFlow(ctx *Context, th *Colors) (any, bool) {
 }
 
 type SeedScreen struct {
+	// Title names the screen; empty keeps the single-seed flow's
+	// "Engrave Seed", the multisig builder names the cosigner.
+	Title    string
 	selected int
 	words    []Clickable
 }
@@ -3116,7 +3128,11 @@ func (s *SeedScreen) Draw(ctx *Context, th *Colors, dims image.Point, mnemonic b
 		}
 	}
 	m = fadeClip(&ctx.B, m, image.Rectangle(list))
-	title, _ := layoutTitle(ctx, dims.X, th.Text, "Engrave Seed")
+	titleTxt := s.Title
+	if titleTxt == "" {
+		titleTxt = "Engrave Seed"
+	}
+	title, _ := layoutTitle(ctx, dims.X, th.Text, titleTxt)
 	return op.Layer(
 		m,
 		title,

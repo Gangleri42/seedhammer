@@ -23,7 +23,9 @@ engraves the NSEC plate, then offers a second engraving for the derived NPUB,
 so one tap yields the pair. Decline the second plate if you only want the
 secret on metal.
 
-Key plates render in the same fixed-width font as seed plates.
+Key plates render in the same fixed-width font as seed plates. They fit the
+small 85 x 55 mm plate, so the machine asks which plate to cut before each
+engraving.
 
 ## Handle with care
 

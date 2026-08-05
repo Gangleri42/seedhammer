@@ -122,6 +122,11 @@ descriptor, then the passphrase if you set one. Each is offered and each can be
 skipped, so a seed already on metal can be entered just to produce a descriptor
 plate, and a descriptor can be cut again years later without touching the seed.
 
+Two plate formats exist: the square 85 x 85 mm plate and the small 85 x 55 mm
+one. Whenever a plate fits the small format — a 12-word seed does, a 24-word
+seed does not — the machine asks which to cut, small first. Content that only
+fits the square plate never sees the question.
+
 ## Add a passphrase, or don't
 
 Before the seed plate engraves, the machine asks whether to add a passphrase.

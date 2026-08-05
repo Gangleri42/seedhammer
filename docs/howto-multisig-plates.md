@@ -67,6 +67,10 @@ above applies to every share plate equally.
    recovery rule, e.g. "Any 2 of 3 plates recover". Quorums without a scheme
    offer N FULL COPIES instead; pick the plate variant (TEXT + QR / TEXT
    ONLY / QR ONLY) as usual and the set engraves that plate N times.
+   On the ONE PLATE path the machine also asks for the plate size when the
+   descriptor fits the small 85 x 55 mm format; the variant list is then the
+   small plate's own, so TEXT + QR may drop away. Splits and full copies
+   stay on the square plate.
 3. **Per plate.** Each plate opens on a gate titled "Plate k of N" with the
    cosigner fingerprint it belongs to. ENGRAVE PLATE plans the layout and
    hands over to the engrave screen, which shows the share as it will be

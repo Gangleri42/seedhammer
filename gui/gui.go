@@ -870,30 +870,41 @@ func machineSpline(params engrave.Params, plate Plate) bspline.Curve {
 	}
 }
 
-func engraveSeed(params engrave.Params, plateSize PlateSize, m bip39.Mnemonic, passphrase string) (engrave.Engraving, error) {
+// seedPlate does the plate-size-independent work of a seed plate —
+// the passphrase-derived fingerprint and the SeedQR — once, so the
+// per-size plans afterwards are cheap. The derivation is seconds of
+// device time; callers run it behind a progress screen.
+func seedPlate(m bip39.Mnemonic, passphrase string) (backup.Seed, error) {
 	// The fingerprint names the wallet the plates actually open, which
 	// with a passphrase is not the one the words alone would.
 	mfp, err := masterFingerprintFor(m, passphrase, &chaincfg.MainNetParams)
 	if err != nil {
-		return nil, err
+		return backup.Seed{}, err
 	}
 	qrc, err := qr.Encode(string(seedqr.QR(m)), qr.M)
 	if err != nil {
-		return nil, err
+		return backup.Seed{}, err
 	}
 	words := make([]string, len(m))
 	for i, w := range m {
 		words[i] = bip39.LabelFor(w)
 	}
-	seedDesc := backup.Seed{
-		Size:              plateSize,
+	return backup.Seed{
 		Mnemonic:          words,
 		ShortestWord:      bip39.ShortestWord,
 		LongestWord:       bip39.LongestWord,
 		QR:                qrc,
 		MasterFingerprint: mfp,
 		Font:              constant.Font,
+	}, nil
+}
+
+func engraveSeed(params engrave.Params, plateSize PlateSize, m bip39.Mnemonic, passphrase string) (engrave.Engraving, error) {
+	seedDesc, err := seedPlate(m, passphrase)
+	if err != nil {
+		return nil, err
 	}
+	seedDesc.Size = plateSize
 	return backup.EngraveSeed(params, seedDesc)
 }
 
@@ -2451,19 +2462,30 @@ func seedPlateFlow(ctx *Context, th *Colors, ss *SeedScreen, mnemonic bip39.Mnem
 		return true
 	}
 	params := ctx.Platform.EngraverParams()
-	plan, err := engraveSeed(params, SmallPlate, mnemonic, passphrase)
-	fitsSmall := err == nil && layoutFits(plan, params, SmallPlate)
-	plateSize, sizeOK := askPlateSize(ctx, th, fitsSmall)
-	if !sizeOK {
-		return false
-	}
-	if plateSize != SmallPlate {
-		plan, err = engraveSeed(params, plateSize, mnemonic, passphrase)
-	}
+	// The fingerprint derivation takes seconds with a passphrase; run
+	// it behind the progress screen so the plate question that follows
+	// lands on a live screen, not a queued press.
+	seedDesc, err := runJob(ctx, th, func(pump func(done, total int) bool) (backup.Seed, error) {
+		return seedPlate(mnemonic, passphrase)
+	}, planFrame(ctx, th, func(ctx *Context, th *Colors, dims image.Point) op.Op {
+		return ss.Draw(ctx, th, dims, mnemonic)
+	}))
 	var plate Plate
 	var view *CurvesScreen
 	if err == nil {
-		plate, view, err = planPreviewPlate(ctx, th, "Engrave Seed", plan, params, plateSize)
+		seedDesc.Size = SmallPlate
+		small, serr := backup.EngraveSeed(params, seedDesc)
+		fitsSmall := serr == nil && layoutFits(small, params, SmallPlate)
+		plateSize, sizeOK := askPlateSize(ctx, th, fitsSmall)
+		if !sizeOK {
+			return false
+		}
+		seedDesc.Size = plateSize
+		var plan engrave.Engraving
+		plan, err = backup.EngraveSeed(params, seedDesc)
+		if err == nil {
+			plate, view, err = planPreviewPlate(ctx, th, "Engrave Seed", plan, params, plateSize)
+		}
 	}
 	if err != nil {
 		if errors.Is(err, errPlanCanceled) {

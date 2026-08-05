@@ -45,6 +45,12 @@ func repeatSeed(word string, n int, tail string) (bip39.Mnemonic, error) {
 		}
 		return m, nil
 	}
+	// The repeated word itself completes many phrases (7 free checksum
+	// bits on 12 words, 3 on 24): prefer it, so fixtures read uniformly.
+	m[n-1] = w
+	if m.Valid() {
+		return m, nil
+	}
 	for last := range bip39.Word(2048) {
 		m[n-1] = last
 		if m.Valid() {

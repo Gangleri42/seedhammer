@@ -100,10 +100,20 @@ func multisigWalletFlow(ctx *Context, th *Colors) (done bool) {
 	for _, s := range slots {
 		desc.Keys = append(desc.Keys, s.key)
 	}
-	for !reviewWalletFlow(ctx, th, desc) {
-		if confirmDiscardWallet(ctx, th) {
-			return false
+	for {
+		if !reviewWalletFlow(ctx, th, desc) {
+			if confirmDiscardWallet(ctx, th) {
+				return false
+			}
+			continue
 		}
+		// The coordinator scans the wallet and both ends compare the
+		// first address before anything is cut: an entry mistake
+		// caught here costs minutes, not steel.
+		if !exportDescriptorFlow(ctx, th, desc) {
+			continue
+		}
+		break
 	}
 	// The plates: each entrusted seed first, so a cosigner's seed
 	// plate and passphrase plate leave the bench together, then the

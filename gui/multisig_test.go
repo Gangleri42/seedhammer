@@ -41,7 +41,10 @@ func goldenMnemonic(t testing.TB, words string) bip39.Mnemonic {
 	return m
 }
 
-func TestMultisigDescriptorGolden(t *testing.T) {
+// goldenDescriptor assembles the fixture-family 2-of-3 the way the
+// builder does, one cosignerKey per seed.
+func goldenDescriptor(t testing.TB) *bip380.Descriptor {
+	t.Helper()
 	desc := &bip380.Descriptor{
 		Title:     "Vault",
 		Script:    bip380.P2WSH,
@@ -55,6 +58,11 @@ func TestMultisigDescriptorGolden(t *testing.T) {
 		}
 		desc.Keys = append(desc.Keys, key)
 	}
+	return desc
+}
+
+func TestMultisigDescriptorGolden(t *testing.T) {
+	desc := goldenDescriptor(t)
 	enc := desc.Encode()
 	if enc != golden2of3 {
 		t.Errorf("assembled descriptor drifted:\n got %s\nwant %s", enc, golden2of3)
@@ -234,6 +242,12 @@ func TestMultisigWalletFlow(t *testing.T) {
 		await("2A77E0A6")
 		await("9A6A2580")
 		hold()
+
+		// Export: the animated code, then the first-address check.
+		await("Export Wallet")
+		click(&ctx.Router, Button3)
+		await("First Address")
+		click(&ctx.Router, Button3)
 
 		// The entrusted seeds' plates, skipped here.
 		await("Cosigner 1 of 2, 2A77E0A6")

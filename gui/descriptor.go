@@ -400,22 +400,27 @@ func descriptorQRScreen(ctx *Context, th *Colors, desc *bip380.Descriptor, code 
 	).Offset(qrArea.Center(paperSz))
 
 	var detail richText
-	sub := ctx.Styles.subtitle
-	body := ctx.Styles.body
-	w := textArea.Dx()
-	if desc.Title != "" {
-		detail.Add(&ctx.B, sub, w, th.Text, "Title")
-		detail.Add(&ctx.B, body, w, th.Text, desc.Title)
+	// A display the paper nearly fills leaves the detail column no
+	// width, and the text layouter never terminates at a width no
+	// glyph fits. The code is the point of the screen; the details
+	// yield.
+	if w := textArea.Dx(); w >= 60 {
+		sub := ctx.Styles.subtitle
+		body := ctx.Styles.body
+		if desc.Title != "" {
+			detail.Add(&ctx.B, sub, w, th.Text, "Title")
+			detail.Add(&ctx.B, body, w, th.Text, desc.Title)
+			detail.Y += margin
+		}
+		detail.Add(&ctx.B, sub, w, th.Text, "Type")
+		detail.Add(&ctx.B, body, w, th.Text, desc.Script.String())
 		detail.Y += margin
+		detail.Add(&ctx.B, sub, w, th.Text, "Fingerprint")
+		detail.Addf(&ctx.B, body, w, th.Text, "%.8x", desc.Keys[0].MasterFingerprint)
+		detail.Y += margin
+		detail.Add(&ctx.B, sub, w, th.Text, "Path")
+		detail.Add(&ctx.B, body, w, th.Text, pathStr)
 	}
-	detail.Add(&ctx.B, sub, w, th.Text, "Type")
-	detail.Add(&ctx.B, body, w, th.Text, desc.Script.String())
-	detail.Y += margin
-	detail.Add(&ctx.B, sub, w, th.Text, "Fingerprint")
-	detail.Addf(&ctx.B, body, w, th.Text, "%.8x", desc.Keys[0].MasterFingerprint)
-	detail.Y += margin
-	detail.Add(&ctx.B, sub, w, th.Text, "Path")
-	detail.Add(&ctx.B, body, w, th.Text, pathStr)
 
 	title, _ := layoutTitle(ctx, dims.X, th.Text, "Descriptor")
 	return op.Layer(

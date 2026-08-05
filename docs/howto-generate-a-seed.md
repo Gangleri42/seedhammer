@@ -158,6 +158,17 @@ you do with the seed words.
 From here on, the fingerprint on every plate is the wallet you actually end up
 with, passphrase included. That is what makes the plates identifiable as a set.
 
+## Name the wallet, or don't
+
+After the passphrase question the machine offers a wallet title: up to 18
+characters, engraved on every plate of the set — the seed plate in the spot
+the layout has always reserved for it, the descriptor plate above the
+descriptor, the passphrase plate on a TITLE line. Steel uppercases it. Skip
+it and the plates look exactly as they always have; name it and a drawer of
+plates sorts into wallets by eye years later. Like the passphrase, the title
+is asked once and carried through every retry, so backing out of a plate
+never means retyping it.
+
 ## Set up the watch-only wallet
 
 Once the seed plate is done, the machine offers the wallet descriptor: choose an

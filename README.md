@@ -125,6 +125,26 @@ animated code. The partition covers every n-1-of-n and n-of-n quorum plus
 plate per cosigner, where any single plate recovers.
 [How-to](docs/howto-multisig-plates.md).
 
+### A whole multisig wallet, built on the machine
+
+MULTISIG WALLET in the input menu assembles an M-of-N segwit multisig with no
+computer in the middle. Name the wallet, pick the quorum, then add each
+cosigner: type drawn words (the machine still supplies only the checksum
+word), tap a seed over NFC, or tap a bare account key from a cosigner whose
+seed never touches this machine. Seeds pass the same review, checksum gate
+and optional passphrase as the single-seed flow — the passphrase ask sits
+behind a warning about what N of them do to recovery — and a doubled master
+fingerprint is rejected as the doubled signer it is.
+
+The wallet leaves by camera: the descriptor plays as an animated
+`ur:crypto-output` for Sparrow or any UR-capable coordinator, and both ends
+compare the wallet's first receive address on screen before anything cuts.
+Then steel — each entrusted seed's plates first, then the descriptor as a
+single plate, the cosigner split, or full copies, the same machinery a
+scanned setup runs. Every plate of a set carries the wallet's title, and the
+single-seed flow gained the same title step, so plates sort by eye years
+later. [How-to](docs/howto-multisig-wallet.md).
+
 ### Engraving quality and speed
 
 Round glyphs used to engrave very slightly egg-shaped. The outline fitter is

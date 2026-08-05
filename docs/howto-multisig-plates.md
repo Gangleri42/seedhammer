@@ -17,7 +17,9 @@ paths. No seed material. Losing one to a stranger costs privacy, not funds.
 - The multisig setup, delivered over NFC: tap a Coldcard's export directly,
   or write the descriptor string as a text record with
   [`write-nfc.py --raw`](../cmd/textplate/write-nfc.py) or from
-  [Studio](https://gangleri42.github.io/studio/).
+  [Studio](https://gangleri42.github.io/studio/). A wallet
+  [built on the machine itself](howto-multisig-wallet.md) arrives at the
+  same split screens without scanning anything.
 - One blank plate per cosigner, plus spares for extra copies. Engraving the
   share on the back of each cosigner's seed plate works and keeps the pair
   physically inseparable.

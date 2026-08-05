@@ -90,10 +90,27 @@ func cosigner(m bip39.Mnemonic, path bip32.Path) (bip380.Key, error) {
 		Network:           network,
 		MasterFingerprint: bip32.Fingerprint(pkey),
 		DerivationPath:    path,
+		// Spelled out, as the device's own builder does: without the
+		// receive and change branches the descriptor exports one key,
+		// not a wallet (see gui's seedDescriptor). This also keeps the
+		// fixture descriptors byte-equal with what the multisig
+		// builder assembles from the same seeds, which gui's golden
+		// test pins.
+		Children: []bip380.Derivation{
+			{Type: bip380.RangeDerivation, Index: 0, End: 1},
+			{Type: bip380.WildcardDerivation},
+		},
 		KeyData:           pub.SerializeCompressed(),
 		ChainCode:         xpub.ChainCode(),
 		ParentFingerprint: xpub.ParentFingerprint(),
 	}, nil
+}
+
+// expression renders the key the way a cosigner device exports it
+// over NFC: origin, xpub, branches.
+func expression(k bip380.Key) string {
+	return fmt.Sprintf("[%.8x%s]%s/<0;1>/*",
+		k.MasterFingerprint, k.DerivationPath.Encode(), k.String())
 }
 
 func main() {
@@ -186,6 +203,10 @@ func main() {
 	fmt.Fprintf(&b, "    desc2of3: %q,\n", desc(2, 3))
 	fmt.Fprintf(&b, "    desc3of5: %q,\n", desc(3, 5))
 	fmt.Fprintf(&b, "    desc5of7: %q,\n", desc(5, 7))
+	// The fourth cosigner as a bare key expression, for the wallet
+	// builder's TAP XPUB path: not part of the 2-of-3, so tapping it
+	// after three seed hotkeys demos the duplicate check NOT firing.
+	fmt.Fprintf(&b, "    xpubPizza: %q,\n", expression(keys[3]))
 	if drawing != "" {
 		fmt.Fprintf(&b, "    drawingB64: %q,\n", drawing)
 	}

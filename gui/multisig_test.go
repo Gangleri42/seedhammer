@@ -310,3 +310,76 @@ func TestMultisigPassphraseWarning(t *testing.T) {
 		t.Errorf("declining after the warning returned %q, %v", pass, ok)
 	}
 }
+
+// TestBuiltDescriptorPlateParity: the plates a built wallet cuts must
+// be the plates a rescan of its own exported descriptor cuts, or an
+// aborted set could not resume from a rescan. The descriptor string
+// carries no title, so the rescan reinstates it the way the flow's
+// operator would; everything else must agree byte for byte.
+func TestBuiltDescriptorPlateParity(t *testing.T) {
+	built := goldenDescriptor(t)
+	rescanned, err := bip380.Parse(built.Encode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rescanned.Title = built.Title
+
+	bLabels, bTexts, bQR, err := fitDescriptor(engraverParams, SquarePlate, built, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rLabels, rTexts, rQR, err := fitDescriptor(engraverParams, SquarePlate, rescanned, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bLabels) != len(rLabels) || bQR != rQR {
+		t.Fatalf("single-plate ladders diverge: %v/%q vs %v/%q", bLabels, bQR, rLabels, rQR)
+	}
+	for i := range bTexts {
+		if len(bTexts[i].Paragraphs) != len(rTexts[i].Paragraphs) {
+			t.Fatalf("variant %s paragraph counts diverge", bLabels[i])
+		}
+		for j := range bTexts[i].Paragraphs {
+			bp, rp := bTexts[i].Paragraphs[j], rTexts[i].Paragraphs[j]
+			if bp.Text != rp.Text || bp.QRScale != rp.QRScale {
+				t.Errorf("variant %s paragraph %d diverges:\n%q\n%q", bLabels[i], j, bp.Text, rp.Text)
+			}
+		}
+	}
+
+	bData, bSize, bScale, err := fitShares(engraverParams, built, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rData, rSize, rScale, err := fitShares(engraverParams, rescanned, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(bData) != string(rData) || bSize != rSize || bScale != rScale {
+		t.Fatal("share partitions diverge between built and rescanned")
+	}
+	for k := range built.Keys {
+		bTxt, bURs, err := shareText(built, bData, k, bSize, bScale)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rTxt, rURs, err := shareText(rescanned, rData, k, rSize, rScale)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(bURs) != len(rURs) {
+			t.Fatalf("share %d UR counts diverge", k)
+		}
+		for i := range bURs {
+			if bURs[i] != rURs[i] {
+				t.Errorf("share %d UR %d diverges:\n%s\n%s", k, i, bURs[i], rURs[i])
+			}
+		}
+		for i := range bTxt.Paragraphs {
+			if bTxt.Paragraphs[i].Text != rTxt.Paragraphs[i].Text {
+				t.Errorf("share %d paragraph %d diverges:\n%q\n%q",
+					k, i, bTxt.Paragraphs[i].Text, rTxt.Paragraphs[i].Text)
+			}
+		}
+	}
+}

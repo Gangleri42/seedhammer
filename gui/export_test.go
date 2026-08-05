@@ -104,3 +104,34 @@ func TestGroupAddress(t *testing.T) {
 		t.Errorf("groupAddress = %q, want %q", got, want)
 	}
 }
+
+// TestChildrenDescriptorsStillFit: keys now spell out <0;1>/*, which
+// lengthens every descriptor a fixture or the builder produces. The
+// plate ladders must keep offering variants at the quorums the
+// emulator demos, and the split partition must keep fitting where a
+// scheme exists.
+func TestChildrenDescriptorsStillFit(t *testing.T) {
+	children := []bip380.Derivation{
+		{Type: bip380.RangeDerivation, Index: 0, End: 1},
+		{Type: bip380.WildcardDerivation},
+	}
+	for _, test := range []struct{ m, n int }{{2, 3}, {3, 5}, {5, 7}} {
+		desc := testMultisig(t, test.m, test.n)
+		for i := range desc.Keys {
+			desc.Keys[i].Children = children
+		}
+		labels, _, _, err := fitDescriptor(engraverParams, SquarePlate, desc, nil)
+		if err != nil {
+			t.Fatalf("%d-of-%d: %v", test.m, test.n, err)
+		}
+		if len(labels) == 0 {
+			t.Errorf("%d-of-%d: no single-plate variant fits", test.m, test.n)
+		}
+		t.Logf("%d-of-%d: %v", test.m, test.n, labels)
+		if ur.HasScheme(test.m, test.n) {
+			if _, _, _, err := fitShares(engraverParams, desc, nil); err != nil {
+				t.Errorf("%d-of-%d shares: %v", test.m, test.n, err)
+			}
+		}
+	}
+}

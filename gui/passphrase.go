@@ -7,8 +7,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/btcsuite/btcd/chaincfg/v2"
+	"seedhammer.com/backup"
 	"seedhammer.com/bip32"
 	"seedhammer.com/bip39"
+	"seedhammer.com/font/sh"
 	"seedhammer.com/gui/assets"
 	"seedhammer.com/gui/layout"
 	"seedhammer.com/gui/op"
@@ -288,7 +290,7 @@ func fingerprintHex(fp uint32) string {
 // passphrase. Extending it is not planned. Anyone who revisits that
 // should read backup/nostr.go, where the same trade is written down for
 // the npub.
-func passphrasePlate(pass, fingerprint, path string) string {
+func passphrasePlate(pass, fingerprint, path, title string) string {
 	var b strings.Builder
 	b.WriteString("BIP39 PASSPHRASE\n")
 	// The only integrity check a passphrase can carry, and it is what
@@ -301,6 +303,14 @@ func passphrasePlate(pass, fingerprint, path string) string {
 	b.WriteString(pass)
 	b.WriteString("\n\nWALLET ")
 	b.WriteString(fingerprint)
+	// Its own line rather than appended to the fingerprint: fitText
+	// caps the plate's font at the grid that holds its longest composed
+	// line unwrapped, and a joint line would cost every titled
+	// passphrase plate a font step for no information.
+	if t := backup.TitleString(sh.Font, title); t != "" {
+		b.WriteString("\nTITLE ")
+		b.WriteString(t)
+	}
 	if path != "" {
 		b.WriteString("\nPATH ")
 		b.WriteString(path)
@@ -326,7 +336,7 @@ func itoa(n int) string {
 
 // passphrasePlateFlow offers the passphrase as a plate of its own, the
 // third of the set. Declining is the common case and costs one screen.
-func passphrasePlateFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, pass, path string) {
+func passphrasePlateFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, pass, path, title string) {
 	if pass == "" {
 		return
 	}
@@ -346,7 +356,7 @@ func passphrasePlateFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, pass
 	if !ok {
 		fp = "UNAVAILABLE"
 	}
-	text := passphrasePlate(pass, fp, path)
+	text := passphrasePlate(pass, fp, path, title)
 	params := ctx.Platform.EngraverParams()
 	_, _, smallErr := fitText(params, SmallPlate, text)
 	plateSize, sizeOK := askPlateSize(ctx, th, smallErr == nil)

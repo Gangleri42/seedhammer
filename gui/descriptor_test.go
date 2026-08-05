@@ -269,7 +269,7 @@ func TestDescriptorSkipIsAChoice(t *testing.T) {
 		click(&ctx.Router, Down)
 	}
 	click(&ctx.Router, Button3)
-	if path := walletDescriptorFlow(ctx, &descriptorTheme, m, ""); path != "" {
+	if path := walletDescriptorFlow(ctx, &descriptorTheme, m, "", ""); path != "" {
 		t.Errorf("choosing SKIP reported a path: %q", path)
 	}
 }

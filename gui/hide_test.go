@@ -134,7 +134,7 @@ func testSeedView(t *testing.T) (*CurvesScreen, Plate) {
 		t.Fatal(err)
 	}
 	params := engraverParams
-	plan, err := engraveSeed(params, SquarePlate, m, "")
+	plan, err := engraveSeed(params, SquarePlate, m, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

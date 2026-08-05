@@ -461,6 +461,13 @@ func fitDescriptor(params engrave.Params, plateSize PlateSize, desc *bip380.Desc
 		return nil, nil, "", err
 	}
 	qrc := darkCode(qrSize)
+	// A titled wallet names its descriptor plate the way the share
+	// plates already do, so a drawer of plates sorts by eye. The QR-only
+	// variant stays bare: its point is the minimal plate.
+	body := enc
+	if title := backup.TitleString(sh.Font, desc.Title); title != "" {
+		body = title + "\n" + enc
+	}
 	type textEngraving struct {
 		Label     string
 		Paragraph backup.Paragraph
@@ -469,11 +476,11 @@ func fitDescriptor(params engrave.Params, plateSize PlateSize, desc *bip380.Desc
 	engravings := []textEngraving{
 		{
 			"TEXT + QR",
-			backup.Paragraph{Text: enc, QR: qrc},
+			backup.Paragraph{Text: body, QR: qrc},
 		},
 		{
 			"TEXT ONLY",
-			backup.Paragraph{Text: enc},
+			backup.Paragraph{Text: body},
 		},
 		{
 			"QR ONLY",
@@ -891,7 +898,7 @@ func machineBounds(params engrave.Params, plateSize PlateSize) bspline.Bounds {
 // the passphrase-derived fingerprint and the SeedQR — once, so the
 // per-size plans afterwards are cheap. The derivation is seconds of
 // device time; callers run it behind a progress screen.
-func seedPlate(m bip39.Mnemonic, passphrase string) (backup.Seed, error) {
+func seedPlate(m bip39.Mnemonic, passphrase, title string) (backup.Seed, error) {
 	// The fingerprint names the wallet the plates actually open, which
 	// with a passphrase is not the one the words alone would.
 	mfp, err := masterFingerprintFor(m, passphrase, &chaincfg.MainNetParams)
@@ -907,6 +914,11 @@ func seedPlate(m bip39.Mnemonic, passphrase string) (backup.Seed, error) {
 		words[i] = bip39.LabelFor(w)
 	}
 	return backup.Seed{
+		// The layout has reserved this spot since v1; the SH2 flows
+		// simply never filled it. A too-wide title cannot overflow: the
+		// plan's bounds check refuses the plate, and the small-plate
+		// offer already rides that same fit.
+		Title:             title,
 		Mnemonic:          words,
 		ShortestWord:      bip39.ShortestWord,
 		LongestWord:       bip39.LongestWord,
@@ -916,8 +928,8 @@ func seedPlate(m bip39.Mnemonic, passphrase string) (backup.Seed, error) {
 	}, nil
 }
 
-func engraveSeed(params engrave.Params, plateSize PlateSize, m bip39.Mnemonic, passphrase string) (engrave.Engraving, error) {
-	seedDesc, err := seedPlate(m, passphrase)
+func engraveSeed(params engrave.Params, plateSize PlateSize, m bip39.Mnemonic, passphrase, title string) (engrave.Engraving, error) {
+	seedDesc, err := seedPlate(m, passphrase, title)
 	if err != nil {
 		return nil, err
 	}
@@ -2410,6 +2422,10 @@ func backupWalletFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic) {
 	// edit path inside passphraseFlow already avoids.
 	var passphrase string
 	var havePassphrase bool
+	// Also asked once: the title is the set's name, and every plate of
+	// the set must carry the same one.
+	var title string
+	var haveTitle bool
 	for {
 		if !ss.Confirm(ctx, th, mnemonic) {
 			return
@@ -2421,14 +2437,21 @@ func backupWalletFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic) {
 			}
 			passphrase, havePassphrase = p, true
 		}
+		if !haveTitle {
+			t, ok := titleFlow(ctx, th, false, title)
+			if !ok {
+				continue
+			}
+			title, haveTitle = t, true
+		}
 		// Three plates, each offered and each declinable. A seed already
 		// on metal may need only a descriptor; a descriptor can be cut
 		// again years later without touching the seed plate.
-		if !seedPlateFlow(ctx, th, ss, mnemonic, passphrase) {
+		if !seedPlateFlow(ctx, th, ss, mnemonic, passphrase, title) {
 			continue
 		}
-		path := walletDescriptorFlow(ctx, th, mnemonic, passphrase)
-		passphrasePlateFlow(ctx, th, mnemonic, passphrase, path)
+		path := walletDescriptorFlow(ctx, th, mnemonic, passphrase, title)
+		passphrasePlateFlow(ctx, th, mnemonic, passphrase, path, title)
 		return
 	}
 }
@@ -2461,7 +2484,7 @@ func askPlateSize(ctx *Context, th *Colors, fitsSmall bool) (PlateSize, bool) {
 // to the other two: skipping does, and so does engraving, while a
 // cancelled engrave goes back to the seed screen so it can be tried
 // again.
-func seedPlateFlow(ctx *Context, th *Colors, ss *SeedScreen, mnemonic bip39.Mnemonic, passphrase string) (ok bool) {
+func seedPlateFlow(ctx *Context, th *Colors, ss *SeedScreen, mnemonic bip39.Mnemonic, passphrase, title string) (ok bool) {
 	// Engraving sits first so the selection lands on it, the same reason
 	// walletDescriptorFlow puts its SKIP last. Someone who reached this
 	// screen came to cut a seed plate; skipping is the exception, and an
@@ -2483,7 +2506,7 @@ func seedPlateFlow(ctx *Context, th *Colors, ss *SeedScreen, mnemonic bip39.Mnem
 	// it behind the progress screen so the plate question that follows
 	// lands on a live screen, not a queued press.
 	seedDesc, err := runJob(ctx, th, func(pump func(done, total int) bool) (backup.Seed, error) {
-		return seedPlate(mnemonic, passphrase)
+		return seedPlate(mnemonic, passphrase, title)
 	}, planFrame(ctx, th, func(ctx *Context, th *Colors, dims image.Point) op.Op {
 		return ss.Draw(ctx, th, dims, mnemonic)
 	}))

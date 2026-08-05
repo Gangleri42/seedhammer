@@ -41,7 +41,7 @@ func TestSmallSeedGate(t *testing.T) {
 		{12, true},
 		{24, false},
 	} {
-		plan, err := engraveSeed(engraverParams, SmallPlate, testMnemonic(t, test.words), "")
+		plan, err := engraveSeed(engraverParams, SmallPlate, testMnemonic(t, test.words), "", "")
 		if err != nil {
 			t.Fatalf("%d words: %v", test.words, err)
 		}

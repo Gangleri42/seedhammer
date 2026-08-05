@@ -1069,7 +1069,8 @@ func TestBackupWalletAsksPassphraseOnce(t *testing.T) {
 	})
 	defer quit()
 
-	asks, backs := 0, 0
+	asks, titleAsks, backs := 0, 0, 0
+	titleDown := false
 	for range 400 {
 		content, ok := frame()
 		if !ok {
@@ -1082,6 +1083,20 @@ func TestBackupWalletAsksPassphraseOnce(t *testing.T) {
 				t.Fatalf("passphrase asked %d times; cancelling the seed plate discarded it", asks)
 			}
 			click(&ctx.Router, Button3) // NO PASSPHRASE
+		case uiContains(content, "Name this wallet on its plates?"):
+			// The title is carried like the passphrase: asked once,
+			// whatever path returns to the seed screen.
+			if !titleDown {
+				titleAsks++
+				if titleAsks > 1 {
+					t.Fatalf("title asked %d times; cancelling the seed plate discarded it", titleAsks)
+				}
+				titleDown = true
+				click(&ctx.Router, Down) // move to NO TITLE
+				continue
+			}
+			titleDown = false
+			click(&ctx.Router, Button3) // choose NO TITLE
 		case uiContains(content, "Engrave the seed phrase?"):
 			backs++
 			if backs > 1 {
@@ -1092,7 +1107,7 @@ func TestBackupWalletAsksPassphraseOnce(t *testing.T) {
 			click(&ctx.Router, Button3) // seed screen, and anything else, advances
 		}
 	}
-	t.Fatalf("flow never returned to the seed plate: asks=%d backs=%d", asks, backs)
+	t.Fatalf("flow never returned to the seed plate: asks=%d titles=%d backs=%d", asks, titleAsks, backs)
 }
 
 // TestTextNoticeGate: a text resembling a damaged backup engraves

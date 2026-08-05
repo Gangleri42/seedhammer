@@ -146,7 +146,7 @@ var (
 // a seed whose wallet already exists at a different account or depth.
 // It reports the derivation path it used, so a passphrase plate can
 // record which wallet the set belongs to. Empty means declined.
-func walletDescriptorFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, passphrase string) string {
+func walletDescriptorFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, passphrase, title string) string {
 	// Declining is a visible choice rather than a back button nobody
 	// thinks to press, and it sits last so the selection lands on the
 	// common answer instead of on the way out.
@@ -181,6 +181,10 @@ func walletDescriptorFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, pas
 			showError(ctx, th, err, blankScreen)
 			continue
 		}
+		// The descriptor string has no title field (BIP380 defines
+		// none); the title rides the struct onto the screens and the
+		// plate headers.
+		desc.Title = title
 		if showDescriptorFlow(ctx, th, desc) {
 			return path.String()
 		}
@@ -399,6 +403,11 @@ func descriptorQRScreen(ctx *Context, th *Colors, desc *bip380.Descriptor, code 
 	sub := ctx.Styles.subtitle
 	body := ctx.Styles.body
 	w := textArea.Dx()
+	if desc.Title != "" {
+		detail.Add(&ctx.B, sub, w, th.Text, "Title")
+		detail.Add(&ctx.B, body, w, th.Text, desc.Title)
+		detail.Y += margin
+	}
 	detail.Add(&ctx.B, sub, w, th.Text, "Type")
 	detail.Add(&ctx.B, body, w, th.Text, desc.Script.String())
 	detail.Y += margin

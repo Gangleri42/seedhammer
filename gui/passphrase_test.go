@@ -191,7 +191,7 @@ func TestPassphraseChangesWallet(t *testing.T) {
 // itself needs, and the fingerprint already says which seed it pairs
 // with.
 func TestPassphrasePlate(t *testing.T) {
-	got := passphrasePlate("correct horse", "73C5DA0A", "m/84h/0h/0h")
+	got := passphrasePlate("correct horse", "73C5DA0A", "m/84h/0h/0h", "")
 	for _, want := range []string{
 		"correct horse", // verbatim, case intact
 		"73C5DA0A",      // which seed it pairs with
@@ -204,7 +204,7 @@ func TestPassphrasePlate(t *testing.T) {
 	}
 	// The path is optional: declining the descriptor still yields a
 	// usable plate rather than a dangling label.
-	if bare := passphrasePlate("x", "73C5DA0A", ""); strings.Contains(bare, "PATH") {
+	if bare := passphrasePlate("x", "73C5DA0A", "", ""); strings.Contains(bare, "PATH") {
 		t.Errorf("empty path still emitted a PATH line:\n%s", bare)
 	}
 	// The fixed text must never be what forces a smaller font; only the
@@ -229,7 +229,7 @@ func TestPassphrasePlate(t *testing.T) {
 // ends even when the line ladder wraps it.
 func TestPassphrasePlateSetsOffTheSecret(t *testing.T) {
 	const pass = "correct horse battery staple"
-	lines := strings.Split(passphrasePlate(pass, "73C5DA0A", "m/84h/0h/0h"), "\n")
+	lines := strings.Split(passphrasePlate(pass, "73C5DA0A", "m/84h/0h/0h", ""), "\n")
 	at := -1
 	for i, l := range lines {
 		if l == pass {
@@ -245,7 +245,7 @@ func TestPassphrasePlateSetsOffTheSecret(t *testing.T) {
 	}
 	// A long one is allowed to wrap; the count is what makes it readable.
 	long := strings.Repeat("a b ", 25)[:100]
-	txt := passphrasePlate(long, "73C5DA0A", "")
+	txt := passphrasePlate(long, "73C5DA0A", "", "")
 	if !strings.Contains(txt, itoa(len(long))+" CHARACTERS") {
 		t.Errorf("character count missing for a %d-char passphrase:\n%s", len(long), txt)
 	}
@@ -323,23 +323,23 @@ func TestEveryPlateIsDeclinable(t *testing.T) {
 	}
 
 	declines("seed plate", "ENGRAVE SEED", func(ctx *Context) {
-		if !seedPlateFlow(ctx, &descriptorTheme, ss, m, "") {
+		if !seedPlateFlow(ctx, &descriptorTheme, ss, m, "", "") {
 			t.Error("skipping the seed plate did not continue to the other plates")
 		}
 	})
 	declines("passphrase plate", "ENGRAVE PASSPHRASE", func(ctx *Context) {
-		passphrasePlateFlow(ctx, &descriptorTheme, m, "hunter2", "m/84h/0h/0h")
+		passphrasePlateFlow(ctx, &descriptorTheme, m, "hunter2", "m/84h/0h/0h", "")
 	})
 
 	// With no passphrase there is nothing to offer at all.
 	ctx := NewContext(newPlatform())
-	passphrasePlateFlow(ctx, &descriptorTheme, m, "", "m/84h/0h/0h")
+	passphrasePlateFlow(ctx, &descriptorTheme, m, "", "m/84h/0h/0h", "")
 
 	// The descriptor declines by backing out of its address-type
 	// choice, which leaves no path for the passphrase plate to record.
 	ctx = NewContext(newPlatform())
 	click(&ctx.Router, Button1)
-	if path := walletDescriptorFlow(ctx, &descriptorTheme, m, ""); path != "" {
+	if path := walletDescriptorFlow(ctx, &descriptorTheme, m, "", ""); path != "" {
 		t.Errorf("declining the descriptor still reported a path: %q", path)
 	}
 }
@@ -447,7 +447,7 @@ func TestEngraveSeedUsesPassphrase(t *testing.T) {
 	}
 	params := newPlatform().EngraverParams()
 	digest := func(pass string) string {
-		plan, err := engraveSeed(params, SquarePlate, m, pass)
+		plan, err := engraveSeed(params, SquarePlate, m, pass, "")
 		if err != nil {
 			t.Fatalf("%q: %v", pass, err)
 		}
@@ -530,10 +530,10 @@ func TestUncappedPassphraseStaysInBounds(t *testing.T) {
 
 	// The plate is the one real ceiling. It must take a long passphrase
 	// and refuse an impossible one with an error, never silently.
-	if _, _, err := fitText(engrave.SH2Params, SquarePlate, passphrasePlate(strings.Repeat("a", 800), "64493BC6", "m/84h/0h/0h")); err != nil {
+	if _, _, err := fitText(engrave.SH2Params, SquarePlate, passphrasePlate(strings.Repeat("a", 800), "64493BC6", "m/84h/0h/0h", "")); err != nil {
 		t.Errorf("800 characters should still fit a plate: %v", err)
 	}
-	if _, _, err := fitText(engrave.SH2Params, SquarePlate, passphrasePlate(strings.Repeat("a", 4000), "64493BC6", "m/84h/0h/0h")); err == nil {
+	if _, _, err := fitText(engrave.SH2Params, SquarePlate, passphrasePlate(strings.Repeat("a", 4000), "64493BC6", "m/84h/0h/0h", "")); err == nil {
 		t.Error("4000 characters must be refused by the plate, not engraved")
 	}
 }
@@ -563,7 +563,7 @@ func TestHowtoPlateMatchesTheCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := passphrasePlate("hunter2", "CA2C62D2", "m/84h/0h/0h")
+	want := passphrasePlate("hunter2", "CA2C62D2", "m/84h/0h/0h", "")
 	if !strings.Contains(string(doc), want) {
 		t.Errorf("%s does not show the plate this code produces:\n--- want ---\n%s\n--- end ---", howto, want)
 	}

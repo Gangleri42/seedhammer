@@ -147,6 +147,15 @@ func main() {
 			p.word, p.n, words(m)[:min(40, len(words(m)))]+"…", k.MasterFingerprint)
 	}
 
+	// The memorial: a verbatim phrase, checksum-verified like any
+	// other fixture. One cool card, six rugs, back to satoshi, sad.
+	const memorial = "coin kite cool card rug rug rug rug rug rug satoshi sad"
+	if m, err := bip39.ParseMnemonic(memorial); err != nil || !m.Valid() {
+		fmt.Fprintln(os.Stderr, "memorial phrase no longer validates")
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "memorial   -> %s\n", memorial)
+
 	desc := func(threshold, n int) string {
 		d := &bip380.Descriptor{
 			Script:    bip380.P2WSH,
@@ -173,6 +182,7 @@ func main() {
 	fmt.Fprintf(&b, "    seed24: %q,\n", seeds[0])
 	fmt.Fprintf(&b, "    seed12: %q,\n", seeds[1])
 	fmt.Fprintf(&b, "    seedRug: %q,\n", seeds[2])
+	fmt.Fprintf(&b, "    seedMemorial: %q,\n", memorial)
 	fmt.Fprintf(&b, "    desc2of3: %q,\n", desc(2, 3))
 	fmt.Fprintf(&b, "    desc3of5: %q,\n", desc(3, 5))
 	fmt.Fprintf(&b, "    desc5of7: %q,\n", desc(5, 7))

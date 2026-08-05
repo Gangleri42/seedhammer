@@ -4,10 +4,14 @@
 // Every payload opens with a one-line ASCII header, the fields
 // separated by spaces and terminated by a newline:
 //
-//	version mode units-per-mm stroke-width
+//	version mode units-per-mm stroke-width [plate]
 //
 // The leading token dispatches the version and mode before any body
-// parse. Version 2 is the only format: text mode carries plain UTF-8
+// parse. The optional trailing plate token ("small" or "square")
+// names the physical plate the emitter laid the drawing out for: the
+// device engraves that plate without asking. Without it the device
+// measures the drawing and offers every plate it fits. Text-mode
+// headers carry the token in the same trailing position. Version 2 is the only format: text mode carries plain UTF-8
 // plate text, and path mode a compact binary stream of M/L/Q/C
 // commands with relative zigzag-varint coordinates that may open with
 // a dictionary of repeated shapes placements stamp by reference. See
@@ -69,6 +73,9 @@ const (
 	// plate geometry.
 	PlateMM        = 85
 	SafetyMarginMM = 3
+	// SmallPlateHMM is the small plate's height; it shares PlateMM's
+	// width. A gui test asserts both against the firmware geometry.
+	SmallPlateHMM = 55
 )
 
 // The two payload modes a curves record can carry, named in the
@@ -78,6 +85,10 @@ const (
 const (
 	ModeText = "text"
 	ModePath = "path"
+
+	// The plate tokens a payload may name; see the package comment.
+	PlateSmall  = "small"
+	PlateSquare = "square"
 )
 
 // Mode reports a payload's mode from its header line, which is
@@ -117,6 +128,49 @@ func Text(data []byte) (string, error) {
 	}
 	_, body, _ := strings.Cut(string(data), "\n")
 	return body, nil
+}
+
+// PlateToken returns the plate a payload's header names ("small" or
+// "square"), or empty when the emitter left the choice to the device.
+// It reads the header only, so it works for both modes without a body
+// parse.
+func PlateToken(data []byte) string {
+	header := string(data)
+	if nl := bytes.IndexByte(data, '\n'); nl >= 0 {
+		header = string(data[:nl])
+	}
+	fields := strings.Fields(header)
+	if n := len(fields); n > 0 {
+		if t := fields[n-1]; t == PlateSmall || t == PlateSquare {
+			return t
+		}
+	}
+	return ""
+}
+
+// WithPlate returns the payload with its header naming the plate, so
+// an emitter that laid the drawing out for one plate can say so. A
+// token already present is replaced.
+func WithPlate(payload []byte, plate string) ([]byte, error) {
+	if plate != PlateSmall && plate != PlateSquare {
+		return nil, fmt.Errorf("curves: unknown plate %q", plate)
+	}
+	nl := bytes.IndexByte(payload, '\n')
+	if nl < 0 {
+		return nil, fmt.Errorf("curves: missing header")
+	}
+	if _, err := Mode(payload); err != nil {
+		return nil, err
+	}
+	header := string(payload[:nl])
+	fields := strings.Fields(header)
+	if n := len(fields); n > 0 && (fields[n-1] == PlateSmall || fields[n-1] == PlateSquare) {
+		fields = fields[:n-1]
+	}
+	fields = append(fields, plate)
+	out := []byte(strings.Join(fields, " "))
+	out = append(out, payload[nl:]...)
+	return out, nil
 }
 
 // maxCoord bounds a scaled coordinate, in machine units. It sits far
@@ -164,6 +218,9 @@ type Drawing struct {
 	// Bounds is the hull of the converted spline knots, in machine
 	// units.
 	Bounds bspline.Bounds
+	// Plate is the plate the payload names ("small" or "square"), or
+	// empty when the emitter left the choice to the device.
+	Plate string
 
 	// binary aliases the payload's body, so a Drawing retains only the
 	// wire bytes, not a materialized geometry; dict holds the byte
@@ -207,8 +264,16 @@ func Open(data []byte, params engrave.Params) (*Drawing, error) {
 		return nil, fmt.Errorf("curves: missing header")
 	}
 	header, body := string(data[:nl]), data[nl+1:]
-	// version path units-per-mm stroke-width
+	// version path units-per-mm stroke-width [plate]
 	fields := strings.Fields(header)
+	plate := ""
+	if len(fields) == 5 {
+		plate = fields[4]
+		if plate != PlateSmall && plate != PlateSquare {
+			return nil, fmt.Errorf("curves: unknown plate %q", plate)
+		}
+		fields = fields[:4]
+	}
 	if len(fields) != 4 || fields[1] != ModePath {
 		return nil, fmt.Errorf("curves: malformed path header %q", header)
 	}
@@ -226,6 +291,7 @@ func Open(data []byte, params engrave.Params) (*Drawing, error) {
 		return nil, fmt.Errorf("curves: stroke width %d units differs from the %d machine units engraved", w, params.StrokeWidth)
 	}
 	d := &Drawing{
+		Plate:     plate,
 		wireBytes: len(data),
 		scale:     scale,
 		prec:      max(1, params.StrokeWidth),
@@ -536,9 +602,13 @@ func (d *Drawing) Validate(params engrave.Params) (Report, error) {
 	}
 	mm := params.Millimeter
 	margin := bezier.Pt(SafetyMarginMM*mm, SafetyMarginMM*mm)
-	plate := bezier.Pt(PlateMM*mm, PlateMM*mm)
+	w, h := PlateMM, PlateMM
+	if d.Plate == PlateSmall {
+		h = SmallPlateHMM
+	}
+	plate := bezier.Pt(w*mm, h*mm)
 	if !r.Bounds.In(bspline.Bounds{Min: margin, Max: plate.Sub(margin)}) {
-		return r, fmt.Errorf("curves: the drawing runs outside the %dmm plate's %dmm margin", PlateMM, SafetyMarginMM)
+		return r, fmt.Errorf("curves: the drawing runs outside the %dx%dmm plate's %dmm margin", w, h, SafetyMarginMM)
 	}
 	if r.Seconds > MaxMinutes*60 {
 		return r, fmt.Errorf("curves: the engraving would run %d:%02d, over the %d minute cap", r.Seconds/60, r.Seconds%60, MaxMinutes)

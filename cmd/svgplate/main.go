@@ -39,17 +39,25 @@ func main() {
 		body    = flag.Float64("size", 4, "body text height in mm (rich text)")
 		side    = flag.Int("previewpx", 1024, "preview size in pixels")
 		noorder = flag.Bool("noorder", false, "skip travel-optimizing stroke ordering")
-		plate   = flag.String("plate", "square", "target plate: square (85x85) or small (85x55)")
+		plate   = flag.String("plate", "ask", "target plate: ask (the device chooses), square (85x85) or small (85x55)")
 	)
 	flag.Parse()
+	// ask fits the square box and leaves the payload unstamped, so the
+	// device measures and offers; naming a plate stamps the header and
+	// the device engraves it without asking.
 	var plateSize backup.PlateSize
+	token := ""
 	switch strings.ToLower(*plate) {
+	case "ask":
+		plateSize = backup.SquarePlate
 	case "square":
 		plateSize = backup.SquarePlate
+		token = curves.PlateSquare
 	case "small":
 		plateSize = backup.SmallPlate
+		token = curves.PlateSmall
 	default:
-		die(fmt.Errorf("bad -plate %q, want square or small", *plate))
+		die(fmt.Errorf("bad -plate %q, want ask, square or small", *plate))
 	}
 	pd := plateSize.Dims()
 	plateW, plateH := float64(pd.X), float64(pd.Y)
@@ -95,6 +103,13 @@ func main() {
 			die(perr)
 		}
 		payload, d, r, verr = finishDrawing(layoutOnPlate(raw, pl, plateW, plateH), !*noorder)
+	}
+	if verr == nil && token != "" {
+		if stamped, err := curves.WithPlate(payload, token); err != nil {
+			verr = err
+		} else {
+			payload = stamped
+		}
 	}
 	if verr == nil && plateSize == backup.SmallPlate && !r.Bounds.Empty() {
 		// The wire format carries no plate; a small-plate payload is

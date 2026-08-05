@@ -20,6 +20,11 @@ func TestCurvesGeometryNoDrift(t *testing.T) {
 	if got := plateDims(SmallPlate, mm).X; got != curves.PlateMM*mm {
 		t.Errorf("small plate width %d, curves.PlateMM implies %d", got, curves.PlateMM*mm)
 	}
+	// A payload can name the small plate, so the wire package carries
+	// its height too.
+	if got := plateDims(SmallPlate, mm).Y; got != curves.SmallPlateHMM*mm {
+		t.Errorf("small plate height %d, curves.SmallPlateHMM implies %d", got, curves.SmallPlateHMM*mm)
+	}
 	if safetyMargin != curves.SafetyMarginMM {
 		t.Errorf("safetyMargin %d, curves.SafetyMarginMM %d", safetyMargin, curves.SafetyMarginMM)
 	}

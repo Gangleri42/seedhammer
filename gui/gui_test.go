@@ -1107,7 +1107,7 @@ func TestTextNoticeGate(t *testing.T) {
 		ctx := NewContext(p)
 		completed := false
 		frame, quit := runUI(ctx, func() {
-			completed = textFlow(ctx, &descriptorTheme, plainText("wsh(corrupted"))
+			completed = textFlow(ctx, &descriptorTheme, plainText("wsh(corrupted"), "")
 		})
 		defer quit()
 

@@ -29,6 +29,7 @@ import (
 	"seedhammer.com/bip39"
 	"seedhammer.com/bspline"
 	"seedhammer.com/codex32"
+	"seedhammer.com/curves"
 	"seedhammer.com/engrave"
 	"seedhammer.com/font/constant"
 	"seedhammer.com/font/sh"
@@ -2373,7 +2374,7 @@ func engraveObjectFlow(ctx *Context, th *Colors, obj any) bool {
 	case *bip380.Descriptor:
 		descriptorFlow(ctx, th, scan)
 	case plainText:
-		textFlow(ctx, th, scan)
+		textFlow(ctx, th, scan, "")
 	case curvesPayload:
 		curvesFlow(ctx, th, scan)
 	case nip19.Key:
@@ -2634,7 +2635,7 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 	return true
 }
 
-func textFlow(ctx *Context, th *Colors, txt plainText) bool {
+func textFlow(ctx *Context, th *Colors, txt plainText, named string) bool {
 	// The plan walk fills the plate preview behind the progress label,
 	// then the engrave screen holds that preview — the composed lines
 	// at the fitted size, wraps and all — with its dimensions and
@@ -2642,10 +2643,18 @@ func textFlow(ctx *Context, th *Colors, txt plainText) bool {
 	// display-width rendering of the text. Completing the engrave
 	// reports true; a refused plate, a cancelled plan or a backed-out
 	// engrave screen reports false so a typed text can return to its
-	// editor.
+	// editor. A payload that names its plate skips the question: the
+	// emitter already chose.
 	params := ctx.Platform.EngraverParams()
-	_, _, smallErr := fitText(params, SmallPlate, string(txt))
-	plateSize, ok := askPlateSize(ctx, th, smallErr == nil)
+	plateSize, ok := SquarePlate, true
+	switch named {
+	case curves.PlateSmall:
+		plateSize = SmallPlate
+	case curves.PlateSquare:
+	default:
+		_, _, smallErr := fitText(params, SmallPlate, string(txt))
+		plateSize, ok = askPlateSize(ctx, th, smallErr == nil)
+	}
 	if !ok {
 		return false
 	}
@@ -2864,7 +2873,7 @@ func newInputFlow(ctx *Context, th *Colors) (any, bool) {
 						// Nothing visible to engrave; keep editing.
 						continue
 					}
-					if textFlow(ctx, th, t) {
+					if textFlow(ctx, th, t, "") {
 						return nil, false
 					}
 				}

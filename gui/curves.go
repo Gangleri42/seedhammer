@@ -43,7 +43,7 @@ func curvesFlow(ctx *Context, th *Colors, payload curvesPayload) {
 			showError(ctx, th, errCurvesText, blankScreen)
 			return
 		}
-		textFlow(ctx, th, t)
+		textFlow(ctx, th, t, curves.PlateToken(payload))
 	case curves.ModePath:
 		curvesPathFlow(ctx, th, payload)
 	}
@@ -55,20 +55,35 @@ func blankScreen(ctx *Context, th *Colors, dims image.Point) op.Op {
 
 func curvesPathFlow(ctx *Context, th *Colors, payload curvesPayload) {
 	params := ctx.Platform.EngraverParams()
-	// A drawing whose own coordinates stay inside the small plate's
-	// frame can be cut on either; the payload carries no plate, so the
-	// operator's answer decides which frame the coordinates mean. A
-	// bad payload falls through to the scan, whose error screen it is.
-	fitsSmall := false
-	if d, err := curves.Open(payload, params); err == nil {
-		m := bezier.Pt(safetyMargin*params.Millimeter, safetyMargin*params.Millimeter)
-		fitsSmall = d.Bounds.In(bspline.Bounds{Min: m, Max: plateDims(SmallPlate, params.Millimeter).Sub(m)})
-	}
-	plateSize, ok := askPlateSize(ctx, th, fitsSmall)
-	if !ok {
-		return
-	}
 	cs := &CurvesScreen{title: "Engrave Curves"}
+	var plateSize PlateSize
+	switch curves.PlateToken(payload) {
+	case curves.PlateSmall:
+		// The emitter laid the drawing out for the small plate: no
+		// question; the scan validates against that frame.
+		plateSize = SmallPlate
+	case curves.PlateSquare:
+		plateSize = SquarePlate
+	default:
+		// No named plate: measure the drawing (Open leaves the stats
+		// zero until a walk, so this runs the geometry walk behind
+		// the progress screen) and offer every plate it fits. A bad
+		// payload falls through to the scan, whose error screen it is.
+		fitsSmall := false
+		if d, err := runJob(ctx, th, func(pump func(done, total int) bool) (*curves.Drawing, error) {
+			return curves.Parse(payload, params)
+		}, planFrame(ctx, th, cs.Draw)); err == nil {
+			m := bezier.Pt(safetyMargin*params.Millimeter, safetyMargin*params.Millimeter)
+			fitsSmall = d.Bounds.In(bspline.Bounds{Min: m, Max: plateDims(SmallPlate, params.Millimeter).Sub(m)})
+		} else if errors.Is(err, errPlanCanceled) {
+			return
+		}
+		var ok bool
+		plateSize, ok = askPlateSize(ctx, th, fitsSmall)
+		if !ok {
+			return
+		}
+	}
 	plate, err := scanCurves(ctx, th, cs, payload, params, plateSize)
 	if err != nil {
 		if errors.Is(err, errPlanCanceled) {

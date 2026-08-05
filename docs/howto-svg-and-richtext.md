@@ -74,10 +74,10 @@ underline stands in for strong emphasis. Body size defaults to 4 mm.
 ## What fits
 
 The square plate is 85 x 85 mm and the small plate 85 x 55 mm, both with a
-3 mm margin. The converter targets the square plate by default; pass
-`-plate small` to fit and validate against the small one instead. The payload
-itself carries no plate: a drawing whose coordinates stay inside the small
-frame makes the device offer both plates, and the operator picks one.
+3 mm margin. By default (`-plate ask`) the converter fits the square box and
+the device measures the drawing, offering every plate it fits. Pass
+`-plate small` or `-plate square` to lay out for that plate and stamp it into
+the payload header: the device then engraves that plate without asking.
 Payloads cap just under 32 KB
 (the NDEF file limit). Filled shapes engrave as outline contours; there is
 no hatch fill. Repeated shapes cost fewer payload bytes: rich text and

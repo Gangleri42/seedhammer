@@ -567,6 +567,12 @@ func TestHowtoPlateMatchesTheCode(t *testing.T) {
 	if !strings.Contains(string(doc), want) {
 		t.Errorf("%s does not show the plate this code produces:\n--- want ---\n%s\n--- end ---", howto, want)
 	}
+	// The prose beside the sample claims a named wallet's TITLE line
+	// sits between WALLET and PATH; hold the code to the claim.
+	titled := passphrasePlate("hunter2", "CA2C62D2", "m/84h/0h/0h", "vault 1")
+	if !strings.Contains(titled, "WALLET CA2C62D2\nTITLE VAULT 1\nPATH") {
+		t.Errorf("the titled plate does not put TITLE between WALLET and PATH:\n%s", titled)
+	}
 }
 
 // The layer key opens every bottom row, next to the back button.

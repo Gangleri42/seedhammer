@@ -275,6 +275,16 @@ $ tinygo monitor
 
 to show the log on your terminal.
 
+The manuals' screenshots are the firmware's own rendering, generated from
+the demo seeds at the device's display size. After changing a screen,
+regenerate them with
+
+```
+$ go test ./gui -run TestUIShots -uishots docs/images
+```
+
+and commit the images that changed.
+
 ### License
 
 The files in this repository are in the public domain as described in the

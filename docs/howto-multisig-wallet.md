@@ -36,15 +36,29 @@ multisig is deliberately absent until coordinators settle on one.
 
 ## On the machine
 
+Every screen below is the firmware's own rendering at the device's
+resolution, regenerated from the demo seeds whenever the interface
+changes.
+
 1. From the start screen press the checkmark, then choose **MULTISIG
    WALLET** under *Choose what to enter*.
+
+   ![The input menu with MULTISIG WALLET selected](images/msw-01-input-menu.png)
+
 2. **Name the wallet.** The title engraves on every plate of the set — up
    to 18 characters, uppercased on steel — and is how a drawer of plates
    sorts into wallets years later. This one is not optional: an unnamed
    set is the thing that gets mixed up.
+
+   ![The wallet title editor](images/msw-02-title.png)
+
 3. **Pick the quorum.** How many keys share the wallet, then how many must
    sign to spend. The lists open on 3 and on 2: change them if your setup
    differs.
+
+   ![Choosing the number of cosigners](images/msw-03-cosigners.png)
+   ![Choosing the threshold](images/msw-04-threshold.png)
+
 4. **Add each cosigner**, one at a time:
    - **ENTER WORDS** types a drawn seed on the keyboard, 12 or 24 words,
      with the machine offering its checksum word on the last position
@@ -54,24 +68,40 @@ multisig is deliberately absent until coordinators settle on one.
      this machine; that cosigner keeps their own backup, and gets no seed
      plate here.
 
+   ![The three cosigner sources](images/msw-05-source.png)
+   ![Waiting for a tapped seed](images/msw-06-tap-seed.png)
+
    Every seed passes the same review screen and checksum gate as a single
    seed: read the words back against your tiles before confirming. Then
    the passphrase question, per seed, behind a warning worth taking
    seriously (below). The machine shows each cosigner's fingerprint before
    it counts, and it refuses a key whose master fingerprint is already in
    the wallet — that is the same seed twice, not a coincidence.
+
+   ![Reviewing a tapped seed's words](images/msw-07-seed-review.png)
+   ![The cosigner's fingerprint before it counts](images/msw-09-cosigner-confirm.png)
+
 5. **Review and hold.** The title, the quorum and every fingerprint on one
    screen. Hold the button and the wallet exists.
+
+   ![The held review before the wallet exists](images/msw-10-review.png)
+
 6. **Scan the export.** The descriptor plays as an animated code. In
    Sparrow: New Wallet, import by camera, hold the phone or webcam to the
    screen until the progress bar completes. One code stands still when the
    descriptor is small enough; larger wallets cycle a few parts and the
    scanner assembles them in any order.
+
+   ![The animated wallet export](images/msw-11-export.png)
+
 7. **Compare the first address.** The machine derives the wallet's first
    receive address and shows it; the coordinator, fed only the QR, must
    show exactly the same one. Read it group by group — the spaces on
    screen are not part of the address. If they differ, stop: something
    went in wrong, and it cost you minutes instead of steel.
+
+   ![The first-address cross-check](images/msw-12-first-address.png)
+
 8. **Cut the plates.** Each entrusted seed offers its seed plate (titled,
    with the cosigner's fingerprint on the gate) and, if set, its
    passphrase plate. Then the descriptor runs the ordinary machinery: ONE
@@ -79,7 +109,17 @@ multisig is deliberately absent until coordinators settle on one.
    [the split how-to](howto-multisig-plates.md) describes, shares paired
    to cosigners by fingerprint.
 
+   ![A cosigner's seed plate gate](images/msw-13-seed-plate-gate.png)
+   ![One plate or the cosigner split](images/msw-15-split-choice.png)
+
+   The single descriptor plate as engraved, title above the descriptor,
+   rendered from the same planned strokes the machine cuts:
+
+   ![The titled descriptor plate as engraved](images/plate-descriptor.png)
+
 ## Passphrases multiply
+
+![The warning between the passphrase choice and the editor](images/msw-08-passphrase-warning.png)
 
 The machine asks the passphrase question for every seed it holds, behind
 a warning the single-seed flow does not need. A passphrase changes that

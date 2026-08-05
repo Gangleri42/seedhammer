@@ -103,10 +103,18 @@ against the screen, then destroy the paper.
 3. On the final word, with nothing typed, the screen offers a random last word.
    Take the middle button. Typing a word instead hides the offer; clearing the
    box brings it back.
+
+   ![The last-word offer on an empty final word](images/seed-01-lastword-offer.png)
+
 4. An explanation appears before anything is drawn. The bottom button goes
    ahead, the top button backs out.
+
+   ![The gate before the draw](images/seed-02-lastword-gate.png)
+
 5. The machine draws a word and shows it. The bottom button accepts, the top
    button backs out, and the middle button draws a different one.
+
+   ![A drawn last word](images/seed-03-lastword-draw.png)
 
    **Take the first word.** The middle button is there for a genuine misdraw,
    not for shopping. Rejecting words until one looks right is the same mistake
@@ -126,6 +134,8 @@ Two plate formats exist: the square 85 x 85 mm plate and the small 85 x 55 mm
 one. Whenever a plate fits the small format — a 12-word seed does, a 24-word
 seed does not — the machine asks which to cut, small first. Content that only
 fits the square plate never sees the question.
+
+![The plate size question](images/seed-05-plate-size.png)
 
 ## Add a passphrase, or don't
 
@@ -168,6 +178,18 @@ it and the plates look exactly as they always have; name it and a drawer of
 plates sorts into wallets by eye years later. Like the passphrase, the title
 is asked once and carried through every retry, so backing out of a plate
 never means retyping it.
+
+![The title question](images/seed-04-title-ask.png)
+
+On a titled small plate the name reads up the right edge, mirroring the
+fingerprint on the left:
+
+![A titled 12-word plate on the engrave screen](images/seed-06-titled-plate.png)
+
+The finished plate, rendered from the same planned strokes the machine
+cuts:
+
+![The titled small seed plate as engraved](images/plate-seed-small-titled.png)
 
 ## Set up the watch-only wallet
 
@@ -217,6 +239,11 @@ hunter2
 WALLET CA2C62D2
 PATH m/84h/0h/0h
 ```
+
+A named wallet adds a TITLE line between WALLET and PATH; an untitled
+set's plate reads exactly as above. The titled plate as engraved:
+
+![A titled passphrase plate as engraved](images/plate-passphrase.png)
 
 The passphrase sits alone between blank lines, so where it begins and ends is
 never in question. Above it is the **character count**, the only

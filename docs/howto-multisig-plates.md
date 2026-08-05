@@ -59,16 +59,26 @@ Fragments are cleartext slices (one 2-of-3 plate shows half the descriptor's
 bytes): the split is loss protection, not secrecy, and the privacy note
 above applies to every share plate equally.
 
+A share plate as engraved — the pairing header, the UR text wrapped
+around its code:
+
+![Cosigner 1's share plate of a 2-of-3](images/plate-share-1of3.png)
+
 ## On the machine
 
 1. **Scan.** Hold the tag or phone against the reader while the start screen
    shows. The descriptor screen lists the wallet title, quorum, and script
    type; check them against your setup and press the checkmark.
+
+   ![The descriptor screen before the split choice](images/msw-14-descriptor.png)
+
 2. **Choose the split.** A multisig offers ONE PLATE (the single descriptor
    plate, exactly as before) and SPLIT: N PLATES. The lead line states the
    recovery rule, e.g. "Any 2 of 3 plates recover". Quorums without a scheme
    offer N FULL COPIES instead; pick the plate variant (TEXT + QR / TEXT
    ONLY / QR ONLY) as usual and the set engraves that plate N times.
+
+   ![One plate or the split](images/msw-15-split-choice.png)
    On the ONE PLATE path the machine also asks for the plate size when the
    descriptor fits the small 85 x 55 mm format; the variant list is then the
    small plate's own, so TEXT + QR may drop away. Splits and full copies

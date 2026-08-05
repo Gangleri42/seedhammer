@@ -640,6 +640,11 @@ type testPlatform struct {
 	wakeups  chan struct{}
 	engraver *testEngraver
 	nfc      *testNFC
+	// dims and params override the harness defaults; the screenshot
+	// generator renders at the device's real display size and
+	// engraver profile.
+	dims   image.Point
+	params engrave.Params
 }
 
 const (
@@ -668,7 +673,10 @@ var (
 	}
 )
 
-func (*testPlatform) DisplaySize() image.Point {
+func (p *testPlatform) DisplaySize() image.Point {
+	if p.dims != (image.Point{}) {
+		return p.dims
+	}
 	return image.Pt(testDisplayDim, testDisplayDim)
 }
 
@@ -707,6 +715,9 @@ func (p *testPlatform) LockBoot() error {
 }
 
 func (p *testPlatform) EngraverParams() engrave.Params {
+	if p.params.Millimeter != 0 {
+		return p.params
+	}
 	return engraverParams
 }
 

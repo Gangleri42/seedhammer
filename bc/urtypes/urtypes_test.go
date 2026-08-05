@@ -323,3 +323,53 @@ func TestIncompleteCryptoAccount(t *testing.T) {
 		t.Fatalf("invalid crypto-account %s parsed succesfully", enc)
 	}
 }
+
+// TestRangeChildrenRoundTrip covers the <0;1>/* children the wallet
+// builder puts in every key. The encoder used to flatten the range
+// into (index, end, hardened), an odd component list the decoder —
+// and the [BCR-2020-007] pair shape — reject.
+func TestRangeChildrenRoundTrip(t *testing.T) {
+	desc := &bip380.Descriptor{
+		Script:    bip380.P2WSH,
+		Threshold: 2,
+		Type:      bip380.SortedMulti,
+		Keys: []bip380.Key{
+			{
+				Network:           &chaincfg.MainNetParams,
+				MasterFingerprint: 0xdd4fadee,
+				DerivationPath:    bip32.Path{hdkeychain.HardenedKeyStart + 48, hdkeychain.HardenedKeyStart, hdkeychain.HardenedKeyStart, hdkeychain.HardenedKeyStart + 2},
+				Children: []bip380.Derivation{
+					{Type: bip380.RangeDerivation, Index: 0, End: 1},
+					{Type: bip380.WildcardDerivation},
+				},
+				KeyData:           []byte{0x2, 0x21, 0x96, 0xad, 0xc2, 0x5f, 0xde, 0x16, 0x9f, 0xe9, 0x2e, 0x70, 0x76, 0x90, 0x59, 0x10, 0x22, 0x75, 0xd2, 0xb4, 0xc, 0xc9, 0x87, 0x76, 0xea, 0xab, 0x92, 0xb8, 0x2a, 0x86, 0x13, 0x5e, 0x92},
+				ChainCode:         []byte{0x43, 0x8e, 0xff, 0x7b, 0x3b, 0x36, 0xb6, 0xd1, 0x1a, 0x60, 0xa2, 0x2c, 0xcb, 0x93, 0x6, 0xee, 0xa3, 0x5, 0xb0, 0x43, 0x9f, 0x1e, 0xa0, 0x9d, 0x59, 0x28, 0x1, 0x5d, 0xe3, 0x73, 0x81, 0x16},
+				ParentFingerprint: 0x22969377,
+			},
+			{
+				Network:           &chaincfg.MainNetParams,
+				MasterFingerprint: 0x9bacd5c0,
+				DerivationPath:    bip32.Path{hdkeychain.HardenedKeyStart + 48, hdkeychain.HardenedKeyStart, hdkeychain.HardenedKeyStart, hdkeychain.HardenedKeyStart + 2},
+				Children: []bip380.Derivation{
+					{Type: bip380.RangeDerivation, Index: 0, End: 1},
+					{Type: bip380.WildcardDerivation},
+				},
+				KeyData:           []byte{0x2, 0xfb, 0x72, 0x50, 0x7f, 0xc2, 0xd, 0xdb, 0xa9, 0x29, 0x91, 0xb1, 0x7c, 0x4b, 0xb4, 0x66, 0x13, 0xa, 0xd9, 0x3a, 0x88, 0x6e, 0x73, 0x17, 0x50, 0x33, 0xbb, 0x43, 0xe3, 0xbc, 0x78, 0x5a, 0x6d},
+				ChainCode:         []byte{0x95, 0xb3, 0x49, 0x13, 0x93, 0x7f, 0xa5, 0xf1, 0xc6, 0x20, 0x5b, 0x52, 0x5b, 0xb5, 0x7d, 0xe1, 0x51, 0x76, 0x25, 0xe0, 0x45, 0x86, 0xb5, 0x95, 0xbe, 0x68, 0xe7, 0x13, 0x62, 0xd3, 0xed, 0xc5},
+				ParentFingerprint: 0x97ec38f9,
+			},
+		},
+	}
+	enc := EncodeDescriptor(desc)
+	parsed, err := Parse("crypto-output", enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := parsed.(*bip380.Descriptor)
+	if !ok {
+		t.Fatalf("parsed to %T", parsed)
+	}
+	if !reflect.DeepEqual(got, desc) {
+		t.Errorf("descriptor:\n%+v\nroundtripped to\n%+v\n", desc, got)
+	}
+}

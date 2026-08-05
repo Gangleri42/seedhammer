@@ -90,7 +90,14 @@ func hdkeyFor(k bip380.Key) hdKey {
 		case bip380.ChildDerivation:
 			children = append(children, c.Index, c.Hardened)
 		case bip380.RangeDerivation:
-			children = append(children, c.Index, c.End, c.Hardened)
+			// A child-index-range is one component, the two-element
+			// array of [BCR-2020-007], then its is-hardened — the pair
+			// shape parseKeypath reads back. The flat
+			// (index, end, hardened) triple this used to emit made the
+			// component list odd and every ranged-children key
+			// undecodable; nothing hit it because no encoded key
+			// carried children until the wallet builder.
+			children = append(children, []any{c.Index, c.End}, c.Hardened)
 		case bip380.WildcardDerivation:
 			children = append(children, []any{}, c.Hardened)
 		}

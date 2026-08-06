@@ -24,10 +24,10 @@ multisig is deliberately absent until coordinators settle on one.
   or coins. **Read [the seed how-to](howto-generate-a-seed.md) first**; its
   drawing rules are the whole security of every seed, and nothing in this
   flow repairs a bad draw.
-- For cosigners arriving over NFC: the seed words as a text record, or the
-  cosigner's account key as a key expression
-  (`[fingerprint/48h/0h/0h/2h]xpub.../<0;1>/*`), the form signers export
-  for multisig with the key origin included.
+- For cosigners arriving over NFC: the seed words as a text record, or
+  the cosigner's account key, ideally as the single-sig descriptor
+  their signer exports for the seed (a key expression with origin,
+  `[fingerprint/path]xpub.../<0;1>/*`, is also accepted).
 - A coordinator with a camera for the watch-only wallet. The steps below
   say Sparrow; any wallet that scans animated `ur:crypto-output` behaves
   the same.
@@ -69,16 +69,19 @@ changes.
      exactly as the single-seed flow does.
    - **Tap a seed**: hold the tag to the reader, no menu first. The
      words land on the same review screen typing ends on.
-   - **Tap an account key**: how a hardware-wallet cosigner joins. On a
-     Coldcard, export the multisig xpub over NFC and hold it to the
-     reader. A single-sig descriptor also works: the 1-of-1 a signer
-     produces when it exports a seed's wallet descriptor, as a
-     Coldcard does. The machine takes its one key, at whatever path
-     the export named. The export must carry the key origin (the
-     fingerprint and derivation path in front of the xpub); the
-     machine refuses a bare xpub and says why. No seed material
-     touches this machine; that cosigner keeps their own backup, and
-     gets no seed plate here.
+   - **Tap an account key**: how a hardware-wallet cosigner joins. The
+     form to standardize on is the single-sig descriptor, the 1-of-1 a
+     signer produces when it exports a seed's wallet descriptor: it is
+     checksummed, it carries the key origin and the receive and change
+     branches, and it is exactly what this machine itself shows and
+     engraves for a single-sig wallet. A Coldcard exports one for a
+     seed; so does the descriptor screen here. The machine takes its
+     one key, at whatever path the export named. A bare key expression
+     (`[fingerprint/path]xpub…`, a Coldcard's multisig xpub export)
+     works too, as long as the origin rides in front of the xpub; a
+     naked xpub without it is refused, and the screen says why. No
+     seed material touches this machine; that cosigner keeps their own
+     backup, and gets no seed plate here.
 
    A tap of anything else (a text plate, a multisig descriptor) shows
    "Not a seed or cosigner key" on the page and keeps listening. A

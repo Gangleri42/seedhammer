@@ -222,6 +222,11 @@ The bottom button takes you on to engraving the descriptor as a plate of its
 own, which is worth doing for a wallet you intend to keep. Restoring from a seed
 is easier when you also know which address type it was set up with.
 
+This descriptor is also the standard form for joining a multisig as an
+xpub-only cosigner: delivered to another machine as a text record, the
+[wallet builder](howto-multisig-wallet.md) takes its key without the
+seed ever moving.
+
 **A descriptor is a privacy secret.** It cannot move funds. It does reveal every
 address the wallet will ever use, so anyone holding it can see your whole
 balance and transaction history forever. Guard it as private information, and

@@ -1,4 +1,6 @@
-# SeedHammer II Firmware (fork)
+# SeedHammer EDITION: Swiss Army Knife
+
+The SeedHammer II firmware fork that opens the machine up.
 
 This is a fork of [seedhammer/seedhammer](https://github.com/seedhammer/seedhammer),
 the controller program for the [SeedHammer II](https://seedhammer.com) engraving

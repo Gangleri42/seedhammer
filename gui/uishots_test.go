@@ -17,10 +17,13 @@ import (
 	"seedhammer.com/backup"
 	"seedhammer.com/bip380"
 	"seedhammer.com/bip39"
+	"seedhammer.com/curves"
 	"seedhammer.com/engrave"
+	"seedhammer.com/font/constant"
 	"seedhammer.com/font/sh"
 	"seedhammer.com/gui/op"
 	"seedhammer.com/image/rgb565"
+	"seedhammer.com/nip19"
 )
 
 // The manual's screenshots render here: the real widget code at the
@@ -163,6 +166,9 @@ func TestUIShots(t *testing.T) {
 	t.Run("multisig", func(t *testing.T) { shootMultisig(t, *uishotsDir) })
 	t.Run("xpub", func(t *testing.T) { shootXpub(t, *uishotsDir) })
 	t.Run("seed", func(t *testing.T) { shootSeed(t, *uishotsDir) })
+	t.Run("text", func(t *testing.T) { shootText(t, *uishotsDir) })
+	t.Run("nostr", func(t *testing.T) { shootNostr(t, *uishotsDir) })
+	t.Run("curves", func(t *testing.T) { shootCurves(t, *uishotsDir) })
 	t.Run("plates", func(t *testing.T) { shootPlates(t, *uishotsDir) })
 }
 
@@ -414,6 +420,110 @@ func shootSeed(t *testing.T, dir string) {
 	}
 }
 
+// shootCurves captures the payload path of the SVG how-to: the demo
+// drawing and the rich-text note, tapped as the checked-in payloads
+// under testdata (the doctor keeps them derived from their sources)
+// and held on the engrave screen. Both drawings only fit the square
+// plate, so no size question appears.
+func shootCurves(t *testing.T, dir string) {
+	for _, c := range []struct {
+		payload string
+		shot    string
+	}{
+		{"testdata/hammer.curves", "svg-01-drawing-preview"},
+		{"testdata/note.curves", "svg-02-richtext-preview"},
+	} {
+		payload, err := os.ReadFile(c.payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := newShotUI(t, dir, shotPlatform(nil), func(ctx *Context) {
+			curvesFlow(ctx, &descriptorTheme, curvesPayload(payload))
+		})
+		s.await("mm")
+		s.capture(c.shot)
+		click(&s.ctx.Router, Button1) // back out without cutting
+		s.drain()
+		s.quit()
+	}
+}
+
+// shotText is the free-text how-to's plate: sign text, so the figure
+// reads as a thing someone would actually cut.
+const shotText = "IN CASE OF FIRE\nBREAK GLASS"
+
+// shootText captures the on-device free-text path: the keyboard
+// editor with the composition typed, the engrave screen's plate
+// preview, and the same screen with its content hidden by the middle
+// button.
+func shootText(t *testing.T, dir string) {
+	s := newShotUI(t, dir, shotPlatform(nil), func(ctx *Context) {
+		newInputFlow(ctx, &descriptorTheme)
+	})
+	defer s.quit()
+
+	s.await("Choose what to enter")
+	click(&s.ctx.Router, Down, Down) // ENGRAVE TEXT
+	s.pump(2)
+	click(&s.ctx.Router, Button3)
+
+	s.await("Engrave Text")
+	runes(&s.ctx.Router, string(layerKey)) // the upper-case layer
+	runes(&s.ctx.Router, shotText)
+	s.pump(2)
+	s.capture("text-01-editor")
+	click(&s.ctx.Router, Button2)
+
+	s.await("Plate Size")
+	click(&s.ctx.Router, Down) // SQUARE PLATE
+	s.pump(2)
+	click(&s.ctx.Router, Button3)
+
+	s.await("mm") // the engrave screen's dims line
+	s.capture("text-02-preview")
+	click(&s.ctx.Router, Button2) // hide the content
+	s.pump(2)
+	s.capture("text-03-hidden")
+	click(&s.ctx.Router, Button2) // and show it again
+	s.pump(2)
+	click(&s.ctx.Router, Button1) // back to the editor, text intact
+	s.await("Engrave Text")
+	click(&s.ctx.Router, Button1)
+	s.await("Choose what to enter")
+	click(&s.ctx.Router, Button1)
+	s.drain()
+}
+
+// shotNsec is the manual's Nostr key: secret scalar 1, the most
+// plainly synthetic key there is, in the spirit of the pizza seed.
+func shotNsec() nip19.Key {
+	k := nip19.Key{HRP: nip19.HRPSec}
+	k.Data[nip19.KeyLen-1] = 1
+	return k
+}
+
+// shootNostr captures the key flow: the confirmation screen showing
+// the secret with its derived public key, and the NSEC plate's
+// preview on the engrave screen.
+func shootNostr(t *testing.T, dir string) {
+	key := shotNsec()
+	s := newShotUI(t, dir, shotPlatform(nil), func(ctx *Context) {
+		nostrFlow(ctx, &descriptorTheme, key)
+	})
+	defer s.quit()
+
+	s.await("Secret (nsec)")
+	s.capture("nostr-01-confirm")
+	click(&s.ctx.Router, Button3)
+
+	s.await("Plate Size")
+	click(&s.ctx.Router, Button3) // SMALL PLATE
+	s.await("mm")
+	s.capture("nostr-02-nsec-preview")
+	click(&s.ctx.Router, Button1) // back out without cutting
+	s.drain()
+}
+
 // writePNG saves img under dir as name.png.
 func writePNG(t *testing.T, dir, name string, img image.Image) {
 	t.Helper()
@@ -579,4 +689,62 @@ func shootPlates(t *testing.T, dir string) {
 		Font:       sh.Font,
 		FontSize:   sizes[0],
 	}), params, SmallPlate)
+
+	// The free-text how-to's plate, at the size the flow would fit.
+	textSizes, _, err := fitText(params, SquarePlate, shotText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderPlate(t, dir, "plate-text", backup.EngraveText(params, backup.Text{
+		Size:       SquarePlate,
+		Paragraphs: []backup.Paragraph{{Text: shotText}},
+		Font:       sh.Font,
+		FontSize:   textSizes[0],
+	}), params, SquarePlate)
+
+	// The key pair of the Nostr how-to: the scalar-1 nsec and its npub,
+	// on the small plate both fit.
+	nsecKey := shotNsec()
+	nsecPlan, err := backup.EngraveNsec(params, backup.Nsec{
+		Size:  SmallPlate,
+		Title: "NSEC",
+		Key:   nsecKey,
+		Font:  constant.Font,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderPlate(t, dir, "plate-nsec", nsecPlan, params, SmallPlate)
+
+	npubKey, err := nip19.NpubFrom(nsecKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	npubPlan, err := backup.EngraveNpub(params, backup.Npub{
+		Size:  SmallPlate,
+		Title: "NPUB",
+		Key:   npubKey,
+		Font:  constant.Font,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderPlate(t, dir, "plate-npub", npubPlan, params, SmallPlate)
+
+	// The SVG how-to's payloads as engraved, re-planned from the same
+	// checked-in bytes the shots tap.
+	for _, c := range []struct{ payload, name string }{
+		{"testdata/hammer.curves", "plate-svg-drawing"},
+		{"testdata/note.curves", "plate-richtext"},
+	} {
+		payload, err := os.ReadFile(c.payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := curves.Parse(payload, params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		renderPlate(t, dir, c.name, d.Engraving(), params, SquarePlate)
+	}
 }

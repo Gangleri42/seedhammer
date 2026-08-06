@@ -23,10 +23,26 @@ engraves the NSEC plate, then offers a second engraving for the derived NPUB,
 so one tap yields the pair. Decline the second plate if you only want the
 secret on metal.
 
+![The confirmation screen showing an nsec with its derived npub](images/nostr-01-confirm.png)
+
+The figures here use the secret key 1, all `q`s in bech32: a key that is
+synthetic on sight, in the spirit of the demo seeds elsewhere in these
+manuals.
+
 Key plates render in the same fixed-width font as seed plates. They fit the
 small 85 x 55 mm plate (held in the clamp by the printable
 [jaw](../hardware/small-plate-jaw/)), so the machine asks which plate to cut before each
-engraving.
+engraving. The engrave screen holds the planned plate, key text beside its
+QR code, until you hold the button:
+
+![The NSEC plate preview on the engrave screen](images/nostr-02-nsec-preview.png)
+
+The pair as engraved, rendered from the same planned strokes the machine
+cuts:
+
+![The NSEC plate as engraved](images/plate-nsec.png)
+
+![The NPUB plate as engraved](images/plate-npub.png)
 
 ## Handle with care
 

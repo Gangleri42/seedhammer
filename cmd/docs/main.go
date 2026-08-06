@@ -37,6 +37,13 @@ func main() {
 	}
 
 	var findings []string
+	stale, err := payloads(root, *fix)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "docs:", err)
+		os.Exit(2)
+	}
+	findings = append(findings, stale...)
+
 	fresh, err := freshness(root, *fix)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "docs:", err)
@@ -89,6 +96,60 @@ func proseFiles(root string) ([]string, error) {
 	files = append(files, filepath.Join(root, "README.md"))
 	slices.Sort(files)
 	return files, nil
+}
+
+// payloadFixtures are the checked-in curves payloads the shot test
+// taps, each derived from the source next to it by cmd/svgplate.
+// Byte-determinism is verified by double conversion; CI's
+// architecture is the arbiter should a platform ever disagree.
+var payloadFixtures = []struct {
+	src, out string
+	args     []string
+}{
+	{"gui/testdata/hammer.svg", "gui/testdata/hammer.curves", nil},
+	{"gui/testdata/note.md", "gui/testdata/note.curves", []string{"-text"}},
+}
+
+// payloads reconverts every payload fixture into a scratch directory
+// and compares it to the checked-in bytes. The payloads must be fresh
+// before freshness runs: the screenshots are taken from them.
+func payloads(root string, fix bool) ([]string, error) {
+	tmp, err := os.MkdirTemp("", "curvespayloads")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmp)
+
+	var findings []string
+	for _, p := range payloadFixtures {
+		out := filepath.Join(tmp, filepath.Base(p.out))
+		args := append([]string{"run", "./cmd/svgplate"}, p.args...)
+		args = append(args, "-o", out, p.src)
+		cmd := exec.Command("go", args...)
+		cmd.Dir = root
+		if outb, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("converting %s: %v\n%s", p.src, err, outb)
+		}
+		want, err := os.ReadFile(out)
+		if err != nil {
+			return nil, err
+		}
+		got, err := os.ReadFile(filepath.Join(root, p.out))
+		switch {
+		case os.IsNotExist(err) || (err == nil && !slices.Equal(want, got)):
+			if fix {
+				if err := os.WriteFile(filepath.Join(root, p.out), want, 0o644); err != nil {
+					return nil, err
+				}
+				fmt.Fprintf(os.Stderr, "docs: rewrote %s\n", p.out)
+				continue
+			}
+			findings = append(findings, fmt.Sprintf("%s: stale against %s (run go run ./cmd/docs -fix)", p.out, p.src))
+		case err != nil:
+			return nil, err
+		}
+	}
+	return findings, nil
 }
 
 // freshness regenerates the screenshot set into a scratch directory

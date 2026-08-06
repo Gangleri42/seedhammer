@@ -61,6 +61,8 @@ symbol, cycle back to a letter layer for it). OK plans the plate. Backing out
 of the confirm, or a plate that refuses an overlong text, returns to the
 editor with the text intact.
 
+![The text editor with a two-line composition typed](images/text-01-editor.png)
+
 **Phone.** In NFC Tools: Write, Add a record, Text, write or paste your text,
 then press Write and hold the phone against the machine's reader. The machine
 scans whenever it shows the start screen.
@@ -94,11 +96,15 @@ take. What you approve is the plate itself, not a display-width rendering of
 the text. Hold the button to start; the same preview stays up with the
 duration counting down.
 
+![The engrave screen holding the plate preview](images/text-02-preview.png)
+
 The middle button hides the plate's content: the outline and the figures
 stay, everything engraved goes. It is meant for a plate you are leaving to
 run (a quarter hour is a long time for a screen full of your words to sit in
 an empty room), and it holds through the engraving. Press it again to read
 the plate.
+
+![The same screen with the content hidden](images/text-03-hidden.png)
 
 If the text looks like a damaged backup (a descriptor fragment, a codex32
 string, a seed phrase with a bad word), a warning page appears when you
@@ -106,3 +112,7 @@ complete the hold, before anything starts; backing out returns to the plate.
 Intact backups never land here; the structured parsers catch them first. The
 warning is a nudge to re-check the source, not a block: confirm and it
 engraves as plain text.
+
+The finished plate, rendered from the same planned strokes the machine cuts:
+
+![The free-text plate as engraved](images/plate-text.png)

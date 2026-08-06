@@ -131,8 +131,8 @@ skipped, so a seed already on metal can be entered just to produce a descriptor
 plate, and a descriptor can be cut again years later without touching the seed.
 
 Two plate formats exist: the square 85 x 85 mm plate and the small 85 x 55 mm
-one. Whenever a plate fits the small format — a 12-word seed does, a 24-word
-seed does not — the machine asks which to cut, small first. Content that only
+one. Whenever a plate fits the small format (a 12-word seed does, a 24-word
+seed does not) the machine asks which to cut, small first. Content that only
 fits the square plate never sees the question. The small plate sits in the
 machine's clamp on a printable adapter jaw:
 [hardware/small-plate-jaw](../hardware/small-plate-jaw/).
@@ -173,7 +173,7 @@ with, passphrase included. That is what makes the plates identifiable as a set.
 ## Name the wallet, or don't
 
 After the passphrase question the machine offers a wallet title: up to 18
-characters, engraved on every plate of the set — the seed plate in the spot
+characters, engraved on every plate of the set: the seed plate in the spot
 the layout has always reserved for it, the descriptor plate above the
 descriptor, the passphrase plate on a TITLE line. Steel uppercases it. Skip
 it and the plates look exactly as they always have; name it and a drawer of

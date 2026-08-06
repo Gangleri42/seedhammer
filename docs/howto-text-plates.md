@@ -95,8 +95,8 @@ duration counting down.
 
 The middle button hides the plate's content: the outline and the figures
 stay, everything engraved goes. It is meant for a plate you are leaving to
-run — a quarter hour is a long time for a screen full of your words to sit in
-an empty room — and it holds through the engraving. Press it again to read
+run (a quarter hour is a long time for a screen full of your words to sit in
+an empty room), and it holds through the engraving. Press it again to read
 the plate.
 
 If the text looks like a damaged backup (a descriptor fragment, a codex32

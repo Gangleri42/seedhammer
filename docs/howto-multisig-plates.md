@@ -59,7 +59,7 @@ Fragments are cleartext slices (one 2-of-3 plate shows half the descriptor's
 bytes): the split is loss protection, not secrecy, and the privacy note
 above applies to every share plate equally.
 
-A share plate as engraved — the pairing header, the UR text wrapped
+A share plate as engraved, the pairing header and the UR text wrapped
 around its code:
 
 ![Cosigner 1's share plate of a 2-of-3](images/plate-share-1of3.png)
@@ -86,7 +86,7 @@ around its code:
 3. **Per plate.** Each plate opens on a gate titled "Plate k of N" with the
    cosigner fingerprint it belongs to. ENGRAVE PLATE plans the layout and
    hands over to the engrave screen, which shows the share as it will be
-   cut — the header, the wrapped text and the code — with its dimensions and
+   cut (the header, the wrapped text and the code) with its dimensions and
    duration. Insert the blank (or the cosigner's seed plate, back side up),
    close the lock, hold the button. SKIP passes over a plate, which is how an
    aborted set resumes: rescan, split again, and skip the plates you already

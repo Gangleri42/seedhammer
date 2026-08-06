@@ -97,7 +97,7 @@ dimensions and duration, hold to start, then the same picture with the time
 counting down. Seed, descriptor, share, passphrase, key, codex32, text and
 drawing plates all take this path, where five of them previously planned
 blind and showed only instructions. A checkbox on the middle button hides
-the plate's content — outline and figures stay, everything engraved goes —
+the plate's content (outline and figures stay, everything engraved goes)
 for a plate you are leaving to run unattended.
 
 ### Larger descriptors, reliable phone writes
@@ -132,14 +132,14 @@ computer in the middle. Name the wallet, pick the quorum, then add each
 cosigner: type drawn words (the machine still supplies only the checksum
 word), tap a seed over NFC, or tap a bare account key from a cosigner whose
 seed never touches this machine. Seeds pass the same review, checksum gate
-and optional passphrase as the single-seed flow — the passphrase ask sits
-behind a warning about what N of them do to recovery — and a doubled master
+and optional passphrase as the single-seed flow, with the passphrase ask
+behind a warning about what N of them do to recovery. A doubled master
 fingerprint is rejected as the doubled signer it is.
 
 The wallet leaves by camera: the descriptor plays as an animated
 `ur:crypto-output` for Sparrow or any UR-capable coordinator, and both ends
 compare the wallet's first receive address on screen before anything cuts.
-Then steel — each entrusted seed's plates first, then the descriptor as a
+Then steel: each entrusted seed's plates first, then the descriptor as a
 single plate, the cosigner split, or full copies, the same machinery a
 scanned setup runs. Every plate of a set carries the wallet's title, and the
 single-seed flow gained the same title step, so plates sort by eye years
@@ -148,8 +148,8 @@ later. [How-to](docs/howto-multisig-wallet.md).
 ### The small plate, and a jaw to hold it
 
 Alongside the square 85 x 85 mm plate the fork cuts a small 85 x 55 mm
-format: whenever a layout fits it — a 12-word seed, a short text plate, a
-compact descriptor — the machine offers the choice, small first. The
+format: whenever a layout fits it (a 12-word seed, a short text plate, a
+compact descriptor) the machine offers the choice, small first. The
 machine's clamp is sized for the square plate, so the small one rides a
 printable adapter jaw: [`hardware/small-plate-jaw`](hardware/small-plate-jaw)
 carries the model as 3MF (ready to slice) and STEP (the CAD solid).
@@ -206,7 +206,7 @@ with `picotool`, leaving official firmware bootable alongside.
 only way anything reaches it, so without a reader the desktop tooling here can
 build and sign firmware but cannot send a descriptor, a seed, a key or a
 drawing. An **ACS ACR122U** is the one to buy. It is what everything here is
-written and tested against — `install.sh` writes a udev rule for its USB id
+written and tested against: `install.sh` writes a udev rule for its USB id
 (072f:2200) and warns when `pcscd` is holding it, `write-nfc.py` and the
 [bridge](cmd/nfc-bridge) drive it through nfcpy, and every bench result in this
 repo came off one. nfcpy supports other readers and they usually work, but the

@@ -5,7 +5,7 @@ middle: every cosigner seed can be drawn by hand and typed here, tapped in
 over NFC, or represented by a bare account key from a signer that never
 shows this machine its seed. The wallet leaves by camera as an animated
 QR, both ends compare the first address before anything is cut, and the
-plates come last — each entrusted seed's own plates, then the descriptor
+plates come last: each entrusted seed's own plates, then the descriptor
 as one plate, the cosigner split, or full copies.
 
 ## What this makes
@@ -26,8 +26,8 @@ multisig is deliberately absent until coordinators settle on one.
   flow repairs a bad draw.
 - For cosigners arriving over NFC: the seed words as a text record, or the
   cosigner's account key as a key expression
-  (`[fingerprint/48h/0h/0h/2h]xpub.../<0;1>/*`) — the form signers export
-  for multisig, with the key origin included.
+  (`[fingerprint/48h/0h/0h/2h]xpub.../<0;1>/*`), the form signers export
+  for multisig with the key origin included.
 - A coordinator with a camera for the watch-only wallet. The steps below
   say Sparrow; any wallet that scans animated `ur:crypto-output` behaves
   the same.
@@ -45,8 +45,8 @@ changes.
 
    ![The input menu with MULTISIG WALLET selected](images/msw-01-input-menu.png)
 
-2. **Name the wallet.** The title engraves on every plate of the set — up
-   to 18 characters, uppercased on steel — and is how a drawer of plates
+2. **Name the wallet.** The title engraves on every plate of the set, up
+   to 18 characters, uppercased on steel. It is how a drawer of plates
    sorts into wallets years later. This one is not optional: an unnamed
    set is the thing that gets mixed up.
 
@@ -76,7 +76,7 @@ changes.
    the passphrase question, per seed, behind a warning worth taking
    seriously (below). The machine shows each cosigner's fingerprint before
    it counts, and it refuses a key whose master fingerprint is already in
-   the wallet — that is the same seed twice, not a coincidence.
+   the wallet: that is the same seed twice, not a coincidence.
 
    ![Reviewing a tapped seed's words](images/msw-07-seed-review.png)
    ![The cosigner's fingerprint before it counts](images/msw-09-cosigner-confirm.png)
@@ -96,7 +96,7 @@ changes.
 
 7. **Compare the first address.** The machine derives the wallet's first
    receive address and shows it; the coordinator, fed only the QR, must
-   show exactly the same one. Read it group by group — the spaces on
+   show exactly the same one. Read it group by group; the spaces on
    screen are not part of the address. If they differ, stop: something
    went in wrong, and it cost you minutes instead of steel.
 
@@ -133,15 +133,15 @@ exactly which threat the passphrase answers.
 
 ## Recovery, and what resumes
 
-The wallet recovers from any M of the N seeds plus the descriptor —
+The wallet recovers from any M of the N seeds plus the descriptor,
 which is what the plate set holds in steel. The seed plates restore into
 any BIP39 signer; the descriptor restores into any wallet from the split
 plates' codes ([how](howto-multisig-plates.md#recover-into-a-wallet)), a
 single descriptor plate, or the coordinator's own backup.
 
 An aborted plate session resumes the way the split how-to describes:
-scan the descriptor back in — from a plate QR, the coordinator, or a
-text record — split again, and skip the plates already cut. The share
+scan the descriptor back in (from a plate QR, the coordinator, or a
+text record), split again, and skip the plates already cut. The share
 codes are byte-identical on every pass. One nuance: the descriptor
 string itself carries no title, so a rescan from raw text produces share
 headers without the wallet name; scanning the coordinator's export with

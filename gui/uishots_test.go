@@ -3,6 +3,7 @@ package gui
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -160,6 +161,7 @@ func TestUIShots(t *testing.T) {
 	defer func() { Rand = oldRand }()
 
 	t.Run("multisig", func(t *testing.T) { shootMultisig(t, *uishotsDir) })
+	t.Run("xpub", func(t *testing.T) { shootXpub(t, *uishotsDir) })
 	t.Run("seed", func(t *testing.T) { shootSeed(t, *uishotsDir) })
 	t.Run("plates", func(t *testing.T) { shootPlates(t, *uishotsDir) })
 }
@@ -318,6 +320,48 @@ func shootMultisig(t *testing.T, dir string) {
 		s.pump(2)
 		click(&s.ctx.Router, Button3) // SKIP
 	}
+	s.drain()
+}
+
+// shootXpub captures the third source: the cosigner who taps a bare
+// account key and never shows this machine a seed. The key is the
+// manual wallet's own pizza cosigner as a Coldcard-style expression,
+// so the fingerprint on the confirm matches the walk's review screen.
+func shootXpub(t *testing.T, dir string) {
+	key, err := cosignerKey(goldenMnemonic(t, shotSeedPizza), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expr := fmt.Sprintf("[%.8x%s]%s/<0;1>/*",
+		key.MasterFingerprint, key.DerivationPath.Encode(), key.String())
+	nfc := newTestNFC()
+	s := newShotUI(t, dir, shotPlatform(nfc), func(ctx *Context) {
+		multisigWalletFlow(ctx, &descriptorTheme)
+	})
+	defer s.quit()
+
+	s.await("Wallet Title")
+	runes(&s.ctx.Router, "vault 1")
+	s.pump(2)
+	click(&s.ctx.Router, Button2)
+	s.await("How many keys share the wallet?")
+	click(&s.ctx.Router, Button3)
+	s.await("How many must sign to spend?")
+	click(&s.ctx.Router, Button3)
+
+	s.await("Add the cosigner's key")
+	click(&s.ctx.Router, Down, Down) // TAP XPUB
+	s.pump(2)
+	click(&s.ctx.Router, Button3)
+	s.await("Tap the cosigner's public key")
+	s.capture("msw-20-tap-xpub")
+	nfc.payloads <- []byte(expr)
+	s.await("Public key only")
+	s.capture("msw-21-xpub-confirm")
+	// Back out without accepting; the flow ends with nothing entered.
+	click(&s.ctx.Router, Button1)
+	s.await("Add the cosigner's key")
+	click(&s.ctx.Router, Button1)
 	s.drain()
 }
 

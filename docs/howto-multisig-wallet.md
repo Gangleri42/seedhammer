@@ -71,6 +71,17 @@ changes.
    ![The three cosigner sources](images/msw-05-source.png)
    ![Waiting for a tapped seed](images/msw-06-tap-seed.png)
 
+   The account key is how a hardware-wallet cosigner joins: on a
+   Coldcard, export the multisig xpub over NFC and hold it to the
+   reader. The export must carry the key origin (the fingerprint and
+   `48h/0h/0h/2h` path in front of the xpub); the machine refuses a bare
+   xpub and says why. The confirm then reads "Public key only": the
+   walk's third cosigner could have joined exactly like this, same
+   fingerprint, no seed:
+
+   ![Waiting for a tapped account key](images/msw-20-tap-xpub.png)
+   ![An xpub-only cosigner's confirm](images/msw-21-xpub-confirm.png)
+
    Every seed passes the same review screen and checksum gate as a single
    seed: read the words back against your tiles before confirming. Then
    the passphrase question, per seed, behind a warning worth taking
@@ -120,18 +131,28 @@ changes.
    ![Choosing the single plate's variant](images/msw-16-one-plate-variants.png)
    ![The complete descriptor plate before the cut](images/msw-17-descriptor-plate.png)
 
-   **SPLIT: N PLATES** cuts one share per cosigner instead, paired to its
-   seed plate by fingerprint, exactly as
-   [the split how-to](howto-multisig-plates.md) describes. Each plate
-   opens on its pairing gate and previews its share before the cut:
+   **SPLIT: N PLATES** cuts one share per cosigner instead: no plate
+   carries the whole descriptor, and any 2 of this wallet's 3 share
+   plates rebuild it, so there is no descriptor plate to lose as a
+   single point of failure. Each share pairs with its cosigner's seed
+   plate by fingerprint (the back of the seed plate is the natural
+   spot), exactly as [the split how-to](howto-multisig-plates.md)
+   describes. Each plate opens on its pairing gate and previews its
+   share before the cut:
 
    ![The share plate's pairing gate](images/msw-18-share-gate.png)
    ![Cosigner 1's share plate before the cut](images/msw-19-share-plate.png)
 
-   The single descriptor plate as engraved, title above the descriptor,
-   rendered from the same planned strokes the machine cuts:
+   Both endings as engraved, rendered from the same planned strokes
+   the machine cuts. The complete descriptor on its single plate, title
+   above the text:
 
    ![The titled descriptor plate as engraved](images/plate-descriptor.png)
+
+   And cosigner 1's share of the split, the pairing header over the UR
+   fragment; two more like it complete the set:
+
+   ![Cosigner 1's share plate as engraved](images/plate-share-1of3.png)
 
 ## Passphrases multiply
 

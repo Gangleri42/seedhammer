@@ -71,16 +71,20 @@ changes.
      words land on the same review screen typing ends on.
    - **Tap an account key**: how a hardware-wallet cosigner joins. On a
      Coldcard, export the multisig xpub over NFC and hold it to the
-     reader. The export must carry the key origin (the fingerprint and
-     `48h/0h/0h/2h` path in front of the xpub); the machine refuses a
-     bare xpub and says why. No seed material touches this machine;
-     that cosigner keeps their own backup, and gets no seed plate here.
+     reader. A single-sig descriptor also works: the 1-of-1 a signer
+     produces when it exports a seed's wallet descriptor, as a
+     Coldcard does. The machine takes its one key, at whatever path
+     the export named. The export must carry the key origin (the
+     fingerprint and derivation path in front of the xpub); the
+     machine refuses a bare xpub and says why. No seed material
+     touches this machine; that cosigner keeps their own backup, and
+     gets no seed plate here.
 
-   A tap of anything else (a text plate, a whole descriptor) shows "Not
-   a seed or cosigner key" on the page and keeps listening. A tapped
-   account key's confirm reads "Public key only": the walk's third
-   cosigner could have joined exactly like this, same fingerprint, no
-   seed:
+   A tap of anything else (a text plate, a multisig descriptor) shows
+   "Not a seed or cosigner key" on the page and keeps listening. A
+   tapped account key's confirm reads "Public key only": the walk's
+   third cosigner could have joined exactly like this, same
+   fingerprint, no seed:
 
    ![An xpub-only cosigner's confirm](images/msw-21-xpub-confirm.png)
 

@@ -73,7 +73,8 @@ underline stands in for strong emphasis. Body size defaults to 4 mm.
 
 ## What fits
 
-The square plate is 85 x 85 mm and the small plate 85 x 55 mm, both with a
+The square plate is 85 x 85 mm and the small plate 85 x 55 mm (held in
+the clamp by the printable [jaw](../hardware/small-plate-jaw/)), both with a
 3 mm margin. By default (`-plate ask`) the converter fits the square box and
 the device measures the drawing, offering every plate it fits. Pass
 `-plate small` or `-plate square` to lay out for that plate and stamp it into

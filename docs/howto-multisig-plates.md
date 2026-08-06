@@ -80,8 +80,9 @@ around its code:
 
    ![One plate or the split](images/msw-15-split-choice.png)
    On the ONE PLATE path the machine also asks for the plate size when the
-   descriptor fits the small 85 x 55 mm format; the variant list is then the
-   small plate's own, so TEXT + QR may drop away. Splits and full copies
+   descriptor fits the small 85 x 55 mm format (which sits in the clamp on
+   the printable [jaw](../hardware/small-plate-jaw/)); the variant list is
+   then the small plate's own, so TEXT + QR may drop away. Splits and full copies
    stay on the square plate.
 3. **Per plate.** Each plate opens on a gate titled "Plate k of N" with the
    cosigner fingerprint it belongs to. ENGRAVE PLATE plans the layout and

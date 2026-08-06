@@ -33,6 +33,8 @@ multisig is deliberately absent until coordinators settle on one.
   the same.
 - Blank plates: one per entrusted seed, one per passphrase you set, plus
   the descriptor's own plates (one, or one per cosigner for the split).
+  Any plate cut in the small 85 x 55 mm format needs the printable
+  [jaw](../hardware/small-plate-jaw/) in the clamp.
 
 ## On the machine
 

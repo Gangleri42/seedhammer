@@ -33,7 +33,8 @@ composition:
 
 Every plate shares the same width, so columns match across formats; the
 85 x 55 mm small plate only has fewer rows. When a composition fits the
-small grid the machine asks which plate to cut; the biggest small-plate
+small grid the machine asks which plate to cut (the small plate needs the
+printable [jaw](../hardware/small-plate-jaw/) in the clamp); the biggest small-plate
 text is 704 characters (44 x 16 at 3.0 mm) against 1144 on the square.
 
 Two rules worth knowing:

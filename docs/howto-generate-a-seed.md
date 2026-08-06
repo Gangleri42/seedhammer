@@ -133,7 +133,9 @@ plate, and a descriptor can be cut again years later without touching the seed.
 Two plate formats exist: the square 85 x 85 mm plate and the small 85 x 55 mm
 one. Whenever a plate fits the small format — a 12-word seed does, a 24-word
 seed does not — the machine asks which to cut, small first. Content that only
-fits the square plate never sees the question.
+fits the square plate never sees the question. The small plate sits in the
+machine's clamp on a printable adapter jaw:
+[hardware/small-plate-jaw](../hardware/small-plate-jaw/).
 
 ![The plate size question](images/seed-05-plate-size.png)
 

@@ -145,6 +145,15 @@ scanned setup runs. Every plate of a set carries the wallet's title, and the
 single-seed flow gained the same title step, so plates sort by eye years
 later. [How-to](docs/howto-multisig-wallet.md).
 
+### The small plate, and a jaw to hold it
+
+Alongside the square 85 x 85 mm plate the fork cuts a small 85 x 55 mm
+format: whenever a layout fits it — a 12-word seed, a short text plate, a
+compact descriptor — the machine offers the choice, small first. The
+machine's clamp is sized for the square plate, so the small one rides a
+printable adapter jaw: [`hardware/small-plate-jaw`](hardware/small-plate-jaw)
+carries the model as 3MF (ready to slice) and STEP (the CAD solid).
+
 ### Engraving quality and speed
 
 Round glyphs used to engrave very slightly egg-shaped. The outline fitter is

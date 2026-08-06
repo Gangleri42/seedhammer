@@ -14,6 +14,7 @@ import (
 
 	qr "github.com/seedhammer/kortschak-qr"
 	"seedhammer.com/backup"
+	"seedhammer.com/bip380"
 	"seedhammer.com/bip39"
 	"seedhammer.com/engrave"
 	"seedhammer.com/font/sh"
@@ -91,6 +92,28 @@ func (s *shotUI) await(marker string) {
 	awaitUI(s.t, s.frame, marker)
 }
 
+// awaitAny pumps frames until one of the markers renders and reports
+// which, for the walk's few genuinely conditional screens (the plate
+// size question only appears when the layout also fits small).
+func (s *shotUI) awaitAny(markers ...string) string {
+	s.t.Helper()
+	last := ""
+	for range 10000 {
+		content, ok := s.frame()
+		if !ok {
+			s.t.Fatalf("flow ended waiting for any of %v", markers)
+		}
+		for _, m := range markers {
+			if uiContains(content, m) {
+				return m
+			}
+		}
+		last = content
+	}
+	s.t.Fatalf("none of %v appeared; last frame: %q", markers, last)
+	return ""
+}
+
 func (s *shotUI) pump(n int) {
 	for range n {
 		s.frame()
@@ -141,8 +164,16 @@ func TestUIShots(t *testing.T) {
 	t.Run("plates", func(t *testing.T) { shootPlates(t, *uishotsDir) })
 }
 
-// shootMultisig walks the builder end to end: the fixture 2-of-2 the
-// flow test drives, with a detour through the passphrase warning.
+// shotSeedPizza is the manual's third cosigner: the fixture pool's
+// pizza phrase, chosen over rug…sad so the walk's seeds read as pure
+// nonsense with no story attached.
+const shotSeedPizza = "pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza about"
+
+// shootMultisig walks the builder end to end as the manual's one
+// wallet: the 2-of-3 of bacon, oil and pizza, titled vault 1 — the
+// same wallet the plate renders draw. After the export it walks BOTH
+// descriptor endings: the complete descriptor on one plate, then the
+// split across the cosigner plates.
 func shootMultisig(t *testing.T, dir string) {
 	nfc := newTestNFC()
 	s := newShotUI(t, dir, shotPlatform(nfc), func(ctx *Context) {
@@ -164,13 +195,11 @@ func shootMultisig(t *testing.T, dir string) {
 
 	s.await("How many keys share the wallet?")
 	s.capture("msw-03-cosigners")
-	click(&s.ctx.Router, Up) // 2 COSIGNERS
-	s.pump(2)
-	click(&s.ctx.Router, Button3)
+	click(&s.ctx.Router, Button3) // 3 COSIGNERS, the preset
 
 	s.await("How many must sign to spend?")
 	s.capture("msw-04-threshold")
-	click(&s.ctx.Router, Button3) // 2 OF 2
+	click(&s.ctx.Router, Button3) // 2 OF 3, the preset
 
 	s.await("Add the cosigner's key")
 	s.capture("msw-05-source")
@@ -180,8 +209,8 @@ func shootMultisig(t *testing.T, dir string) {
 
 	s.await("Tap the cosigner's seed")
 	s.capture("msw-06-tap-seed")
-	nfc.payloads <- []byte(goldenSeedOil)
-	s.await("oil")
+	nfc.payloads <- []byte(goldenSeedBacon)
+	s.await("bacon")
 	s.capture("msw-07-seed-review")
 	click(&s.ctx.Router, Button3)
 
@@ -200,21 +229,29 @@ func shootMultisig(t *testing.T, dir string) {
 	s.capture("msw-09-cosigner-confirm")
 	click(&s.ctx.Router, Button3)
 
-	// Cosigner 2, without detours.
-	s.await("Cosigner 2 of 2")
-	click(&s.ctx.Router, Down)
-	s.pump(2)
-	click(&s.ctx.Router, Button3)
-	s.await("Tap the cosigner's seed")
-	nfc.payloads <- []byte(goldenSeedBacon)
-	s.await("bacon")
-	click(&s.ctx.Router, Button3)
-	s.await("Add a passphrase to this seed?")
-	click(&s.ctx.Router, Button3)
-	s.await("Confirm to add this cosigner")
-	click(&s.ctx.Router, Button3)
+	// Cosigners 2 and 3, without detours.
+	for _, c := range []struct{ seed, word string }{
+		{goldenSeedOil, "oil"},
+		{shotSeedPizza, "pizza"},
+	} {
+		s.await("Add the cosigner's key")
+		click(&s.ctx.Router, Down)
+		s.pump(2)
+		click(&s.ctx.Router, Button3)
+		s.await("Tap the cosigner's seed")
+		nfc.payloads <- []byte(c.seed)
+		s.await(c.word)
+		click(&s.ctx.Router, Button3)
+		s.await("Add a passphrase to this seed?")
+		click(&s.ctx.Router, Button3)
+		s.await("Confirm to add this cosigner")
+		click(&s.ctx.Router, Button3)
+	}
 
 	s.await("Create Wallet?")
+	s.await("9A6A2580")
+	s.await("2A77E0A6")
+	s.await("34B242EC")
 	s.capture("msw-10-review")
 	press(&s.ctx.Router, Button3)
 	s.frame()
@@ -229,24 +266,58 @@ func shootMultisig(t *testing.T, dir string) {
 	s.capture("msw-12-first-address")
 	click(&s.ctx.Router, Button3)
 
-	s.await("Cosigner 1 of 2, 2A77E0A6")
+	// The three seed plates, skipped: steel is the split how-to's job.
+	s.await("Cosigner 1 of 3, 9A6A2580")
 	s.capture("msw-13-seed-plate-gate")
-	click(&s.ctx.Router, Down)
-	s.pump(2)
-	click(&s.ctx.Router, Button3) // SKIP
-	s.await("Cosigner 2 of 2, 9A6A2580")
-	click(&s.ctx.Router, Down)
-	s.pump(2)
-	click(&s.ctx.Router, Button3) // SKIP
+	for _, mfp := range []string{"9A6A2580", "2A77E0A6", "34B242EC"} {
+		s.await(mfp)
+		click(&s.ctx.Router, Down)
+		s.pump(2)
+		click(&s.ctx.Router, Button3) // SKIP
+	}
 
 	s.await("Engrave Descriptor")
 	s.capture("msw-14-descriptor")
 	click(&s.ctx.Router, Button3)
-	s.await("SPLIT: 2 PLATES")
+	s.await("SPLIT: 3 PLATES")
 	s.capture("msw-15-split-choice")
-	click(&s.ctx.Router, Button1) // back out; the split how-to owns the rest
+
+	// Ending one: the complete descriptor on a single plate.
+	click(&s.ctx.Router, Button3) // ONE PLATE, the first row
+	if s.awaitAny("Plate Size", "Choose engraving") == "Plate Size" {
+		click(&s.ctx.Router, Down) // SQUARE PLATE
+		s.pump(2)
+		click(&s.ctx.Router, Button3)
+		s.await("Choose engraving")
+	}
+	s.capture("msw-16-one-plate-variants")
+	click(&s.ctx.Router, Button3) // TEXT + QR
+	s.await("mm")                 // the engrave screen's dims line
+	s.capture("msw-17-descriptor-plate")
+	click(&s.ctx.Router, Button1) // back out without cutting
+
+	// Ending two: the split across the cosigner plates.
 	s.await("Engrave Descriptor")
-	click(&s.ctx.Router, Button1)
+	click(&s.ctx.Router, Button3)
+	s.await("SPLIT: 3 PLATES")
+	click(&s.ctx.Router, Down)
+	s.pump(2)
+	click(&s.ctx.Router, Button3)
+	s.await("For cosigner 9A6A2580")
+	s.capture("msw-18-share-gate")
+	click(&s.ctx.Router, Button3) // ENGRAVE PLATE
+	s.await("mm")
+	s.capture("msw-19-share-plate")
+	click(&s.ctx.Router, Button1) // back out without cutting
+
+	// Skip the set to its end; a fully skipped tail completes it and
+	// the builder finishes.
+	for range 3 {
+		s.await("of 3")
+		click(&s.ctx.Router, Down)
+		s.pump(2)
+		click(&s.ctx.Router, Button3) // SKIP
+	}
 	s.drain()
 }
 
@@ -378,6 +449,29 @@ func renderPlate(t *testing.T, dir, name string, plan engrave.Engraving, params 
 	writePNG(t, dir, name, img)
 }
 
+// manualDescriptor is the manual's one wallet, assembled the way the
+// builder does: the 2-of-3 of bacon, oil and pizza that every
+// screenshot walks, titled as typed there. The golden test's wallet
+// (bacon, oil, rug) stays pinned to the emulator fixtures; this one
+// exists so the manual never changes wallets mid-page.
+func manualDescriptor(t *testing.T) *bip380.Descriptor {
+	t.Helper()
+	desc := &bip380.Descriptor{
+		Title:     "vault 1",
+		Script:    bip380.P2WSH,
+		Type:      bip380.SortedMulti,
+		Threshold: 2,
+	}
+	for _, words := range []string{goldenSeedBacon, goldenSeedOil, shotSeedPizza} {
+		key, err := cosignerKey(goldenMnemonic(t, words), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		desc.Keys = append(desc.Keys, key)
+	}
+	return desc
+}
+
 // shootPlates renders the finished plates of the manual's wallet: the
 // titled small seed plate, the 2-of-3 descriptor as one plate and as
 // cosigner 1's share, and a titled passphrase plate.
@@ -395,7 +489,7 @@ func shootPlates(t *testing.T, dir string) {
 	}
 	renderPlate(t, dir, "plate-seed-small-titled", plan, params, SmallPlate)
 
-	desc := goldenDescriptor(t)
+	desc := manualDescriptor(t)
 	labels, texts, qrText, err := fitDescriptor(params, SquarePlate, desc, nil)
 	if err != nil {
 		t.Fatal(err)

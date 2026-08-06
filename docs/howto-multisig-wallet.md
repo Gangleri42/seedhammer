@@ -104,13 +104,29 @@ changes.
 
 8. **Cut the plates.** Each entrusted seed offers its seed plate (titled,
    with the cosigner's fingerprint on the gate) and, if set, its
-   passphrase plate. Then the descriptor runs the ordinary machinery: ONE
-   PLATE, SPLIT: N PLATES, or N FULL COPIES, exactly as
-   [the split how-to](howto-multisig-plates.md) describes, shares paired
-   to cosigners by fingerprint.
+   passphrase plate.
 
    ![A cosigner's seed plate gate](images/msw-13-seed-plate-gate.png)
+
+   Then the descriptor, through the machinery every scanned multisig
+   runs. The choice screen offers both endings:
+
    ![One plate or the cosigner split](images/msw-15-split-choice.png)
+
+   **ONE PLATE** cuts the complete descriptor onto a single plate: pick
+   the variant (TEXT + QR holds both recovery paths) and the engrave
+   screen shows the plate before anything moves.
+
+   ![Choosing the single plate's variant](images/msw-16-one-plate-variants.png)
+   ![The complete descriptor plate before the cut](images/msw-17-descriptor-plate.png)
+
+   **SPLIT: N PLATES** cuts one share per cosigner instead, paired to its
+   seed plate by fingerprint, exactly as
+   [the split how-to](howto-multisig-plates.md) describes. Each plate
+   opens on its pairing gate and previews its share before the cut:
+
+   ![The share plate's pairing gate](images/msw-18-share-gate.png)
+   ![Cosigner 1's share plate before the cut](images/msw-19-share-plate.png)
 
    The single descriptor plate as engraved, title above the descriptor,
    rendered from the same planned strokes the machine cuts:

@@ -2,9 +2,11 @@ package gui
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 
+	"seedhammer.com/bip380"
 	"seedhammer.com/bip39"
 )
 
@@ -65,17 +67,18 @@ func (r *testNFCConn) Close() error {
 	return nil
 }
 
-// scanFlowHarness drives scanFlow with an injected reader.
-func scanFlowHarness(t *testing.T, accept func(any) bool, script func(ctx *Context, nfc *testNFC, await func(string))) (any, bool) {
+// cosignerEntryHarness drives the cosigner landing page with an
+// injected reader.
+func cosignerEntryHarness(t *testing.T, script func(ctx *Context, nfc *testNFC, await func(string))) (cosignerEntryAction, bool) {
 	t.Helper()
 	p := newPlatform()
 	nfc := newTestNFC()
 	p.nfc = nfc
 	ctx := NewContext(p)
-	var got any
+	var got cosignerEntryAction
 	var ok bool
 	frame, quit := runUI(ctx, func() {
-		got, ok = scanFlow(ctx, &descriptorTheme, "Cosigner 1 of 2", "Tap the cosigner's seed", "Not a seed phrase", accept)
+		got, ok = cosignerEntry(ctx, &descriptorTheme, "Cosigner 1 of 3")
 	})
 	defer quit()
 	script(ctx, nfc, func(marker string) {
@@ -87,38 +90,70 @@ func scanFlowHarness(t *testing.T, accept func(any) bool, script func(ctx *Conte
 			return got, ok
 		}
 	}
-	t.Fatal("scanFlow did not end")
+	t.Fatal("cosignerEntry did not end")
 	return got, ok
 }
 
-func TestScanFlowAcceptsSeed(t *testing.T) {
-	acceptSeed := func(obj any) bool {
-		_, is := obj.(bip39.Mnemonic)
-		return is
-	}
-	got, ok := scanFlowHarness(t, acceptSeed, func(ctx *Context, nfc *testNFC, await func(string)) {
-		await("Tap the cosigner's seed")
-		// A text payload is decodable but not what this step takes:
-		// the flow must reject it and keep listening.
+// The landing page listens while it asks: a decodable payload of the
+// wrong kind shows the reject line and keeps listening, a seed ends
+// the page.
+func TestCosignerEntrySeedTap(t *testing.T) {
+	got, ok := cosignerEntryHarness(t, func(ctx *Context, nfc *testNFC, await func(string)) {
+		await("Enter the seed words")
 		nfc.payloads <- []byte("hello plate")
-		await("Not a seed phrase")
-		nfc.payloads <- []byte("oil oil oil oil oil oil oil oil oil oil oil oil")
+		await("Not a seed or cosigner key")
+		nfc.payloads <- []byte(goldenSeedOil)
 	})
 	if !ok {
-		t.Fatal("scanFlow rejected the seed")
+		t.Fatal("the landing page rejected the seed")
 	}
-	m, is := got.(bip39.Mnemonic)
+	m, is := got.scan.(bip39.Mnemonic)
 	if !is || len(m) != 12 {
-		t.Fatalf("scanFlow returned %T, want a 12-word mnemonic", got)
+		t.Fatalf("landing page returned %T, want a 12-word mnemonic", got.scan)
 	}
 }
 
-func TestScanFlowBack(t *testing.T) {
-	_, ok := scanFlowHarness(t, func(any) bool { return true }, func(ctx *Context, nfc *testNFC, await func(string)) {
-		await("Tap the cosigner's seed")
+func TestCosignerEntryKeyTap(t *testing.T) {
+	golden, err := cosignerKey(goldenMnemonic(t, goldenSeedOil), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expr := fmt.Sprintf("[%.8x%s]%s/<0;1>/*",
+		golden.MasterFingerprint, golden.DerivationPath.Encode(), golden.String())
+	got, ok := cosignerEntryHarness(t, func(ctx *Context, nfc *testNFC, await func(string)) {
+		await("Enter the seed words")
+		nfc.payloads <- []byte(expr)
+	})
+	if !ok {
+		t.Fatal("the landing page rejected the key expression")
+	}
+	key, is := got.scan.(bip380.Key)
+	if !is {
+		t.Fatalf("landing page returned %T, want a key", got.scan)
+	}
+	if key.MasterFingerprint != golden.MasterFingerprint {
+		t.Errorf("fingerprint %.8x, want %.8x", key.MasterFingerprint, golden.MasterFingerprint)
+	}
+}
+
+func TestCosignerEntryWords(t *testing.T) {
+	got, ok := cosignerEntryHarness(t, func(ctx *Context, nfc *testNFC, await func(string)) {
+		await("Enter the seed words")
+		click(&ctx.Router, Down)
+		await("24 WORDS")
+		click(&ctx.Router, Button3)
+	})
+	if !ok || got.words != 24 || got.scan != nil {
+		t.Fatalf("choosing 24 WORDS returned %+v, %v", got, ok)
+	}
+}
+
+func TestCosignerEntryBack(t *testing.T) {
+	_, ok := cosignerEntryHarness(t, func(ctx *Context, nfc *testNFC, await func(string)) {
+		await("Enter the seed words")
 		click(&ctx.Router, Button1)
 	})
 	if ok {
-		t.Fatal("backing out reported a payload")
+		t.Fatal("backing out reported an action")
 	}
 }

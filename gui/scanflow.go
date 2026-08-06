@@ -2,15 +2,9 @@ package gui
 
 import (
 	"errors"
-	"image"
 	"io"
 	"log"
 	"time"
-
-	"seedhammer.com/gui/assets"
-	"seedhammer.com/gui/layout"
-	"seedhammer.com/gui/op"
-	"seedhammer.com/gui/widget"
 )
 
 // scanWorker runs the NFC scan loop over the platform reader,
@@ -90,77 +84,17 @@ func scanWorker(ctx *Context, scans chan scanResult) (stop func()) {
 	}
 }
 
-// scanFlow waits for one NFC payload inside a flow: the start
-// screen's scanner, pointed at a single step. accept filters the
-// payloads the step takes; any other decodable payload shows reject
-// and keeps listening. The back button reports false.
-func scanFlow(ctx *Context, th *Colors, title, lead, reject string, accept func(any) bool) (any, bool) {
-	scans := make(chan scanResult, 1)
-	stop := scanWorker(ctx, scans)
-	defer stop()
-	backBtn := &Clickable{Button: Button1}
-	var status scanStatus
-	var rejected bool
-	var statusTimeout time.Time
-	for !ctx.Done {
-		if backBtn.Clicked(ctx) {
-			return nil, false
-		}
-		select {
-		case scan := <-scans:
-			now := time.Now()
-			if now.Before(statusTimeout) {
-				status = max(status, scan.Status)
-			} else {
-				status = scan.Status
-				rejected = false
-			}
-			statusTimeout = now.Add(scanStatusTimeout)
-			if obj := scan.Object; obj != nil {
-				switch obj.(type) {
-				case debugCommand:
-					// The provisioning channel has no business inside a
-					// flow step; the start screen owns it.
-				default:
-					if accept(obj) {
-						return obj, true
-					}
-					rejected = true
-				}
-			}
-		default:
-		}
-		dims := ctx.Platform.DisplaySize()
-		r := layout.Rectangle{Max: dims}
-		leadOp, lsz := widget.Labelw(&ctx.B, ctx.Styles.lead, dims.X-2*16, th.Text, lead)
-		sttxt := ""
-		if time.Now().Before(statusTimeout) {
-			ctx.WakeupAt(statusTimeout)
-			switch {
-			case rejected:
-				sttxt = reject
-			case status == scanFailed:
-				sttxt = "Scan error"
-			case status == scanOverflow:
-				sttxt = "Content too large"
-			case status == scanStarted:
-				sttxt = "Scanning..."
-			case status == scanUnknownFormat:
-				sttxt = "Unknown format"
-			}
-		}
-		subt, ssz := widget.Labelw(&ctx.B, ctx.Styles.subtitle, 300, th.Text, sttxt)
-		nav, _ := layoutNavigation(&ctx.B, th, dims,
-			NavButton{Clickable: backBtn, Style: StyleSecondary, Icon: assets.IconBack},
-		)
-		titleOp, _ := layoutTitle(ctx, dims.X, th.Text, title)
-		ctx.Frame(op.Layer(
-			leadOp.Offset(r.Center(lsz)),
-			subt.Offset(r.S(ssz).Sub(image.Pt(0, 16))),
-			nav,
-			titleOp,
-			op.Color(&ctx.B, th.Background),
-		))
+// scanStatusText is the label a scan status shows while it decays.
+func scanStatusText(status scanStatus) string {
+	switch status {
+	case scanFailed:
+		return "Scan error"
+	case scanOverflow:
+		return "Content too large"
+	case scanStarted:
+		return "Scanning..."
+	case scanUnknownFormat:
+		return "Unknown format"
 	}
-	return nil, false
+	return ""
 }

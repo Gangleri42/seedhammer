@@ -209,12 +209,8 @@ func TestMultisigWalletFlow(t *testing.T) {
 		await("How many must sign to spend?")
 		click(&ctx.Router, Button3) // preset 2 OF 2
 
-		// Cosigner 1: tapped seed.
-		await("Add the cosigner's key")
-		click(&ctx.Router, Down) // TAP SEED
-		await("TAP SEED")
-		click(&ctx.Router, Button3)
-		await("Tap the cosigner's seed")
+		// Cosigner 1: a seed tapped straight at the landing page.
+		await("Enter the seed words, or tap a seed or cosigner key")
 		nfc.payloads <- []byte(goldenSeedOil)
 		await("oil") // the seed review screen
 		click(&ctx.Router, Button3)
@@ -225,10 +221,6 @@ func TestMultisigWalletFlow(t *testing.T) {
 
 		// Cosigner 2: tapped seed.
 		await("Cosigner 2 of 2")
-		click(&ctx.Router, Down)
-		await("TAP SEED")
-		click(&ctx.Router, Button3)
-		await("Tap the cosigner's seed")
 		nfc.payloads <- []byte(goldenSeedBacon)
 		await("bacon")
 		click(&ctx.Router, Button3)

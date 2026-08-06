@@ -3,13 +3,18 @@ package gui
 import (
 	"errors"
 	"fmt"
+	"image"
 	"strings"
+	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/v2"
 	"seedhammer.com/bip32"
 	"seedhammer.com/bip380"
 	"seedhammer.com/bip39"
 	"seedhammer.com/gui/assets"
+	"seedhammer.com/gui/layout"
+	"seedhammer.com/gui/op"
+	"seedhammer.com/gui/widget"
 )
 
 // Bounds for the cosigner count. Two is the smallest quorum that is
@@ -175,83 +180,143 @@ func thresholdFlow(ctx *Context, th *Colors, n int) (int, bool) {
 	return choice + 1, true
 }
 
+// cosignerEntryAction is what the landing page produced: a word
+// count to type, or a tapped payload — a seed, or a cosigner key.
+type cosignerEntryAction struct {
+	words int
+	scan  any
+}
+
+// cosignerEntry is the cosigner's landing page: the word-count rows
+// for typing, with the scanner already listening — the start screen's
+// pattern pointed at one step. A tap dispatches by what arrived: a
+// seed or a cosigner key returns immediately, anything else shows the
+// reject line and keeps listening. Back reports false.
+func cosignerEntry(ctx *Context, th *Colors, title string) (cosignerEntryAction, bool) {
+	scans := make(chan scanResult, 1)
+	stop := scanWorker(ctx, scans)
+	defer stop()
+	cs := &ChoiceScreen{
+		Title:   title,
+		Lead:    "Enter the seed words, or tap a seed or cosigner key",
+		Choices: []string{"12 WORDS", "24 WORDS"},
+	}
+	inp := new(InputTracker)
+	cancelBtn := &Clickable{Button: Button1}
+	chooseBtn := &Clickable{Button: Button3, AltButton: Center}
+	var status scanStatus
+	var rejected bool
+	var statusTimeout time.Time
+	for !ctx.Done {
+		switch {
+		case cancelBtn.Clicked(ctx):
+			return cosignerEntryAction{}, false
+		case chooseBtn.Clicked(ctx):
+			return cosignerEntryAction{words: []int{12, 24}[cs.choice]}, true
+		}
+		for i := range cs.children {
+			c := &cs.children[i]
+			if c.click.Clicked(ctx) {
+				cs.choice = i
+			}
+		}
+		for {
+			e, ok := inp.Next(ctx, ButtonFilter(Up), ButtonFilter(Down))
+			if !ok {
+				break
+			}
+			if e, ok := e.AsButton(); ok && e.Pressed {
+				switch e.Button {
+				case Up:
+					if cs.choice > 0 {
+						cs.choice--
+					}
+				case Down:
+					if cs.choice < len(cs.Choices)-1 {
+						cs.choice++
+					}
+				}
+			}
+		}
+		select {
+		case scan := <-scans:
+			now := time.Now()
+			if now.Before(statusTimeout) {
+				status = max(status, scan.Status)
+			} else {
+				status = scan.Status
+				rejected = false
+			}
+			statusTimeout = now.Add(scanStatusTimeout)
+			if obj := scan.Object; obj != nil {
+				switch obj := obj.(type) {
+				case debugCommand:
+					// The provisioning channel belongs to the start
+					// screen, not to a flow step.
+				case bip39.Mnemonic:
+					return cosignerEntryAction{scan: obj}, true
+				default:
+					if key, ok := cosignerFromPayload(obj); ok {
+						return cosignerEntryAction{scan: key}, true
+					}
+					rejected = true
+				}
+			}
+		default:
+		}
+		dims := ctx.Platform.DisplaySize()
+		sttxt := ""
+		if time.Now().Before(statusTimeout) {
+			ctx.WakeupAt(statusTimeout)
+			if rejected {
+				sttxt = "Not a seed or cosigner key"
+			} else {
+				sttxt = scanStatusText(status)
+			}
+		}
+		subt, ssz := widget.Labelw(&ctx.B, ctx.Styles.subtitle, 300, th.Text, sttxt)
+		r := layout.Rectangle{Max: dims}
+		nav, _ := layoutNavigation(&ctx.B, th, dims,
+			NavButton{Clickable: cancelBtn, Style: StyleSecondary, Icon: assets.IconBack},
+			NavButton{Clickable: chooseBtn, Style: StylePrimary, Icon: assets.IconCheckmark},
+		)
+		ctx.Frame(op.Layer(
+			// Above the lead's band, which the status would otherwise
+			// share pixels with.
+			subt.Offset(r.S(ssz).Sub(image.Pt(0, leadingSize))),
+			nav,
+			cs.Draw(ctx, th, dims),
+		))
+	}
+	return cosignerEntryAction{}, false
+}
+
 // cosignerFlow collects cosigner k: a key, however it arrives, past
-// the duplicate check and a confirm. Backing out of the source choice
+// the duplicate check and a confirm. Backing out of the landing page
 // reports false; the caller decides what abandoning means.
 func cosignerFlow(ctx *Context, th *Colors, slots []cosignerSlot, k, n int) (cosignerSlot, bool) {
 	title := fmt.Sprintf("Cosigner %d of %d", k+1, n)
 	for {
-		cs := &ChoiceScreen{
-			Title:   title,
-			Lead:    "Add the cosigner's key",
-			Choices: []string{"ENTER WORDS", "TAP SEED", "TAP XPUB"},
-		}
-		choice, ok := cs.Choose(ctx, th)
+		act, ok := cosignerEntry(ctx, th, title)
 		if !ok {
 			return cosignerSlot{}, false
 		}
 		var slot cosignerSlot
-		switch choice {
-		case 0, 1:
-			var mnemonic bip39.Mnemonic
-			if choice == 0 {
-				length := &ChoiceScreen{
-					Title:   title,
-					Lead:    "Choose number of words",
-					Choices: []string{"12 WORDS", "24 WORDS"},
-				}
-				lchoice, ok := length.Choose(ctx, th)
-				if !ok {
-					continue
-				}
-				mnemonic = emptyBIP39Mnemonic([]int{12, 24}[lchoice])
-				inputWordsFlow(ctx, th, mnemonic, 0)
-				if isEmptyMnemonic(mnemonic) {
-					continue
-				}
-			} else {
-				obj, ok := scanFlow(ctx, th, title, "Tap the cosigner's seed", "Not a seed phrase", func(obj any) bool {
-					_, is := obj.(bip39.Mnemonic)
-					return is
-				})
-				if !ok {
-					continue
-				}
-				mnemonic = obj.(bip39.Mnemonic)
-			}
-			// The same review and validity gate a single seed passes:
-			// checksum, the Electrum rejection, and reading the words
-			// back against the tiles or the tag's owner.
-			ss := &SeedScreen{Title: title}
-			if !ss.Confirm(ctx, th, mnemonic) {
+		switch scan := act.scan.(type) {
+		case nil:
+			mnemonic := emptyBIP39Mnemonic(act.words)
+			inputWordsFlow(ctx, th, mnemonic, 0)
+			if isEmptyMnemonic(mnemonic) {
 				continue
 			}
-			pass, ok := multisigPassphraseFlow(ctx, th, mnemonic)
-			if !ok {
-				continue
-			}
-			// Seconds of PBKDF2 with a passphrase; behind the progress
-			// screen like the seed plate's fingerprint derivation.
-			key, err := runJob(ctx, th, func(pump func(done, total int) bool) (bip380.Key, error) {
-				return cosignerKey(mnemonic, pass)
-			}, planFrame(ctx, th, blankScreen))
-			if err != nil {
-				if !errors.Is(err, errPlanCanceled) {
-					showError(ctx, th, err, blankScreen)
-				}
-				continue
-			}
-			source := "Seed on this machine"
-			if pass != "" {
-				source = "Seed with passphrase"
-			}
-			slot = cosignerSlot{key: key, mnemonic: mnemonic, passphrase: pass, source: source}
-		case 2:
-			key, ok := scanCosignerKey(ctx, th, title)
-			if !ok {
-				continue
-			}
-			slot = cosignerSlot{key: key, source: "Public key only"}
+			slot, ok = seedCosigner(ctx, th, title, mnemonic)
+		case bip39.Mnemonic:
+			slot, ok = seedCosigner(ctx, th, title, scan)
+		case bip380.Key:
+			slot, ok = keyCosigner(ctx, th, scan)
+		}
+		if !ok {
+			continue
 		}
 		if dup := slotWithFingerprint(slots, slot.key.MasterFingerprint); dup >= 0 {
 			// A doubled fingerprint is a doubled signer: the same seed
@@ -264,6 +329,62 @@ func cosignerFlow(ctx *Context, th *Colors, slots []cosignerSlot, k, n int) (cos
 			return slot, true
 		}
 	}
+}
+
+// seedCosigner takes an entrusted seed the rest of the way to a slot:
+// the same review and validity gate a single seed passes (checksum,
+// the Electrum rejection, reading the words back against the tiles or
+// the tag's owner), the passphrase ask behind its warning, then the
+// account key derivation.
+func seedCosigner(ctx *Context, th *Colors, title string, mnemonic bip39.Mnemonic) (cosignerSlot, bool) {
+	ss := &SeedScreen{Title: title}
+	if !ss.Confirm(ctx, th, mnemonic) {
+		return cosignerSlot{}, false
+	}
+	pass, ok := multisigPassphraseFlow(ctx, th, mnemonic)
+	if !ok {
+		return cosignerSlot{}, false
+	}
+	// Seconds of PBKDF2 with a passphrase; behind the progress screen
+	// like the seed plate's fingerprint derivation.
+	key, err := runJob(ctx, th, func(pump func(done, total int) bool) (bip380.Key, error) {
+		return cosignerKey(mnemonic, pass)
+	}, planFrame(ctx, th, blankScreen))
+	if err != nil {
+		if !errors.Is(err, errPlanCanceled) {
+			showError(ctx, th, err, blankScreen)
+		}
+		return cosignerSlot{}, false
+	}
+	source := "Seed on this machine"
+	if pass != "" {
+		source = "Seed with passphrase"
+	}
+	return cosignerSlot{key: key, mnemonic: mnemonic, passphrase: pass, source: source}, true
+}
+
+// keyCosigner vets a tapped account key: the cosigner who never shows
+// this machine a seed. The origin is not optional — without the
+// fingerprint no wallet can match the key to its signer, and the
+// duplicate check downstream would be blind.
+func keyCosigner(ctx *Context, th *Colors, key bip380.Key) (cosignerSlot, bool) {
+	if key.MasterFingerprint == 0 {
+		showError(ctx, th, errKeyNoOrigin, blankScreen)
+		return cosignerSlot{}, false
+	}
+	if key.Network != &chaincfg.MainNetParams {
+		showError(ctx, th, errKeyNetwork, blankScreen)
+		return cosignerSlot{}, false
+	}
+	if len(key.Children) == 0 {
+		// The tapped expression named no receive/change branches; the
+		// descriptor needs them spelled out (see seedDescriptor).
+		key.Children = []bip380.Derivation{
+			{Type: bip380.RangeDerivation, Index: 0, End: 1},
+			{Type: bip380.WildcardDerivation},
+		}
+	}
+	return cosignerSlot{key: key, source: "Public key only"}, true
 }
 
 // cosignerKey derives the BIP48 P2WSH account key a seed contributes
@@ -302,40 +423,6 @@ func cosignerKey(m bip39.Mnemonic, passphrase string) (bip380.Key, error) {
 		ChainCode:         xpub.ChainCode(),
 		ParentFingerprint: xpub.ParentFingerprint(),
 	}, nil
-}
-
-// scanCosignerKey taps a cosigner's account key: a key expression
-// with origin ([fingerprint/path]xpub...), or a single-sig descriptor
-// export that wraps one. This is the cosigner who never shows this
-// machine a seed.
-func scanCosignerKey(ctx *Context, th *Colors, title string) (bip380.Key, bool) {
-	for {
-		obj, ok := scanFlow(ctx, th, title, "Tap the cosigner's public key", "Not a cosigner key", func(obj any) bool {
-			_, ok := cosignerFromPayload(obj)
-			return ok
-		})
-		if !ok {
-			return bip380.Key{}, false
-		}
-		key, _ := cosignerFromPayload(obj)
-		if key.MasterFingerprint == 0 {
-			showError(ctx, th, errKeyNoOrigin, blankScreen)
-			continue
-		}
-		if key.Network != &chaincfg.MainNetParams {
-			showError(ctx, th, errKeyNetwork, blankScreen)
-			continue
-		}
-		if len(key.Children) == 0 {
-			// The tapped expression named no receive/change branches;
-			// the descriptor needs them spelled out (see seedDescriptor).
-			key.Children = []bip380.Derivation{
-				{Type: bip380.RangeDerivation, Index: 0, End: 1},
-				{Type: bip380.WildcardDerivation},
-			}
-		}
-		return key, true
-	}
 }
 
 // cosignerFromPayload extracts a cosigner key from the payloads a tap

@@ -2092,16 +2092,7 @@ func (m *StartScreen) draw(ctx *Context, th *Colors, dims image.Point) op.Op {
 	sttxt := ""
 	if time.Now().Before(m.scanTimeout) {
 		ctx.WakeupAt(m.scanTimeout)
-		switch m.Status {
-		case scanFailed:
-			sttxt = "Scan error"
-		case scanOverflow:
-			sttxt = "Content too large"
-		case scanStarted:
-			sttxt = "Scanning..."
-		case scanUnknownFormat:
-			sttxt = "Unknown format"
-		}
+		sttxt = scanStatusText(m.Status)
 	}
 	subt, sz := widget.Labelw(&ctx.B, ctx.Styles.subtitle, 300, th.Text, sttxt)
 	subt = subt.Offset(r.S(sz).Sub(image.Pt(0, 16)))

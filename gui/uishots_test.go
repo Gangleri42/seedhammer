@@ -203,14 +203,8 @@ func shootMultisig(t *testing.T, dir string) {
 	s.capture("msw-04-threshold")
 	click(&s.ctx.Router, Button3) // 2 OF 3, the preset
 
-	s.await("Add the cosigner's key")
-	s.capture("msw-05-source")
-	click(&s.ctx.Router, Down) // TAP SEED
-	s.pump(2)
-	click(&s.ctx.Router, Button3)
-
-	s.await("Tap the cosigner's seed")
-	s.capture("msw-06-tap-seed")
+	s.await("Enter the seed words, or tap a seed or cosigner key")
+	s.capture("msw-05-cosigner-entry")
 	nfc.payloads <- []byte(goldenSeedBacon)
 	s.await("bacon")
 	s.capture("msw-07-seed-review")
@@ -231,16 +225,14 @@ func shootMultisig(t *testing.T, dir string) {
 	s.capture("msw-09-cosigner-confirm")
 	click(&s.ctx.Router, Button3)
 
-	// Cosigners 2 and 3, without detours.
-	for _, c := range []struct{ seed, word string }{
-		{goldenSeedOil, "oil"},
-		{shotSeedPizza, "pizza"},
+	// Cosigners 2 and 3, tapped straight at their landing pages.
+	for _, c := range []struct {
+		title, seed, word string
+	}{
+		{"Cosigner 2 of 3", goldenSeedOil, "oil"},
+		{"Cosigner 3 of 3", shotSeedPizza, "pizza"},
 	} {
-		s.await("Add the cosigner's key")
-		click(&s.ctx.Router, Down)
-		s.pump(2)
-		click(&s.ctx.Router, Button3)
-		s.await("Tap the cosigner's seed")
+		s.await(c.title)
 		nfc.payloads <- []byte(c.seed)
 		s.await(c.word)
 		click(&s.ctx.Router, Button3)
@@ -349,18 +341,13 @@ func shootXpub(t *testing.T, dir string) {
 	s.await("How many must sign to spend?")
 	click(&s.ctx.Router, Button3)
 
-	s.await("Add the cosigner's key")
-	click(&s.ctx.Router, Down, Down) // TAP XPUB
-	s.pump(2)
-	click(&s.ctx.Router, Button3)
-	s.await("Tap the cosigner's public key")
-	s.capture("msw-20-tap-xpub")
+	s.await("Enter the seed words, or tap a seed or cosigner key")
 	nfc.payloads <- []byte(expr)
 	s.await("Public key only")
 	s.capture("msw-21-xpub-confirm")
 	// Back out without accepting; the flow ends with nothing entered.
 	click(&s.ctx.Router, Button1)
-	s.await("Add the cosigner's key")
+	s.await("Enter the seed words")
 	click(&s.ctx.Router, Button1)
 	s.drain()
 }

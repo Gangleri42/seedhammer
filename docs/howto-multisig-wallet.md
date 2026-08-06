@@ -59,27 +59,29 @@ changes.
    ![Choosing the number of cosigners](images/msw-03-cosigners.png)
    ![Choosing the threshold](images/msw-04-threshold.png)
 
-4. **Add each cosigner**, one at a time:
-   - **ENTER WORDS** types a drawn seed on the keyboard, 12 or 24 words,
+4. **Add each cosigner**, one at a time, from one page. Every cosigner
+   lands here, and the reader is already listening:
+
+   ![A cosigner's landing page, scanner armed](images/msw-05-cosigner-entry.png)
+
+   - **Type a drawn seed**: pick 12 or 24 words and the keyboard opens,
      with the machine offering its checksum word on the last position
      exactly as the single-seed flow does.
-   - **TAP SEED** reads the words over NFC.
-   - **TAP XPUB** reads a cosigner's account key. No seed material touches
-     this machine; that cosigner keeps their own backup, and gets no seed
-     plate here.
+   - **Tap a seed**: hold the tag to the reader, no menu first. The
+     words land on the same review screen typing ends on.
+   - **Tap an account key**: how a hardware-wallet cosigner joins. On a
+     Coldcard, export the multisig xpub over NFC and hold it to the
+     reader. The export must carry the key origin (the fingerprint and
+     `48h/0h/0h/2h` path in front of the xpub); the machine refuses a
+     bare xpub and says why. No seed material touches this machine;
+     that cosigner keeps their own backup, and gets no seed plate here.
 
-   ![The three cosigner sources](images/msw-05-source.png)
-   ![Waiting for a tapped seed](images/msw-06-tap-seed.png)
+   A tap of anything else (a text plate, a whole descriptor) shows "Not
+   a seed or cosigner key" on the page and keeps listening. A tapped
+   account key's confirm reads "Public key only": the walk's third
+   cosigner could have joined exactly like this, same fingerprint, no
+   seed:
 
-   The account key is how a hardware-wallet cosigner joins: on a
-   Coldcard, export the multisig xpub over NFC and hold it to the
-   reader. The export must carry the key origin (the fingerprint and
-   `48h/0h/0h/2h` path in front of the xpub); the machine refuses a bare
-   xpub and says why. The confirm then reads "Public key only": the
-   walk's third cosigner could have joined exactly like this, same
-   fingerprint, no seed:
-
-   ![Waiting for a tapped account key](images/msw-20-tap-xpub.png)
    ![An xpub-only cosigner's confirm](images/msw-21-xpub-confirm.png)
 
    Every seed passes the same review screen and checksum gate as a single

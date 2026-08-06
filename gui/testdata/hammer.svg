@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- The SVG how-to's demo drawing: a hammer in a ring. Closed
+       loops, rounded corners and a rotation, so the figure exercises
+       the converter's contours, arcs and transforms. Regenerate the
+       payload with:  go run ./cmd/svgplate gui/testdata/hammer.svg -->
+  <circle cx="50" cy="50" r="46"/>
+  <g transform="rotate(-45 50 50)">
+    <rect x="30" y="22" width="40" height="16" rx="3"/>
+    <rect x="46" y="38" width="8" height="42" rx="3"/>
+  </g>
+</svg>

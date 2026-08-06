@@ -97,7 +97,7 @@ fi
 # a stale manual. The doctor reads the working tree, not the index, so
 # a commit with unstaged fixes can pass here and still fail in CI,
 # which runs the same check as the authoritative net.
-if git diff --cached --name-only | grep -qE '^(gui/|docs/|cmd/docs/|README\.md)'; then
+if git diff --cached --name-only | grep -qE '^(gui/|docs/|cmd/docs/|cmd/svgplate/|README\.md)'; then
   if ! go run ./cmd/docs; then
     red "pre-commit: the docs doctor found problems (listed above)."
     yellow "  fix: go run ./cmd/docs -fix regenerates stale images; prose needs an edit."

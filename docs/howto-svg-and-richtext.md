@@ -32,6 +32,10 @@ the plate), `-pos center|x,y` places it, `-preview out.png` renders what the
 machine will show, `-size` sets the rich-text body height, `-o` names the
 output (default: the input renamed to `.curves`).
 
+The repo carries the demo pair this page's figures use, a drawing and a
+note: `gui/testdata/hammer.svg` and `gui/testdata/note.md`. Convert them as
+above to reproduce their payloads byte for byte.
+
 Every run prints the gauge table, each cost against its cap:
 
 ```
@@ -91,3 +95,16 @@ in, and the engrave screen keeps that preview: the rendered drawing, its size,
 and the engraving duration. Back cancels. Hold the button to engrave, and the
 drawing stays up with the duration counting down. The middle button hides the
 content if you would rather not leave it on screen while the machine runs.
+
+![The demo drawing held on the engrave screen](images/svg-01-drawing-preview.png)
+
+A rich-text payload arrives the same way, composed lines, table rules and
+all:
+
+![The demo note held on the engrave screen](images/svg-02-richtext-preview.png)
+
+Both as engraved, rendered from the same planned strokes the machine cuts:
+
+![The demo drawing as engraved](images/plate-svg-drawing.png)
+
+![The demo note as engraved](images/plate-richtext.png)

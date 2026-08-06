@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# pre-push, the last local gate: the docs doctor, unconditionally.
+# Commits made with --no-verify, or on a machine without the hooks,
+# land here before they reach anyone else; CI repeats the same check.
+# The run costs a few seconds (one screenshot regeneration).
+set -uo pipefail
+
+if ! go run ./cmd/docs; then
+  printf '\033[31m%s\033[0m\n' "pre-push: the docs doctor found problems (listed above)."
+  printf '\033[33m%s\033[0m\n' "  fix: go run ./cmd/docs -fix regenerates stale images; prose needs an edit."
+  exit 1
+fi
+exit 0

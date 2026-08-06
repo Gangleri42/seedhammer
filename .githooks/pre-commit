@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# pre-commit: enforce what can be checked mechanically on staged
+# content (the Go rules follow .wiki/wiki/concepts/coding-style.md):
+#
+#   1. gofmt clean: every staged .go file matches `gofmt -d`.
+#   2. No TODO / XXX / FIXME markers in *added* lines (§Comments).
+#   3. No dot-imports in *added* lines (§Imports).
+#   4. No `reflect` import in *added* non-test lines (§TinyGo idioms).
+#   5. Docs doctor: when the commit touches what the manuals render
+#      or say, the screenshots must regenerate byte-identical and the
+#      prose must pass the mechanical house style (cmd/docs).
+#
+# Only added lines are inspected for grep checks, so the hook never
+# fails on pre-existing violations unrelated to this commit. gofmt
+# applies to whole files because partial formatting is incoherent.
+#
+# Bypass with `git commit --no-verify` only as a conscious decision
+# by the committer.
+set -uo pipefail
+
+red()    { printf '\033[31m%s\033[0m\n' "$*"; }
+yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
+fail=0
+
+# Skip merge / rebase / amend-empty paths where staged content isn't
+# what's being committed.
+if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+  exit 0
+fi
+
+# 1. gofmt: whole-file check on every staged Go file.
+mapfile -t gofiles < <(git diff --cached --diff-filter=AM --name-only -- '*.go')
+if [ "${#gofiles[@]}" -gt 0 ]; then
+  bad_fmt="$(gofmt -l "${gofiles[@]}" 2>/dev/null || true)"
+  if [ -n "$bad_fmt" ]; then
+    red "pre-commit: gofmt needs to run on these staged files:"
+    echo "$bad_fmt" | sed 's/^/  /'
+    yellow "  fix: gofmt -w <files> && git add -u"
+    fail=1
+  fi
+fi
+
+# 2-4. Diff-only checks. Run on the unified diff so we see only added
+# lines (lines starting with '+' but not '+++ ' header markers).
+added_lines() {
+  # $1 = pathspec for git diff. Outputs added lines (no leading '+'),
+  # prefixed by "file:lineno:" for human-readable error reporting.
+  git diff --cached --diff-filter=AM --no-color -U0 -- "$1" \
+    | awk '
+      /^\+\+\+ b\// { file=substr($0,7); next }
+      /^@@/ {
+        # @@ -A,B +C,D @@  →  newline = C
+        n = split($3, a, ",")
+        sub(/^\+/, "", a[1])
+        lineno = a[1] + 0
+        next
+      }
+      /^\+/ && !/^\+\+\+/ {
+        line = substr($0,2)
+        print file ":" lineno ":" line
+        lineno++
+        next
+      }
+      /^[^-]/ { lineno++ }
+    '
+}
+
+# 2. TODO / XXX / FIXME in added Go lines. Comments only, but the
+# tags themselves are unambiguous enough that a substring match
+# suffices.
+todo_hits="$(added_lines '*.go' | grep -E ':\s*(//|/\*).*(TODO|XXX|FIXME)\b' || true)"
+if [ -n "$todo_hits" ]; then
+  red "pre-commit: TODO/XXX/FIXME markers are not used in this repo (§Comments):"
+  echo "$todo_hits" | sed 's/^/  /'
+  yellow "  fix: file an issue or fix it now; remove the marker."
+  fail=1
+fi
+
+# 3. Dot-imports in added Go lines.
+dot_hits="$(added_lines '*.go' | grep -E ':\s*\.\s+"[^"]+"' | grep -v '_test.go:' || true)"
+if [ -n "$dot_hits" ]; then
+  red "pre-commit: dot-imports are not used in this repo (§Imports):"
+  echo "$dot_hits" | sed 's/^/  /'
+  fail=1
+fi
+
+# 4. `reflect` import in added non-test Go lines.
+reflect_hits="$(added_lines '*.go' | grep -E ':\s*"reflect"' | grep -v '_test.go:' || true)"
+if [ -n "$reflect_hits" ]; then
+  red "pre-commit: reflect is not used in this repo (§TinyGo idioms):"
+  echo "$reflect_hits" | sed 's/^/  /'
+  fail=1
+fi
+
+# 5. Docs doctor. The screenshots under docs/images are generated
+# output (gui/uishots_test.go); a screen change without its images is
+# a stale manual. The doctor reads the working tree, not the index, so
+# a commit with unstaged fixes can pass here and still fail in CI,
+# which runs the same check as the authoritative net.
+if git diff --cached --name-only | grep -qE '^(gui/|docs/|cmd/docs/|README\.md)'; then
+  if ! go run ./cmd/docs; then
+    red "pre-commit: the docs doctor found problems (listed above)."
+    yellow "  fix: go run ./cmd/docs -fix regenerates stale images; prose needs an edit."
+    fail=1
+  fi
+fi
+
+if [ "$fail" -ne 0 ]; then
+  yellow "pre-commit: blocked. See .wiki/wiki/concepts/coding-style.md for the full rules,"
+  yellow "or rerun with --no-verify if you've consciously decided to override."
+  exit 1
+fi
+exit 0

@@ -11,3 +11,15 @@ jobs:
       with:
         go-version: '1.26'
     - run: CGO_ENABLED=0 go test ./...
+  # The docs doctor: screenshots regenerate byte-identical, image
+  # references resolve both ways, prose passes the mechanical house
+  # rules. The same check the tracked hooks run; this is the net under
+  # --no-verify and clones without the hooks.
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-go@v6
+      with:
+        go-version: '1.26'
+    - run: go run ./cmd/docs

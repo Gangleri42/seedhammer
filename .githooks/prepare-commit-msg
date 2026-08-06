@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# prepare-commit-msg — enforce the repo-owner's commit-trailer rules:
+#   1. Strip AI-attribution trailers (Co-Authored-By: Claude…,
+#      Generated with Claude Code, etc.).
+#   2. Ensure a Signed-off-by: grumpyeng <grumpyeng@seedhammer.com>
+#      trailer is present.
+#
+# Runs on every commit (including --amend, merge, squash). Idempotent:
+# rerunning a passing message is a no-op. Skips message templates that
+# git itself generated (merge / squash with -m, since those already
+# pass through).
+set -euo pipefail
+
+msg_file="$1"
+src="${2-}"
+# Don't touch merge-conflict or squash-template messages — those are
+# generated text the user hasn't authored yet.
+case "$src" in
+  merge|squash) exit 0 ;;
+esac
+
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+
+# Strip any AI-attribution / co-author trailers, case-insensitive.
+# Matches both the "Co-Authored-By: Claude..." form and the "Generated
+# with [Claude Code](...)" promo line plus its emoji prefix.
+grep -Ev -i \
+  -e '^[[:space:]]*Co-Authored-By:[[:space:]]*(Claude|noreply@anthropic)' \
+  -e '^[[:space:]]*(🤖[[:space:]]*)?Generated with .*Claude' \
+  "$msg_file" > "$tmp" || true
+
+# Collapse any run of blank lines that fell out from removals to at
+# most one, and trim trailing blank lines.
+awk 'BEGIN{blank=0} /^$/{blank++; next} {for(i=0;i<(blank>1?1:blank);i++) print ""; blank=0; print} END{}' "$tmp" > "$msg_file"
+
+# Add Signed-off-by trailer if absent. Use the configured user.* so a
+# different identity (e.g. a personal fork) still works — the rule is
+# "signoff present", not "signoff is exactly grumpyeng" (the user.*
+# config pins that separately).
+if ! grep -qE '^Signed-off-by:[[:space:]]' "$msg_file"; then
+  name="$(git config user.name)"
+  email="$(git config user.email)"
+  if [ -n "$name" ] && [ -n "$email" ]; then
+    # Ensure trailing newline before appending the trailer block.
+    [ -s "$msg_file" ] && [ "$(tail -c1 "$msg_file" | od -An -c | tr -d ' ')" != '\n' ] && echo "" >> "$msg_file"
+    echo "" >> "$msg_file"
+    echo "Signed-off-by: $name <$email>" >> "$msg_file"
+  fi
+fi

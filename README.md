@@ -291,10 +291,20 @@ the demo seeds at the device's display size. After changing a screen,
 regenerate them with
 
 ```
-$ go test ./gui -run TestUIShots -uishots docs/images
+$ go run ./cmd/docs -fix
 ```
 
-and commit the images that changed.
+and commit the images that changed. Without `-fix` the same command only
+checks: the images must regenerate byte-identical, every image reference
+must resolve in both directions, and the prose must pass the mechanical
+house rules. CI runs it, and so do the tracked git hooks; point a fresh
+clone at those once with
+
+```
+$ git config core.hooksPath .githooks
+```
+
+(entering the nix devshell does this for you).
 
 ### License
 

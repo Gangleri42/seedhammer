@@ -152,6 +152,11 @@
                 selfpkgs.flash-firmware
                 selfpkgs.copy-signature
               ];
+              # The tracked hooks gate commits and pushes (gofmt, the
+              # docs doctor). Harmless outside a git checkout.
+              shellHook = ''
+                git config core.hooksPath .githooks 2>/dev/null || true
+              '';
             };
           };
       }

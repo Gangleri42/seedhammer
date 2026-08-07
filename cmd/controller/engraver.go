@@ -163,20 +163,27 @@ func configEngraver(voltage int) (*engraver, error) {
 }
 
 func (e *engraver) configureAxes() error {
-	axes := []*tmc2209.Device{e.XAxis, e.YAxis}
+	axes := []struct {
+		dev *tmc2209.Device
+		// StallGuard minimum velocity in physical microsteps/second.
+		stallVelocity int
+	}{
+		{e.XAxis, minimumStallVelocityX},
+		{e.YAxis, minimumStallVelocityY},
+	}
 	for i, axis := range axes {
-		if err := axis.SetupSharedUART(); err != nil {
+		if err := axis.dev.SetupSharedUART(); err != nil {
 			return fmt.Errorf("axis %d: configuring UART: %w", i, err)
 		}
 	}
 	for i, axis := range axes {
-		if err := axis.Configure(); err != nil {
+		if err := axis.dev.Configure(); err != nil {
 			return fmt.Errorf("axis %d: configure: %w", i, err)
 		}
-		if err := axis.SetStallThreshold(stallThreshold); err != nil {
+		if err := axis.dev.SetStallThreshold(stallThreshold); err != nil {
 			return fmt.Errorf("axis %d: stall threshold: %w", i, err)
 		}
-		if err := axis.SetMinimumStallVelocity(minimumStallVelocity); err != nil {
+		if err := axis.dev.SetMinimumStallVelocity(axis.stallVelocity); err != nil {
 			return fmt.Errorf("axis %d: stepper stall velocity: %w", i, err)
 		}
 	}
@@ -304,14 +311,15 @@ func (e *engraver) EngraverStats() gui.EngraverStats {
 	}
 	xspeed, yspeed := 0, 0
 	if xstep > 0 {
-		xspeed = int(time.Second / (mm * xstep))
+		xspeed = int(time.Second / (xStepsPerMM * xstep))
 	}
 	if ystep > 0 {
-		yspeed = int(time.Second / (mm * ystep))
+		yspeed = int(time.Second / (yStepsPerMM * ystep))
 	}
 	xstalls, ystalls := int(e.xstalls.Load()), int(e.ystalls.Load())
 	return gui.EngraverStats{
-		StallSpeed: minimumStallVelocity / mm,
+		// Both axes share the same threshold in mm/s.
+		StallSpeed: minimumStallVelocityX / xStepsPerMM,
 		XSpeed:     xspeed,
 		YSpeed:     yspeed,
 		XLoad:      xload,
@@ -439,7 +447,7 @@ func (e *engraver) quitEngraving(err error) {
 }
 
 func (e *engraver) stepSpline(spline iter.Seq[bspline.Knot]) error {
-	drv := stepper.NewDriver(e)
+	drv := stepper.NewDriver(e, stepper.ScaleQ24(xScaleQ24), stepper.ScaleQ24(yScaleQ24))
 	for k := range spline {
 		if _, err := drv.Knot(k); err != nil {
 			return err

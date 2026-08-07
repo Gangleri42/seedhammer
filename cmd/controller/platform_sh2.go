@@ -170,16 +170,33 @@ const (
 	// stallThreshold is the TMC2209 SGTHRS for triggering a
 	// stall.
 	stallThreshold = 110
-	// minimumStallVelocity is the speed in steps/second for
-	// StallGuard to be enabled.
-	minimumStallVelocity = 8 * mm
+	// minimumStallVelocity{X,Y} is the speed in physical
+	// microsteps/second for StallGuard to be enabled: 8 mm/s per axis.
+	minimumStallVelocityX = 8 * stepsPerRevolution * xMMPerRevDen / xMMPerRevNum
+	minimumStallVelocityY = 8 * stepsPerRevolution * yMMPerRevDen / yMMPerRevNum
 	// fullStepsPerRevolution is the number of full-steps for a full
 	// motor revolution.
 	fullStepsPerRevolution = 200
-	// mmPerRevolution is the axis movement in millimeters per revolution.
-	mmPerRevolution = 8
-	// mm is the number of (micro-)steps per millimeter.
-	mm = fullStepsPerRevolution / mmPerRevolution * tmc2209.Microsteps
+	// stepsPerRevolution is the microsteps for a full motor revolution.
+	stepsPerRevolution = fullStepsPerRevolution * tmc2209.Microsteps
+	// Axis travel per motor revolution, as exact rationals in
+	// millimeters (num/den). Y is the original 8 mm leadscrew. X is the
+	// redesigned drive, and its numerator is the calibration knob:
+	// after a test engrave, multiply by measured/intended X distance.
+	xMMPerRevNum, xMMPerRevDen = 581994641, 10_000_000 // 58.1994641 mm
+	yMMPerRevNum, yMMPerRevDen = 8, 1
+	// Physical microsteps per millimeter, per axis, truncated for
+	// stats display.
+	xStepsPerMM = stepsPerRevolution * xMMPerRevDen / xMMPerRevNum
+	yStepsPerMM = stepsPerRevolution * yMMPerRevDen / yMMPerRevNum
+	// mm is the number of planning units per millimeter, the canonical
+	// scale shared with the host tools. Each axis maps planning units
+	// to its own microsteps through the Q24 scales below.
+	mm = engrave.SH2Millimeter
+	// xScaleQ24/yScaleQ24 convert planning units to physical axis
+	// microsteps, in Q24 fixed point, rounded to nearest.
+	xScaleQ24 = (stepsPerRevolution*xMMPerRevDen<<24 + xMMPerRevNum*mm/2) / (xMMPerRevNum * mm)
+	yScaleQ24 = (stepsPerRevolution*yMMPerRevDen<<24 + yMMPerRevNum*mm/2) / (yMMPerRevNum * mm)
 	// The coordinates of the top-left plate corner relative to the
 	// homing zero.
 	originX, originY = 5.0 * mm, 3.2 * mm
@@ -389,18 +406,33 @@ func (p *Platform) Wakeup() {
 	}
 }
 
-// The engraver profile is the shared single source. mm is derived from the
-// stepper hardware above and must equal the profile's scale; the compile-time
-// checks below fail the build if they ever drift, so the host tools always plan
-// against the same geometry the device engraves.
+// The engraver profile is the shared single source, planned in units of
+// engrave.SH2Millimeter per millimeter. Each axis converts those units to its
+// own microsteps through the Q24 scales derived from its mm-per-revolution, so
+// the host tools always plan against the same geometry the device engraves.
 var (
 	engraverConf   = engrave.SH2Params.StepperConfig
-	engraverParams = engrave.SH2Params
+	engraverParams = calibrated(engrave.SH2Params)
 )
 
+// calibrated attaches this device's per-axis planning-unit to microstep
+// scales to the shared profile.
+func calibrated(p engrave.Params) engrave.Params {
+	p.XScale = xScaleQ24
+	p.YScale = yScaleQ24
+	return p
+}
+
 const (
-	_ = uint(mm - engrave.SH2Millimeter)
-	_ = uint(engrave.SH2Millimeter - mm)
+	// An axis finer than the planning unit would exceed the planner's
+	// 1 step per tick budget and lose steps at full speed. If an axis
+	// ever needs more than engrave.SH2Millimeter microsteps per
+	// millimeter, raise that unit instead of loosening these.
+	_ = uint(1<<24 - xScaleQ24)
+	_ = uint(1<<24 - yScaleQ24)
+	// A degenerate scale (mistyped mm-per-revolution) must not build.
+	_ = uint(xScaleQ24 - 1)
+	_ = uint(yScaleQ24 - 1)
 )
 
 func (p *Platform) EngraverParams() engrave.Params {

@@ -11,11 +11,44 @@ type Driver struct {
 	seg     bspline.Segment
 	stepper bezier.Interpolator
 	needle  bool
-	pos     bezier.Point
+	// pos is in physical microsteps. Interpolator positions are in
+	// planning units and converted per axis by the scales.
+	pos            bezier.Point
+	xscale, yscale Scale
 
 	w     Writer
 	buf   []uint32
 	steps int
+}
+
+// Scale converts absolute positions in planning units to the physical
+// microsteps of one axis. The zero value is the identity, for an axis
+// whose microsteps per millimeter equal the planning unit scale.
+type Scale struct {
+	// ratio in Q24 fixed point, or 0 for identity.
+	ratioQ24 uint32
+}
+
+// ScaleQ24 returns the scale for a Q24 fixed-point ratio of physical
+// microsteps to planning units. Zero (and the zero Scale) is the
+// identity. Ratios must not exceed 1<<24: a physically finer axis
+// breaks the planner's 1 step per tick budget and loses steps at full
+// speed.
+func ScaleQ24(ratio uint32) Scale {
+	if ratio == 1<<24 {
+		ratio = 0
+	}
+	return Scale{ratioQ24: ratio}
+}
+
+// steps converts an absolute planning-unit coordinate to physical
+// microsteps, rounded to nearest. Scaling absolute positions rather
+// than deltas bounds the error to half a microstep with no drift.
+func (s Scale) steps(v int) int {
+	if s.ratioQ24 == 0 {
+		return v
+	}
+	return int((int64(v)*int64(s.ratioQ24) + 1<<23) >> 24)
 }
 
 type Writer interface {
@@ -46,6 +79,10 @@ func (d *Driver) fill() {
 		// careful to set at least one direction pin.
 		var pins uint8
 		pos := d.stepper.Position()
+		pos = bezier.Point{
+			X: d.xscale.steps(pos.X),
+			Y: d.yscale.steps(pos.Y),
+		}
 		// Clamp to 1 step per tick.
 		step := pos.Sub(d.pos)
 		step.X = max(min(step.X, 1), -1)
@@ -78,10 +115,12 @@ func (d *Driver) fill() {
 	}
 }
 
-func NewDriver(w Writer) *Driver {
+func NewDriver(w Writer, xscale, yscale Scale) *Driver {
 	return &Driver{
-		w:   w,
-		buf: make([]uint32, 128),
+		w:      w,
+		xscale: xscale,
+		yscale: yscale,
+		buf:    make([]uint32, 128),
 	}
 }
 

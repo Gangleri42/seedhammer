@@ -143,8 +143,9 @@ func (e *engraveJob) runEngraving(quit <-chan struct{}, progress chan uint) (cer
 		}
 	}()
 
-	drv := stepper.NewDriver(d)
-	conf := e.pl.EngraverParams().StepperConfig
+	params := e.pl.EngraverParams()
+	drv := stepper.NewDriver(d, stepper.ScaleQ24(params.XScale), stepper.ScaleQ24(params.YScale))
+	conf := params.StepperConfig
 	res := newSplineResumer(drv, e.safePoint.Resume(conf))
 	skipKnots := e.nknots
 	for k := range e.spline {

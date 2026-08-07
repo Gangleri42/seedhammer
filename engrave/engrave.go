@@ -41,6 +41,13 @@ type Params struct {
 	StrokeWidth int
 	// A Millimeter measured in machine units.
 	Millimeter int
+	// XScale and YScale convert planned positions in machine units to
+	// physical axis microsteps at step generation, as Q24 fixed-point
+	// ratios. Zero means identity: the axis moves Millimeter microsteps
+	// per millimeter. The device platform sets them from its per-axis
+	// mm-per-revolution geometry; planning, fit, and tick budgets never
+	// see them (package stepper applies them to absolute positions).
+	XScale, YScale uint32
 	StepperConfig
 }
 

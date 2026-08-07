@@ -1,8 +1,11 @@
 package engrave
 
-// SH2Millimeter is the SeedHammer II's machine units per millimeter: 200 full
-// steps per revolution, 8 mm per revolution, 256 microsteps => 6400. It is a
-// const so cmd/controller can compile-assert its hardware-derived mm against it.
+// SH2Millimeter is the SeedHammer II's planning units per millimeter: 200 full
+// steps per revolution, 8 mm per revolution, 256 microsteps => 6400, the
+// geometry of the original leadscrew axes. Axes whose hardware differs map
+// planning units to their physical microsteps through the per-axis Params
+// scales (see Params.XScale); cmd/controller compile-asserts every axis is no
+// finer than this unit, so the planner's 1 step per tick budget holds.
 const SH2Millimeter = 200 / 8 * 256
 
 // SH2Params is the single source of the SeedHammer II engraver profile: stroke

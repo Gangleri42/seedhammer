@@ -90,7 +90,7 @@ func (d *device) Write(steps []uint32) (int, error) {
 
 func runEngraving(t *testing.T, spline bspline.Curve) iter.Seq[uint8] {
 	dev := new(device)
-	drv := NewDriver(dev)
+	drv := NewDriver(dev, Scale{}, Scale{})
 	for k := range spline {
 		if _, err := drv.Knot(k); err != nil {
 			t.Fatal(err)
@@ -108,6 +108,114 @@ func runEngraving(t *testing.T, spline bspline.Curve) iter.Seq[uint8] {
 				}
 			}
 		}
+	}
+}
+
+func TestScaleSteps(t *testing.T) {
+	for _, v := range []int{-1_280_000, -100_000, -1, 0, 1, 99_999, 544_000} {
+		var zero Scale
+		if got := zero.steps(v); got != v {
+			t.Errorf("zero Scale: steps(%d) = %d", v, got)
+		}
+		if got := ScaleQ24(1 << 24).steps(v); got != v {
+			t.Errorf("unit Scale: steps(%d) = %d", v, got)
+		}
+	}
+	half := ScaleQ24(1 << 23)
+	for _, c := range []struct{ v, want int }{
+		{0, 0}, {1, 1}, {2, 1}, {3, 2}, {-1, 0}, {-2, -1}, {-3, -1},
+	} {
+		if got := half.steps(c.v); got != c.want {
+			t.Errorf("half Scale: steps(%d) = %d, want %d", c.v, got, c.want)
+		}
+	}
+	// The shape of a 58.2 mm/rev axis against 6400 units/mm: positions
+	// must be monotonic and advance by at most one microstep per unit.
+	awk := ScaleQ24(2_306_167)
+	prev := awk.steps(-5000)
+	for v := -4999; v <= 5000; v++ {
+		cur := awk.steps(v)
+		if cur < prev || cur > prev+1 {
+			t.Fatalf("steps(%d) = %d after steps(%d) = %d", v, cur, v-1, prev)
+		}
+		prev = cur
+	}
+}
+
+type tickTrace struct {
+	x, y   int
+	needle bool
+}
+
+func runScaled(t *testing.T, spline bspline.Curve, xscale, yscale Scale) (words []uint32, ticks []tickTrace) {
+	t.Helper()
+	dev := new(device)
+	drv := NewDriver(dev, xscale, yscale)
+	for k := range spline {
+		if _, err := drv.Knot(k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := drv.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	words = slices.Clone(dev.steps)
+	var pen bezier.Point
+	for _, w := range words {
+		for j := range stepsPerWord {
+			s := uint8((w >> (j * pinBits)) & (0b1<<pinBits - 1))
+			if s == 0 {
+				return words, ticks
+			}
+			dx, dy := (s>>pinDirX)&0b1, (s>>pinDirY)&0b1
+			sx, sy := (s>>pinStepX)&0b1, (s>>pinStepY)&0b1
+			pen.X += int(sx) * (1 - int(dx)*2)
+			pen.Y += int(sy) * (1 - int(dy)*2)
+			ticks = append(ticks, tickTrace{pen.X, pen.Y, s>>pinNeedle&0b1 == 0b1})
+		}
+	}
+	return words, ticks
+}
+
+func TestScale(t *testing.T) {
+	plan := func(yield func(engrave.Command) bool) {
+		_ = yield(engrave.Move(bezier.Pt(2*mm, 1*mm))) &&
+			yield(engrave.Line(bezier.Pt(30*mm, 25*mm))) &&
+			yield(engrave.Line(bezier.Pt(5*mm, 24*mm))) &&
+			yield(engrave.Line(bezier.Pt(33*mm, 7*mm)))
+	}
+	spline := engrave.PlanEngraving(params.StepperConfig, plan)
+	baseWords, base := runScaled(t, spline, Scale{}, Scale{})
+
+	// The explicit unit ratio is the identity, bit for bit.
+	identWords, _ := runScaled(t, spline, ScaleQ24(1<<24), ScaleQ24(1<<24))
+	if !slices.Equal(baseWords, identWords) {
+		t.Errorf("unit Scale changed the step words")
+	}
+
+	// Scaling X leaves the Y and needle traces untouched, keeps X
+	// within a microstep of the scaled plan, and lands exactly on the
+	// scaled endpoint.
+	xs := ScaleQ24(1 << 24 * 62 / 100)
+	_, scaled := runScaled(t, spline, xs, Scale{})
+	if len(scaled) != len(base) {
+		t.Fatalf("tick count changed: %d != %d", len(scaled), len(base))
+	}
+	for i := range base {
+		b, s := base[i], scaled[i]
+		if s.y != b.y {
+			t.Fatalf("tick %d: Y diverged: %d != %d", i, s.y, b.y)
+		}
+		if s.needle != b.needle {
+			t.Fatalf("tick %d: needle diverged", i)
+		}
+		if d := s.x - xs.steps(b.x); d < -1 || 1 < d {
+			t.Fatalf("tick %d: X = %d, want %d within 1", i, s.x, xs.steps(b.x))
+		}
+	}
+	lastB, lastS := base[len(base)-1], scaled[len(scaled)-1]
+	if lastS.x != xs.steps(lastB.x) {
+		t.Errorf("terminal X = %d, want exactly %d", lastS.x, xs.steps(lastB.x))
 	}
 }
 

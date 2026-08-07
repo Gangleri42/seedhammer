@@ -165,11 +165,13 @@ func configEngraver(voltage int) (*engraver, error) {
 func (e *engraver) configureAxes() error {
 	axes := []struct {
 		dev *tmc2209.Device
-		// StallGuard minimum velocity in physical microsteps/second.
-		stallVelocity int
+		// StallGuard sensitivity (SGTHRS) and minimum velocity in
+		// physical microsteps/second.
+		stallThreshold int
+		stallVelocity  int
 	}{
-		{e.XAxis, minimumStallVelocityX},
-		{e.YAxis, minimumStallVelocityY},
+		{e.XAxis, stallThresholdX, minimumStallVelocityX},
+		{e.YAxis, stallThresholdY, minimumStallVelocityY},
 	}
 	for i, axis := range axes {
 		if err := axis.dev.SetupSharedUART(); err != nil {
@@ -180,7 +182,7 @@ func (e *engraver) configureAxes() error {
 		if err := axis.dev.Configure(); err != nil {
 			return fmt.Errorf("axis %d: configure: %w", i, err)
 		}
-		if err := axis.dev.SetStallThreshold(stallThreshold); err != nil {
+		if err := axis.dev.SetStallThreshold(axis.stallThreshold); err != nil {
 			return fmt.Errorf("axis %d: stall threshold: %w", i, err)
 		}
 		if err := axis.dev.SetMinimumStallVelocity(axis.stallVelocity); err != nil {

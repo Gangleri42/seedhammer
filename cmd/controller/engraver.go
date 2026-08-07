@@ -166,11 +166,12 @@ func (e *engraver) configureAxes() error {
 	axes := []struct {
 		dev *tmc2209.Device
 		// StallGuard sensitivity (SGTHRS) and minimum velocity in
-		// physical microsteps/second.
+		// physical microsteps/second. X starts in the engrave
+		// regime; home() raises it around the homing spline.
 		stallThreshold int
 		stallVelocity  int
 	}{
-		{e.XAxis, stallThresholdX, minimumStallVelocityX},
+		{e.XAxis, stallThresholdXEngrave, minimumStallVelocityX},
 		{e.YAxis, stallThresholdY, minimumStallVelocityY},
 	}
 	for i, axis := range axes {
@@ -203,6 +204,11 @@ func (e *engraver) home() error {
 	conf := engraverConf
 	conf.Speed = homingSpeed
 	spline := engrave.PlanEngraving(conf, home)
+	// The homing X threshold trips on the acceleration dips of
+	// engraving travels; switch it in only around the homing spline.
+	if err := e.XAxis.SetStallThreshold(stallThresholdXHoming); err != nil {
+		return err
+	}
 	e.SwitchMode(modeHoming)
 	if err := e.stepSpline(spline); err != errHomed {
 		if err == nil {
@@ -213,6 +219,9 @@ func (e *engraver) home() error {
 	// Homing disabled both axis stepper pins. Reset the driver to
 	// force it to reset the pins.
 	e.Dev.Reset()
+	if err := e.XAxis.SetStallThreshold(stallThresholdXEngrave); err != nil {
+		return err
+	}
 
 	moveToOrigin := engrave.Engraving(slices.Values([]engrave.Command{
 		engrave.Move(bezier.Pt(originX, originY)),

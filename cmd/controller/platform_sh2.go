@@ -167,16 +167,22 @@ const (
 	// stepperPower is the driving power of the stepper drivers,
 	// in mW.
 	stepperPower = 18_000
-	// stallThreshold{X,Y} is the TMC2209 SGTHRS for triggering a
-	// stall; higher is more sensitive. StallGuard reads back-EMF, so
-	// the signal scales with motor speed: the X drive turns its motor
-	// 58.2/8 times slower than Y at the same mm/s and idles at a much
-	// lower SG_RESULT, needing its own, less sensitive threshold.
-	// Tune X on the bench with the QA screen's load readout: keep
-	// 2*SGTHRS below the lowest unloaded X load seen while homing,
-	// and raise it until real blockages are still caught.
-	stallThresholdX = 35
-	stallThresholdY = 110
+	// TMC2209 SGTHRS stall thresholds; higher is more sensitive.
+	// StallGuard reads back-EMF, so the signal scales with motor
+	// speed: the X drive turns its motor 58.2/8 times slower than Y
+	// at the same mm/s and lives in the marginal low-RPM regime
+	// across its whole speed envelope. X is therefore split by
+	// regime: homing cruises at a steady 11 RPM and wants a prompt
+	// catch (bench-tuned), while engraving travels accelerate
+	// through the weakest speeds under acceleration load, which
+	// depresses SG_RESULT and false-fires the homing threshold. A
+	// real jam collapses SG_RESULT toward zero, so the engrave
+	// threshold only needs to sit above that. Tune both on the
+	// bench: homing against catch promptness, engrave against the
+	// QA jog's stall counter staying flat.
+	stallThresholdXHoming  = 35
+	stallThresholdXEngrave = 15
+	stallThresholdY        = 110
 	// minimumStallVelocity{X,Y} is the speed in physical
 	// microsteps/second for StallGuard to be enabled: 8 mm/s per axis.
 	minimumStallVelocityX = 8 * stepsPerRevolution * xMMPerRevDen / xMMPerRevNum

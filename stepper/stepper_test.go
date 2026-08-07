@@ -209,8 +209,11 @@ func TestScale(t *testing.T) {
 		if s.needle != b.needle {
 			t.Fatalf("tick %d: needle diverged", i)
 		}
-		if d := s.x - xs.steps(b.x); d < -1 || 1 < d {
-			t.Fatalf("tick %d: X = %d, want %d within 1", i, s.x, xs.steps(b.x))
+		// Control points round before interpolation, so mid-curve
+		// positions may differ from scaled baseline positions by one
+		// extra microstep; endpoints scale exactly.
+		if d := s.x - xs.steps(b.x); d < -2 || 2 < d {
+			t.Fatalf("tick %d: X = %d, want %d within 2", i, s.x, xs.steps(b.x))
 		}
 	}
 	lastB, lastS := base[len(base)-1], scaled[len(scaled)-1]

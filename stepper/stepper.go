@@ -11,8 +11,11 @@ type Driver struct {
 	seg     bspline.Segment
 	stepper bezier.Interpolator
 	needle  bool
-	// pos is in physical microsteps. Interpolator positions are in
-	// planning units and converted per axis by the scales.
+	// pos is in physical microsteps. Segment control points are
+	// converted from planning units per axis by the scales at Knot;
+	// béziers are affine-invariant, so scaling the four control
+	// points once per segment equals scaling every interpolated
+	// position, without the per-tick cost on the step-feed hot path.
 	pos            bezier.Point
 	xscale, yscale Scale
 
@@ -79,10 +82,6 @@ func (d *Driver) fill() {
 		// careful to set at least one direction pin.
 		var pins uint8
 		pos := d.stepper.Position()
-		pos = bezier.Point{
-			X: d.xscale.steps(pos.X),
-			Y: d.yscale.steps(pos.Y),
-		}
 		// Clamp to 1 step per tick.
 		step := pos.Sub(d.pos)
 		step.X = max(min(step.X, 1), -1)
@@ -124,8 +123,22 @@ func NewDriver(w Writer, xscale, yscale Scale) *Driver {
 	}
 }
 
+// scale converts a planning-unit point to physical microsteps.
+func (d *Driver) scale(p bezier.Point) bezier.Point {
+	return bezier.Point{
+		X: d.xscale.steps(p.X),
+		Y: d.yscale.steps(p.Y),
+	}
+}
+
 func (d *Driver) Knot(k bspline.Knot) (completed uint, err error) {
 	c, ticks, needle := d.seg.Knot(k)
+	c = bezier.Cubic{
+		C0: d.scale(c.C0),
+		C1: d.scale(c.C1),
+		C2: d.scale(c.C2),
+		C3: d.scale(c.C3),
+	}
 	d.needle = needle
 	d.stepper.Segment(c, ticks)
 	for {

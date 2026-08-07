@@ -167,9 +167,16 @@ const (
 	// stepperPower is the driving power of the stepper drivers,
 	// in mW.
 	stepperPower = 18_000
-	// stallThreshold is the TMC2209 SGTHRS for triggering a
-	// stall.
-	stallThreshold = 110
+	// stallThreshold{X,Y} is the TMC2209 SGTHRS for triggering a
+	// stall; higher is more sensitive. StallGuard reads back-EMF, so
+	// the signal scales with motor speed: the X drive turns its motor
+	// 58.2/8 times slower than Y at the same mm/s and idles at a much
+	// lower SG_RESULT, needing its own, less sensitive threshold.
+	// Tune X on the bench with the QA screen's load readout: keep
+	// 2*SGTHRS below the lowest unloaded X load seen while homing,
+	// and raise it until real blockages are still caught.
+	stallThresholdX = 35
+	stallThresholdY = 110
 	// minimumStallVelocity{X,Y} is the speed in physical
 	// microsteps/second for StallGuard to be enabled: 8 mm/s per axis.
 	minimumStallVelocityX = 8 * stepsPerRevolution * xMMPerRevDen / xMMPerRevNum

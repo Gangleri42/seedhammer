@@ -8,8 +8,18 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sync"
 	"time"
 )
+
+// busMu serializes whole register transactions on the single-wire
+// UART. Both axis Devices share one bus, and a read is a request
+// datagram plus a reply window: interleaving a transaction from
+// another goroutine (the stats poller against a mid-job threshold
+// switch) corrupts the wire framing and surfaces as receive
+// timeouts. Package-level because the hardware has one bus; a second
+// bus would over-serialize harmlessly.
+var busMu sync.Mutex
 
 // Motor configuration.
 const (
@@ -87,6 +97,8 @@ func (d *Device) SetupSharedUART() error {
 	// Reading from a slave may confuse another until
 	// SENDDELAY is raised. Don't read anything until
 	// then.
+	busMu.Lock()
+	defer busMu.Unlock()
 	wr := d.scratch[:6]
 	writeDatagram(wr, d.Addr, SLAVECONF, min_SENDDELAY<<8)
 	var lerr error
@@ -222,6 +234,13 @@ func (d *Device) Error() error {
 }
 
 func (d *Device) read(addr byte) (uint32, error) {
+	busMu.Lock()
+	defer busMu.Unlock()
+	return d.readLocked(addr)
+}
+
+// readLocked is read for callers already holding busMu.
+func (d *Device) readLocked(addr byte) (uint32, error) {
 	wr, rx := d.scratch[:2], d.scratch[2:7]
 	wr[0] = d.Addr
 	wr[1] = addr
@@ -245,7 +264,9 @@ func (d *Device) read(addr byte) (uint32, error) {
 }
 
 func (d *Device) write(addr uint8, val uint32) error {
-	ifcnt, err := d.read(IFCNT)
+	busMu.Lock()
+	defer busMu.Unlock()
+	ifcnt, err := d.readLocked(IFCNT)
 	if err != nil {
 		return err
 	}
@@ -257,7 +278,7 @@ func (d *Device) write(addr uint8, val uint32) error {
 			lerr = err
 			continue
 		}
-		ifcnt2, err := d.read(IFCNT)
+		ifcnt2, err := d.readLocked(IFCNT)
 		if err != nil {
 			lerr = err
 			continue

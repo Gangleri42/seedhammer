@@ -13,11 +13,9 @@ import (
 
 func qaEngraveFlow(ctx *Context) {
 	p := ctx.Platform
-	const sz = SquarePlate
 	params := p.EngraverParams()
-	dims := plateDims(sz, params.Millimeter)
 	plan := engrave.PlanEngraving(params.StepperConfig,
-		qaPlan(params.Millimeter, dims))
+		qaPlan(params.Millimeter))
 	e := newEngraverJob(p, plan, suppressStalls)
 	e.Start()
 	defer e.Stop()
@@ -65,20 +63,26 @@ func drawQA(ctx *Context, st EngraverStats, maxXLoad, maxYLoad int, eerr string)
 	)
 }
 
-func qaPlan(mm int, dims bezier.Point) engrave.Engraving {
+func qaPlan(mm int) engrave.Engraving {
 	return func(yield func(engrave.Command) bool) {
-		margin := 1 * mm
-		mp := bezier.Pt(margin, margin)
+		// The QA pattern exercises the prototype's physical travel
+		// envelope (95x85 mm from the bumpers): an 81 mm square in the
+		// plate frame, which sits 5.0/0 mm off the bumpers, so a 2 mm
+		// plate margin clears both ends of each axis.
+		const side = 81
+		xMin, yMin := 2*mm, 2*mm
+		xMax, yMax := xMin+side*mm, yMin+side*mm
+		mp := bezier.Pt(xMin, yMin)
 		if !yield(engrave.Move(mp)) {
 			return
 		}
 		const (
 			repeats = 10
 		)
-		center := dims.Div(2)
-		topRight := bezier.Pt(int(dims.X)-margin, margin)
-		bottomLeft := bezier.Pt(margin, int(dims.Y)-margin)
-		bottomRight := bezier.Pt(int(dims.X)-margin, int(dims.Y)-margin)
+		center := bezier.Pt((xMin+xMax)/2, (yMin+yMax)/2)
+		topRight := bezier.Pt(xMax, yMin)
+		bottomLeft := bezier.Pt(xMin, yMax)
+		bottomRight := bezier.Pt(xMax, yMax)
 		rect := []bezier.Point{
 			mp,
 			topRight,
@@ -91,65 +95,65 @@ func qaPlan(mm int, dims bezier.Point) engrave.Engraving {
 		// This is the inlined result of
 		//
 		//	const segments = 50
-		//  radius := int(center.X) - margin
+		//  radius := int(40.5 * float64(mm)) // the 81 mm envelope circle
 		//  circle := circleBSpline(segments, bezier.Point{}, radius)
 		circle := []bezier.Point{
-			{X: 265600, Y: 0},
-			{X: 265600, Y: 0},
-			{X: 265600, Y: 0},
-			{X: 264943, Y: 7201},
-			{X: 264216, Y: 33327},
-			{X: 257455, Y: 68497},
-			{X: 243152, Y: 108519},
-			{X: 221958, Y: 147112},
-			{X: 195748, Y: 180655},
-			{X: 170814, Y: 204137},
-			{X: 144083, Y: 223836},
-			{X: 114838, Y: 240157},
-			{X: 83848, Y: 252648},
-			{X: 51518, Y: 261167},
-			{X: 18380, Y: 265564},
-			{X: -15049, Y: 265773},
-			{X: -48240, Y: 261792},
-			{X: -80671, Y: 253681},
-			{X: -111829, Y: 241571},
-			{X: -141225, Y: 225649},
-			{X: -168392, Y: 206170},
-			{X: -192905, Y: 183439},
-			{X: -214378, Y: 157812},
-			{X: -232450, Y: 129714},
-			{X: -246944, Y: 99501},
-			{X: -257203, Y: 67976},
-			{X: -262409, Y: 41418},
-			{X: -265134, Y: 13548},
-			{X: -265229, Y: -9429},
-			{X: -263901, Y: -33793},
-			{X: -258157, Y: -65821},
-			{X: -247003, Y: -99236},
-			{X: -233694, Y: -127757},
-			{X: -214702, Y: -157454},
-			{X: -194315, Y: -182048},
-			{X: -169720, Y: -205246},
-			{X: -142598, Y: -224858},
-			{X: -113778, Y: -240839},
-			{X: -80805, Y: -253718},
-			{X: -45974, Y: -262322},
-			{X: -2994, Y: -266268},
-			{X: 41843, Y: -263055},
-			{X: 82246, Y: -253449},
-			{X: 111924, Y: -241239},
-			{X: 131989, Y: -230092},
-			{X: 148732, Y: -219797},
-			{X: 168446, Y: -206105},
-			{X: 193278, Y: -183670},
-			{X: 220126, Y: -150105},
-			{X: 242697, Y: -109688},
-			{X: 257406, Y: -68697},
-			{X: 264201, Y: -33411},
-			{X: 264945, Y: -7216},
-			{X: 265600, Y: 0},
-			{X: 265600, Y: 0},
-			{X: 265600, Y: 0},
+			{X: 259200, Y: 0},
+			{X: 259200, Y: 0},
+			{X: 259200, Y: 0},
+			{X: 258369, Y: 13159},
+			{X: 256941, Y: 36067},
+			{X: 251496, Y: 65310},
+			{X: 240407, Y: 98696},
+			{X: 223261, Y: 132813},
+			{X: 199516, Y: 166326},
+			{X: 170823, Y: 195821},
+			{X: 140600, Y: 218558},
+			{X: 112074, Y: 234339},
+			{X: 81828, Y: 246568},
+			{X: 50277, Y: 254871},
+			{X: 17937, Y: 259166},
+			{X: -14686, Y: 259370},
+			{X: -47078, Y: 255484},
+			{X: -78729, Y: 247567},
+			{X: -109131, Y: 235754},
+			{X: -137833, Y: 220198},
+			{X: -164294, Y: 201253},
+			{X: -188411, Y: 178831},
+			{X: -208632, Y: 154713},
+			{X: -227019, Y: 126378},
+			{X: -240886, Y: 97239},
+			{X: -251265, Y: 66002},
+			{X: -256957, Y: 36078},
+			{X: -258832, Y: 10878},
+			{X: -258728, Y: -13008},
+			{X: -256415, Y: -38993},
+			{X: -250627, Y: -67462},
+			{X: -241864, Y: -95003},
+			{X: -227905, Y: -125028},
+			{X: -209328, Y: -154126},
+			{X: -183714, Y: -183766},
+			{X: -152104, Y: -210537},
+			{X: -117919, Y: -231433},
+			{X: -83766, Y: -245968},
+			{X: -49581, Y: -255068},
+			{X: -18783, Y: -258977},
+			{X: 12047, Y: -259254},
+			{X: 39490, Y: -256135},
+			{X: 62611, Y: -251281},
+			{X: 84829, Y: -244987},
+			{X: 109562, Y: -235613},
+			{X: 139090, Y: -219748},
+			{X: 170161, Y: -196481},
+			{X: 199357, Y: -166552},
+			{X: 223258, Y: -132823},
+			{X: 240402, Y: -98706},
+			{X: 251494, Y: -65318},
+			{X: 256940, Y: -36071},
+			{X: 258369, Y: -13161},
+			{X: 259200, Y: 0},
+			{X: 259200, Y: 0},
+			{X: 259200, Y: 0},
 		}
 		for {
 			for range repeats {

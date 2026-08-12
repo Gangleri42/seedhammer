@@ -240,6 +240,20 @@ func (e *engraver) home() error {
 	return e.Dev.Flush()
 }
 
+// park moves the needle to the idle parking position. The machine is
+// at the origin after homing, so plate-frame coordinates apply
+// directly.
+func (e *engraver) park() error {
+	toPark := engrave.Engraving(slices.Values([]engrave.Command{
+		engrave.Move(bezier.Pt(parkX, parkY)),
+	}))
+	spline := engrave.PlanEngraving(engraverConf, toPark)
+	if err := e.stepSpline(spline); err != nil {
+		return err
+	}
+	return e.Dev.Flush()
+}
+
 func (e *engraver) SwitchMode(m engraveMode) {
 	select {
 	case <-e.modes:

@@ -182,7 +182,13 @@ const (
 	// drives match, but carries different axis mass, so tune it on
 	// its own: homing against catch promptness, engrave against the
 	// QA jog's stall counter staying flat.
-	stallThresholdXHoming  = 35
+	// The X homing threshold sits lower than promptness would like:
+	// at 35 StallGuard collapsed on the printed drive's rising
+	// approach load about 4.4 mm before hard contact, and a soft trip
+	// point is not a position reference (a 50 mm test square landed
+	// 5 mm right of its plate position). 25 grinds for a beat at the
+	// bumper and homes to metal.
+	stallThresholdXHoming  = 25
 	stallThresholdXEngrave = 15
 	stallThresholdYHoming  = 35
 	stallThresholdYEngrave = 15
@@ -196,12 +202,13 @@ const (
 	// stepsPerRevolution is the microsteps for a full motor revolution.
 	stepsPerRevolution = fullStepsPerRevolution * tmc2209.Microsteps
 	// Axis travel per motor revolution, as exact rationals in
-	// millimeters (num/den). Both axes run the redesigned 58.1994641 mm
-	// drive (Y joined for the prototype round); the numerators are the
-	// calibration knobs: after a test engrave, multiply by
-	// measured/intended distance on that axis.
-	xMMPerRevNum, xMMPerRevDen = 581994641, 10_000_000 // 58.1994641 mm
-	yMMPerRevNum, yMMPerRevDen = 581994641, 10_000_000 // 58.1994641 mm
+	// millimeters (num/den). Both axes run the redesigned drive:
+	// design value 58.1994641, calibrated by 85/83 (a commanded 83 mm
+	// span measured 85.00 on both axes, the printed prototype running
+	// 2.41% long). The numerators are the calibration knobs: after a
+	// test engrave, multiply by measured/intended distance per axis.
+	xMMPerRevNum, xMMPerRevDen = 596018608, 10_000_000 // 59.6018608 mm
+	yMMPerRevNum, yMMPerRevDen = 596018608, 10_000_000 // 59.6018608 mm
 	// Physical microsteps per millimeter, per axis, truncated for
 	// stats display.
 	xStepsPerMM = stepsPerRevolution * xMMPerRevDen / xMMPerRevNum
@@ -214,9 +221,17 @@ const (
 	// microsteps, in Q24 fixed point, rounded to nearest.
 	xScaleQ24 = (stepsPerRevolution*xMMPerRevDen<<24 + xMMPerRevNum*mm/2) / (xMMPerRevNum * mm)
 	yScaleQ24 = (stepsPerRevolution*yMMPerRevDen<<24 + yMMPerRevNum*mm/2) / (yMMPerRevNum * mm)
-	// The coordinates of the top-left plate corner relative to the
-	// homing zero.
-	originX, originY = 5.0 * mm, 3.2 * mm
+	// The coordinates of the plate's reference corner relative to the
+	// homing zero. The prototype seats the plate at the Y bumper
+	// plane: Y travel is exactly the plate height, so only a zero Y
+	// offset makes the whole plate reachable. The old 3.2 was the
+	// previous machine's plate position.
+	originX, originY = 5.0 * mm, 0 * mm
+	// The idle parking position, in the plate frame: mid-plate, so the
+	// head rests over the plate center after the boot home and after
+	// every job close. Jobs re-home and end at the origin, so the
+	// engraving frame is unaffected.
+	parkX, parkY = 42.5 * mm, 42.5 * mm
 	// Maximum distance to travel before giving up homing.
 	homingDist = 200 * mm
 	// homingSpeed in steps/second. The engraver's stroke width, speeds,
@@ -627,7 +642,10 @@ func (e *homingEngraver) Close() (cerr error) {
 	if err := d.Dev.Flush(); err != nil {
 		return err
 	}
-	return d.home()
+	if err := d.home(); err != nil {
+		return err
+	}
+	return d.park()
 }
 
 func (e *homingEngraver) Stats() gui.EngraverStats {

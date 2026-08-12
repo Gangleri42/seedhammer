@@ -166,13 +166,13 @@ func (e *engraver) configureAxes() error {
 	axes := []struct {
 		dev *tmc2209.Device
 		// StallGuard sensitivity (SGTHRS) and minimum velocity in
-		// physical microsteps/second. X starts in the engrave
-		// regime; home() raises it around the homing spline.
+		// physical microsteps/second. Both axes start in the engrave
+		// regime; home() raises them around the homing spline.
 		stallThreshold int
 		stallVelocity  int
 	}{
 		{e.XAxis, stallThresholdXEngrave, minimumStallVelocityX},
-		{e.YAxis, stallThresholdY, minimumStallVelocityY},
+		{e.YAxis, stallThresholdYEngrave, minimumStallVelocityY},
 	}
 	for i, axis := range axes {
 		if err := axis.dev.SetupSharedUART(); err != nil {
@@ -204,9 +204,12 @@ func (e *engraver) home() error {
 	conf := engraverConf
 	conf.Speed = homingSpeed
 	spline := engrave.PlanEngraving(conf, home)
-	// The homing X threshold trips on the acceleration dips of
-	// engraving travels; switch it in only around the homing spline.
+	// The homing thresholds trip on the acceleration dips of
+	// engraving travels; switch them in only around the homing spline.
 	if err := e.XAxis.SetStallThreshold(stallThresholdXHoming); err != nil {
+		return err
+	}
+	if err := e.YAxis.SetStallThreshold(stallThresholdYHoming); err != nil {
 		return err
 	}
 	e.SwitchMode(modeHoming)
@@ -220,6 +223,9 @@ func (e *engraver) home() error {
 	// force it to reset the pins.
 	e.Dev.Reset()
 	if err := e.XAxis.SetStallThreshold(stallThresholdXEngrave); err != nil {
+		return err
+	}
+	if err := e.YAxis.SetStallThreshold(stallThresholdYEngrave); err != nil {
 		return err
 	}
 

@@ -169,20 +169,23 @@ const (
 	stepperPower = 18_000
 	// TMC2209 SGTHRS stall thresholds; higher is more sensitive.
 	// StallGuard reads back-EMF, so the signal scales with motor
-	// speed: the X drive turns its motor 58.2/8 times slower than Y
-	// at the same mm/s and lives in the marginal low-RPM regime
-	// across its whole speed envelope. X is therefore split by
-	// regime: homing cruises at a steady 11 RPM and wants a prompt
-	// catch (bench-tuned), while engraving travels accelerate
-	// through the weakest speeds under acceleration load, which
-	// depresses SG_RESULT and false-fires the homing threshold. A
-	// real jam collapses SG_RESULT toward zero, so the engrave
-	// threshold only needs to sit above that. Tune both on the
-	// bench: homing against catch promptness, engrave against the
+	// speed: the 58.2 mm/rev drives turn their motors 7.3 times
+	// slower than the original leadscrews at the same mm/s and live
+	// in the marginal low-RPM regime across the whole speed
+	// envelope. Each axis is split by regime: homing cruises at a
+	// steady 11 RPM and wants a prompt catch, while engraving
+	// travels accelerate through the weakest speeds under
+	// acceleration load, which depresses SG_RESULT and false-fires
+	// the homing threshold. A real jam collapses SG_RESULT toward
+	// zero, so the engrave thresholds only need to sit above that.
+	// X values are bench-tuned; Y starts on X's values since the
+	// drives match, but carries different axis mass, so tune it on
+	// its own: homing against catch promptness, engrave against the
 	// QA jog's stall counter staying flat.
 	stallThresholdXHoming  = 35
 	stallThresholdXEngrave = 15
-	stallThresholdY        = 110
+	stallThresholdYHoming  = 35
+	stallThresholdYEngrave = 15
 	// minimumStallVelocity{X,Y} is the speed in physical
 	// microsteps/second for StallGuard to be enabled: 8 mm/s per axis.
 	minimumStallVelocityX = 8 * stepsPerRevolution * xMMPerRevDen / xMMPerRevNum
@@ -193,11 +196,12 @@ const (
 	// stepsPerRevolution is the microsteps for a full motor revolution.
 	stepsPerRevolution = fullStepsPerRevolution * tmc2209.Microsteps
 	// Axis travel per motor revolution, as exact rationals in
-	// millimeters (num/den). Y is the original 8 mm leadscrew. X is the
-	// redesigned drive, and its numerator is the calibration knob:
-	// after a test engrave, multiply by measured/intended X distance.
+	// millimeters (num/den). Both axes run the redesigned 58.1994641 mm
+	// drive (Y joined for the prototype round); the numerators are the
+	// calibration knobs: after a test engrave, multiply by
+	// measured/intended distance on that axis.
 	xMMPerRevNum, xMMPerRevDen = 581994641, 10_000_000 // 58.1994641 mm
-	yMMPerRevNum, yMMPerRevDen = 8, 1
+	yMMPerRevNum, yMMPerRevDen = 581994641, 10_000_000 // 58.1994641 mm
 	// Physical microsteps per millimeter, per axis, truncated for
 	// stats display.
 	xStepsPerMM = stepsPerRevolution * xMMPerRevDen / xMMPerRevNum
@@ -218,8 +222,9 @@ const (
 	// homingSpeed in steps/second. The engraver's stroke width, speeds,
 	// acceleration, and jerk are the shared engrave.SH2Params (single source).
 	homingSpeed = 15 * mm
-	invertX     = true
-	invertY     = false
+	// The redesigned drives reverse the shaft sense on Y.
+	invertX = true
+	invertY = true
 )
 
 // Debug hooks.

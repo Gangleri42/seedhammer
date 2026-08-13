@@ -173,7 +173,7 @@ const (
 	// slower than the original leadscrews at the same mm/s and live
 	// in the marginal low-RPM regime across the whole speed
 	// envelope. Each axis is split by regime: homing cruises at a
-	// steady 11 RPM and wants a prompt catch, while engraving
+	// steady 21 RPM and wants a prompt catch, while engraving
 	// travels accelerate through the weakest speeds under
 	// acceleration load, which depresses SG_RESULT and false-fires
 	// the homing threshold. A real jam collapses SG_RESULT toward
@@ -182,15 +182,15 @@ const (
 	// drives match, but carries different axis mass, so tune it on
 	// its own: homing against catch promptness, engrave against the
 	// QA jog's stall counter staying flat.
-	// The X homing threshold sits lower than promptness would like:
-	// at 35 StallGuard collapsed on the printed drive's rising
-	// approach load about 4.4 mm before hard contact, and a soft trip
-	// point is not a position reference (a 50 mm test square landed
-	// 5 mm right of its plate position). 25 grinds for a beat at the
-	// bumper and homes to metal.
-	stallThresholdXHoming  = 25
+	// The light X sled skip-rattles at the hard stop, and the
+	// oscillation back-EMF holds SG_RESULT well above a dead stall,
+	// so X needs the higher trip level; the heavier Y axis stalls
+	// dead. A late catch at the stop costs noise, not position, while
+	// an early trip corrupts the origin, so both thresholds stay as
+	// low as detection allows.
+	stallThresholdXHoming  = 55
 	stallThresholdXEngrave = 15
-	stallThresholdYHoming  = 35
+	stallThresholdYHoming  = 45
 	stallThresholdYEngrave = 15
 	// minimumStallVelocity{X,Y} is the speed in physical
 	// microsteps/second for StallGuard to be enabled: 8 mm/s per axis.
@@ -234,9 +234,13 @@ const (
 	parkX, parkY = 42.5 * mm, 42.5 * mm
 	// Maximum distance to travel before giving up homing.
 	homingDist = 200 * mm
-	// homingSpeed in steps/second. The engraver's stroke width, speeds,
-	// acceleration, and jerk are the shared engrave.SH2Params (single source).
-	homingSpeed = 15 * mm
+	// homingSpeed is the homing path speed. Homing runs both axes on
+	// the diagonal, so each motor sees the path speed over sqrt(2):
+	// 30 mm/s path turns the 60 mm/rev drives near 21 RPM, fast
+	// enough for StallGuard's back-EMF signal. The engraver's stroke
+	// width, speeds, acceleration, and jerk are the shared
+	// engrave.SH2Params (single source).
+	homingSpeed = 30 * mm
 	// The redesigned drives reverse the shaft sense on Y.
 	invertX = true
 	invertY = true

@@ -202,13 +202,12 @@ const (
 	// stepsPerRevolution is the microsteps for a full motor revolution.
 	stepsPerRevolution = fullStepsPerRevolution * tmc2209.Microsteps
 	// Axis travel per motor revolution, as exact rationals in
-	// millimeters (num/den). Both axes run the redesigned drive:
-	// design value 58.1994641, calibrated by 85/83 (a commanded 83 mm
-	// span measured 85.00 on both axes, the printed prototype running
-	// 2.41% long). The numerators are the calibration knobs: after a
-	// test engrave, multiply by measured/intended distance per axis.
-	xMMPerRevNum, xMMPerRevDen = 596018608, 10_000_000 // 59.6018608 mm
-	yMMPerRevNum, yMMPerRevDen = 596018608, 10_000_000 // 59.6018608 mm
+	// millimeters (num/den). Both axes run a 30-tooth GT2 pulley on
+	// the 2 mm belt: exactly 60. The numerators are the calibration
+	// knobs: after a test engrave, multiply by measured/intended
+	// distance per axis.
+	xMMPerRevNum, xMMPerRevDen = 60, 1
+	yMMPerRevNum, yMMPerRevDen = 60, 1
 	// Physical microsteps per millimeter, per axis, truncated for
 	// stats display.
 	xStepsPerMM = stepsPerRevolution * xMMPerRevDen / xMMPerRevNum

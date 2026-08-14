@@ -23,6 +23,12 @@ type Descriptor struct {
 	Threshold int
 	Type      MultisigType
 	Keys      []Key
+	// NoChecksum records that Parse saw no #checksum, so nothing
+	// verified the transcription of what rode in. The checksum is
+	// error detection, not authentication (anyone can recompute it),
+	// and the plate QR deliberately drops it, so checksum-less input
+	// stays accepted; the confirm screen surfaces the notice instead.
+	NoChecksum bool
 }
 
 type Key struct {
@@ -298,7 +304,8 @@ func Parse(desc string) (*Descriptor, error) {
 		return nil, fmt.Errorf("bip380: script: %w", err)
 	}
 	r := &Descriptor{
-		Threshold: 1,
+		Threshold:  1,
+		NoChecksum: !ok,
 	}
 	switch script {
 	case "wsh":

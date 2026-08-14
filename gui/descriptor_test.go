@@ -273,3 +273,41 @@ func TestDescriptorSkipIsAChoice(t *testing.T) {
 		t.Errorf("choosing SKIP reported a path: %q", path)
 	}
 }
+
+// A descriptor scanned without its checksum carries a notice on the
+// confirm screen: nothing verified the transcription, and the screen
+// points the eye at the coordinator for the comparison. A checksummed
+// scan stays notice-free.
+func TestDescriptorChecksumNotice(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		noChecksum bool
+	}{
+		{"without checksum", true},
+		{"with checksum", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			desc := &bip380.Descriptor{
+				Script:     bip380.P2WSH,
+				Type:       bip380.SortedMulti,
+				Threshold:  2,
+				Keys:       make([]bip380.Key, 3),
+				NoChecksum: tc.noChecksum,
+			}
+			fillDescriptor(t, desc, desc.Script.DerivationPath(), 12, 0)
+			ctx := NewContext(newPlatform())
+			ds := &DescriptorScreen{Descriptor: desc}
+			frame, quit := runUI(ctx, func() {
+				ds.Confirm(ctx, &descriptorTheme)
+			})
+			defer quit()
+			content, ok := frame()
+			if !ok {
+				t.Fatal("confirm screen exited immediately")
+			}
+			if got := uiContains(content, "No checksum"); got != tc.noChecksum {
+				t.Errorf("notice shown = %v, want %v; frame: %q", got, tc.noChecksum, content)
+			}
+		})
+	}
+}

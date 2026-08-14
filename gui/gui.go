@@ -3384,6 +3384,14 @@ func (s *DescriptorScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.O
 	bodytxt.Y += infoSpacing
 	bodytxt.Add(&ctx.B, subst, body.Dx(), th.Text, "Script")
 	bodytxt.Add(&ctx.B, bodyst, body.Dx(), th.Text, desc.Script.String())
+	if desc.NoChecksum {
+		// Checksum-less input stays accepted (the plate QR drops the
+		// checksum by design, so re-tapping one is ordinary), but
+		// nothing verified the transcription; the eye must.
+		bodytxt.Y += infoSpacing
+		bodytxt.Add(&ctx.B, subst, body.Dx(), th.Text, "Notice")
+		bodytxt.Add(&ctx.B, bodyst, body.Dx(), th.Text, "No checksum. Compare it with the wallet before engraving.")
+	}
 
 	bodyOp := bodytxt.Content.Offset(body.Min.Add(image.Pt(0, scrollFadeDist)))
 

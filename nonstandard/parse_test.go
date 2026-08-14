@@ -103,6 +103,9 @@ c5d87297: xpub6DjrnfAyuonMaboEb3ZQZzhQ2ZEgaKV2r64BFmqymZqJqviLTe1JzMr2X2RfQF892R
 			t.Fatalf("failed to parse reference:\n%q\nerror: %v", test.desc, err)
 		}
 		want.Title = test.name
+		// want is parsed from canonical descriptor text, whose
+		// checksum presence need not match the scanned format's.
+		want.NoChecksum = got.NoChecksum
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("%q\ndecoded to\n%#v\nexpected\n%#v\n", test.encoded, got, want)
 		}

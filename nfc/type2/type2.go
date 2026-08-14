@@ -60,16 +60,18 @@ func (t *Reader) readCC() (int, error) {
 		return 0, fmt.Errorf("cc: invalid magic: %x", magic)
 	}
 	// cc[2] is the tag's own claim, so it reaches 510 blocks while the
-	// block counter is a uint8. Comparing a truncated terminator lets the
-	// counter wrap past it and the read loop never ends. Clamp to what a
-	// uint8 can address; the largest real tag, NTAG216, claims 0x6d.
+	// read address is a uint8. Read addresses block+ccBlock+1: past
+	// maxMemBlocks the address byte wraps, aliases the low blocks and
+	// steps the counter over the end-of-read comparison, so the loop
+	// never ends. Clamp to what the address byte can reach; the
+	// largest real tag, NTAG216, claims 0x6d.
 	memBlocks := min(int(cc[2])*8/blockSize, maxMemBlocks)
 	return memBlocks, nil
 }
 
-// maxMemBlocks is the highest block count the uint8 block counter can
-// reach without wrapping past the end-of-read comparison.
-const maxMemBlocks = 255
+// maxMemBlocks keeps every read address (block + ccBlock + 1) inside
+// the uint8 the wire format carries.
+const maxMemBlocks = 255 - ccBlock - 1
 
 func (t *Reader) sensReq() (uint16, error) {
 	sensReq := t.scratch[:1]

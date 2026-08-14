@@ -132,7 +132,23 @@ func TitleString(face *vector.Face, s string) string {
 	return res
 }
 
+// titleError reports the first rune of the uppercased title the face
+// cannot engrave. The plate closures cut the title mid-walk, where a
+// missing glyph is a panic in engrave.String; erring before the first
+// command leaves the caller a session instead.
+func titleError(face *vector.Face, title string) error {
+	for _, r := range strings.ToUpper(title) {
+		if _, _, ok := face.Decode(r); !ok {
+			return fmt.Errorf("backup: the title font cannot engrave %q", r)
+		}
+	}
+	return nil
+}
+
 func EngraveSeed(params engrave.Params, plate Seed) (engrave.Engraving, error) {
+	if err := titleError(plate.Font, plate.Title); err != nil {
+		return nil, err
+	}
 	var qrc *engrave.ConstantQRCmd
 	if plate.QR != nil {
 		var err error
@@ -146,6 +162,9 @@ func EngraveSeed(params engrave.Params, plate Seed) (engrave.Engraving, error) {
 }
 
 func EngraveSeedString(params engrave.Params, plate SeedString) (engrave.Engraving, error) {
+	if err := titleError(plate.Font, plate.Title); err != nil {
+		return nil, err
+	}
 	seed := strings.ToUpper(plate.Seed)
 	qrc, err := qr.Encode(seed, qr.M)
 	if err != nil {

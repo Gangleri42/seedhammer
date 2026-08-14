@@ -165,6 +165,12 @@ func TestText(t *testing.T) {
 		// Free-form text: '\n' forces line breaks, empty lines are
 		// preserved and overlong lines wrap.
 		{[]Paragraph{{Text: "IN CASE OF FIRE\n\nBREAK GLASS\n" + strings.Repeat("W", 50)}}},
+		// A QR taller than its one-line text: the next paragraph
+		// starts below the QR band, never inside it.
+		{[]Paragraph{
+			{Text: "COSIGNER A", QR: QR(t, compactMultisig), QRScale: 3},
+			{Text: "COSIGNER B"},
+		}},
 	}
 	for i, test := range tests {
 		name := fmt.Sprintf("%d-shards-%d", i, len(test.data))

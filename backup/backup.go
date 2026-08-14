@@ -453,7 +453,12 @@ func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 				t.Offset(qrx, qry)
 				qr(t.Yield)
 			}
-			offy += lineno * fontSize
+			// A QR taller than its text owns the band: advancing by
+			// text lines alone would start the next paragraph inside
+			// it. Unreachable today (descriptor plates are a single
+			// paragraph; share paragraphs are text-dominated), kept
+			// correct for the next caller.
+			offy += max(lineno, qrLines) * fontSize
 			if i != len(plate.Paragraphs)-1 {
 				// Space UR sections.
 				offy += params.I(1)

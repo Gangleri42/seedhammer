@@ -352,8 +352,15 @@ func Parse(desc string) (*Descriptor, error) {
 		if err != nil {
 			return nil, fmt.Errorf("bip380: invalid multikey threshold: %q", desc)
 		}
-		r.Threshold = threshold
 		keys = args[1:]
+		// An out-of-quorum threshold builds a script nobody should
+		// spend from (0-of-n is anyone-can-spend) or nobody can
+		// (m > n). The confirm screen renders whatever parses, so the
+		// arithmetic has to hold here.
+		if threshold < 1 || threshold > len(keys) {
+			return nil, fmt.Errorf("bip380: threshold %d of %d keys is not a spendable quorum", threshold, len(keys))
+		}
+		r.Threshold = threshold
 	}
 	for _, k := range keys {
 		key, err := ParseKey(r.Script.DerivationPath(), []byte(k))
@@ -474,7 +481,10 @@ func parsePath(path string) ([]Derivation, error) {
 		case p == "*":
 			d = Derivation{Type: WildcardDerivation}
 		case p == "*'" || p == "*h":
-			d = Derivation{Type: WildcardDerivation, Hardened: true}
+			// The hardened-range rationale below applies to wildcards
+			// too: hardened children cannot be derived from an xpub,
+			// so a hardened wildcard can never yield addresses.
+			return nil, fmt.Errorf("hardened wildcard path element: %q", p)
 		case len(p) > 2 && p[0] == '<' && p[len(p)-1] == '>':
 			starts, ends, ok := strings.Cut(p[1:len(p)-1], ";")
 			if !ok {
@@ -519,8 +529,12 @@ func parsePath(path string) ([]Derivation, error) {
 				Index: e,
 			}
 			if d.Index >= hdkeychain.HardenedKeyStart {
-				d.Index -= hdkeychain.HardenedKeyStart
-				d.Hardened = true
+				// The hardened-range rationale above, once more: no
+				// wallet export puts a hardened child after an xpub,
+				// and address derivation would otherwise silently
+				// derive the unhardened sibling of what the plate
+				// re-encodes.
+				return nil, fmt.Errorf("hardened child path element: %q", p)
 			}
 		}
 		res = append(res, d)

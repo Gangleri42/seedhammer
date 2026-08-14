@@ -165,3 +165,22 @@ func TestBlueWalletRejectsMalformed(t *testing.T) {
 		}
 	}
 }
+
+// Policy arithmetic through the scan entry point: 0-of-n is
+// anyone-can-spend and m > n is unspendable, so neither may parse.
+func TestBlueWalletRejectsBadQuorum(t *testing.T) {
+	const xp = "xpub6DiYrfRwNnjeX4vHsWMajJVFKrbEEnu8gAW9vDuQzgTWEsEHE16sGWeXXUV1LBWQE1yCTmeprSNcqZ3W74hqVdgDbtYHUv3eM4W2TEUhpan"
+	const xp2 = "xpub6DnT4E1fT8VxuAZW29avMjr5i99aYTHBp9d7fiLnpL5t4JEprQqPMbTw7k7rh5tZZ2F5g8PJpssqrZoebzBChaiJrmEvWwUTEMAbHsY39Ge"
+	export := func(policy string) []byte {
+		return []byte("Name: t\nPolicy: " + policy + "\nDerivation: m/48'/0'/0'/2'\nFormat: P2WSH\n" +
+			"dc567276: " + xp + "\nf245ae38: " + xp2 + "\n")
+	}
+	for _, policy := range []string{"0 of 2", "-1 of 2", "3 of 2"} {
+		if _, err := OutputDescriptor(export(policy)); err == nil {
+			t.Errorf("policy %q accepted", policy)
+		}
+	}
+	if _, err := OutputDescriptor(export("2 of 2")); err != nil {
+		t.Errorf("a sound policy was rejected: %v", err)
+	}
+}

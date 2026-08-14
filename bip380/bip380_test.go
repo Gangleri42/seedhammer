@@ -88,7 +88,7 @@ func TestDescriptors(t *testing.T) {
 			},
 		},
 		{
-			"wsh(sortedmulti(2,[dc567276/48h/0h/0h/2h]xpub6DiYrfRwNnjeX4vHsWMajJVFKrbEEnu8gAW9vDuQzgTWEsEHE16sGWeXXUV1LBWQE1yCTmeprSNcqZ3W74hqVdgDbtYHUv3eM4W2TEUhpan/<0;1>/1/*,[f245ae38/48h/0h/0h/2h]xpub6DnT4E1fT8VxuAZW29avMjr5i99aYTHBp9d7fiLnpL5t4JEprQqPMbTw7k7rh5tZZ2F5g8PJpssqrZoebzBChaiJrmEvWwUTEMAbHsY39Ge/<0;1>/0h/*,[c5d87297/48h/0h/0h/2h]xpub6DjrnfAyuonMaboEb3ZQZzhQ2ZEgaKV2r64BFmqymZqJqviLTe1JzMr2X2RfQF892RH7MyYUbcy77R7pPu1P71xoj8cDUMNhAMGYzKR4noZ/<0;1>/*h))#qjs07xve",
+			"wsh(sortedmulti(2,[dc567276/48h/0h/0h/2h]xpub6DiYrfRwNnjeX4vHsWMajJVFKrbEEnu8gAW9vDuQzgTWEsEHE16sGWeXXUV1LBWQE1yCTmeprSNcqZ3W74hqVdgDbtYHUv3eM4W2TEUhpan/<0;1>/1/*,[f245ae38/48h/0h/0h/2h]xpub6DnT4E1fT8VxuAZW29avMjr5i99aYTHBp9d7fiLnpL5t4JEprQqPMbTw7k7rh5tZZ2F5g8PJpssqrZoebzBChaiJrmEvWwUTEMAbHsY39Ge/<0;1>/0/*,[c5d87297/48h/0h/0h/2h]xpub6DjrnfAyuonMaboEb3ZQZzhQ2ZEgaKV2r64BFmqymZqJqviLTe1JzMr2X2RfQF892RH7MyYUbcy77R7pPu1P71xoj8cDUMNhAMGYzKR4noZ/<0;1>/*))#zpag0wrw",
 			&Descriptor{
 				Script:    P2WSH,
 				Threshold: 2,
@@ -107,7 +107,7 @@ func TestDescriptors(t *testing.T) {
 						Network:           &chaincfg.MainNetParams,
 						MasterFingerprint: 0xf245ae38,
 						DerivationPath:    []uint32{hdkeychain.HardenedKeyStart + 48, hdkeychain.HardenedKeyStart, hdkeychain.HardenedKeyStart, hdkeychain.HardenedKeyStart + 2},
-						Children:          []Derivation{{Type: RangeDerivation, Index: 0, End: 1}, {Index: 0, Hardened: true}, {Type: WildcardDerivation}},
+						Children:          []Derivation{{Type: RangeDerivation, Index: 0, End: 1}, {Index: 0}, {Type: WildcardDerivation}},
 						KeyData:           []uint8{0x3, 0x97, 0xfc, 0xf2, 0x27, 0x4a, 0xbd, 0x24, 0x3d, 0x42, 0xd4, 0x2d, 0x3c, 0x24, 0x86, 0x8, 0xc6, 0xd1, 0x93, 0x5e, 0xfc, 0xa4, 0x61, 0x38, 0xaf, 0xef, 0x43, 0xaf, 0x8, 0xe9, 0x71, 0x28, 0x96},
 						ChainCode:         []uint8{0xc8, 0x87, 0xc7, 0x2d, 0x9d, 0x8a, 0xc2, 0x9c, 0xdd, 0xd5, 0xb2, 0xb0, 0x60, 0xe8, 0xb0, 0x23, 0x90, 0x39, 0xa1, 0x49, 0xc7, 0x84, 0xab, 0xe6, 0x7, 0x9e, 0x24, 0x44, 0x5d, 0xb4, 0xaa, 0x8a},
 						ParentFingerprint: 0x221eb5a0,
@@ -116,7 +116,7 @@ func TestDescriptors(t *testing.T) {
 						Network:           &chaincfg.MainNetParams,
 						MasterFingerprint: 0xc5d87297,
 						DerivationPath:    []uint32{hdkeychain.HardenedKeyStart + 48, hdkeychain.HardenedKeyStart, hdkeychain.HardenedKeyStart, hdkeychain.HardenedKeyStart + 2},
-						Children:          []Derivation{{Type: RangeDerivation, Index: 0, End: 1}, {Type: WildcardDerivation, Hardened: true}},
+						Children:          []Derivation{{Type: RangeDerivation, Index: 0, End: 1}, {Type: WildcardDerivation}},
 						KeyData:           []uint8{0x2, 0x83, 0x42, 0xf5, 0xf7, 0x77, 0x3f, 0x6f, 0xab, 0x37, 0x4e, 0x1c, 0x2d, 0x3c, 0xcd, 0xba, 0x26, 0xbc, 0x9, 0x33, 0xfc, 0x4f, 0x63, 0x82, 0x8b, 0x66, 0x2b, 0x43, 0x57, 0xe4, 0xcc, 0x37, 0x91},
 						ChainCode:         []uint8{0x5a, 0xfe, 0xd5, 0x6d, 0x75, 0x5c, 0x8, 0x83, 0x20, 0xec, 0x9b, 0xc6, 0xac, 0xd8, 0x4d, 0x33, 0x73, 0x7b, 0x58, 0x0, 0x83, 0x75, 0x9e, 0xa, 0xf, 0xf8, 0xf2, 0x6e, 0x42, 0x9e, 0xb, 0x77},
 						ParentFingerprint: 0x1c0ae906,
@@ -204,6 +204,35 @@ func TestDescriptors(t *testing.T) {
 		enc := got.Encode()
 		if enc != test.encoded {
 			t.Errorf("\n%q\nround-tripped to\n%q", test.encoded, enc)
+		}
+	}
+}
+
+// Hardened path elements after an xpub and out-of-quorum thresholds
+// fail at parse time: neither can ever yield a spendable wallet, and
+// everything the parser accepts reaches the confirm screen.
+func TestParseRejects(t *testing.T) {
+	const xp = "xpub6DiYrfRwNnjeX4vHsWMajJVFKrbEEnu8gAW9vDuQzgTWEsEHE16sGWeXXUV1LBWQE1yCTmeprSNcqZ3W74hqVdgDbtYHUv3eM4W2TEUhpan"
+	const xp2 = "xpub6DnT4E1fT8VxuAZW29avMjr5i99aYTHBp9d7fiLnpL5t4JEprQqPMbTw7k7rh5tZZ2F5g8PJpssqrZoebzBChaiJrmEvWwUTEMAbHsY39Ge"
+	for _, desc := range []string{
+		// Hardened children and wildcards cannot be derived from an
+		// xpub; derivation would otherwise silently drop the h and
+		// yield a different wallet than the descriptor names.
+		"wpkh(" + xp + "/0h/1)",
+		"wpkh(" + xp + "/0'/1)",
+		"wsh(sortedmulti(1," + xp + "/<0;1>/0h/*))",
+		"wsh(sortedmulti(1," + xp + "/<0;1>/*h))",
+		"wsh(sortedmulti(1," + xp + "/<0;1>/*'))",
+		"wsh(sortedmulti(1," + xp + "/<0h;1>/*))",
+		// Quorum arithmetic: 0-of-n is anyone-can-spend, m > n is
+		// unspendable, and a multisig needs keys.
+		"wsh(sortedmulti(0," + xp + "," + xp2 + "))",
+		"wsh(sortedmulti(-1," + xp + "," + xp2 + "))",
+		"wsh(sortedmulti(3," + xp + "," + xp2 + "))",
+		"wsh(sortedmulti(1))",
+	} {
+		if _, err := Parse(desc); err == nil {
+			t.Errorf("parsed: %s", desc)
 		}
 	}
 }

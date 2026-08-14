@@ -36,10 +36,13 @@ func TestCompactDescriptors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%q\nfailed with: %v", test.desc, err)
 		}
-		// The compact representation omits master fingerprints.
+		// The compact representation omits master fingerprints, and it
+		// carries no checksum by design; the flag tracks the wire
+		// form, not the wallet.
 		for i := range d.Keys {
 			d.Keys[i].MasterFingerprint = 0
 		}
+		d.NoChecksum = compact.NoChecksum
 		if !reflect.DeepEqual(d, compact) {
 			t.Errorf("%q\ndiffers in its compact representation:\n%#v\n%#v\n", test.desc, d, compact)
 		}
@@ -206,6 +209,27 @@ func TestDescriptors(t *testing.T) {
 		if enc != test.encoded {
 			t.Errorf("\n%q\nround-tripped to\n%q", test.encoded, enc)
 		}
+	}
+}
+
+// The parser records whether the wire form carried a checksum; the
+// confirm screen turns the absence into a notice, since nothing else
+// verified the transcription.
+func TestParseRecordsChecksumPresence(t *testing.T) {
+	const with = "tr(xpub6BqQzsuvAV4eaCdsmbNeQ6aye8ZE4H7EjBryZJRkm39rdoqfWGdCjDeYDRVzcr561WmrjVL5mSty4se5Jsgx3dGsJPkitFALrDJ7P8M44f5)#79u003t6"
+	d, err := Parse(with)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.NoChecksum {
+		t.Error("a checksummed descriptor was flagged as checksum-less")
+	}
+	d, err = Parse(strings.TrimSuffix(with, "#79u003t6"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.NoChecksum {
+		t.Error("a checksum-less descriptor was not flagged")
 	}
 }
 

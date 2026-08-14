@@ -11,13 +11,13 @@ import (
 // its result once the flow ends. pump runs a handful of frames so
 // queued events land: the 240x240 test display leaves the input box
 // no room, so typed text cannot be awaited by content.
-func titleFlowHarness(t *testing.T, required bool, script func(ctx *Context, await func(string), pump func())) (string, bool) {
+func titleFlowHarness(t *testing.T, required bool, initial string, script func(ctx *Context, await func(string), pump func())) (string, bool) {
 	t.Helper()
 	ctx := NewContext(newPlatform())
 	var got string
 	var ok bool
 	frame, quit := runUI(ctx, func() {
-		got, ok = titleFlow(ctx, &descriptorTheme, required, "")
+		got, ok = titleFlow(ctx, &descriptorTheme, required, initial)
 	})
 	defer quit()
 	script(ctx, func(marker string) {
@@ -38,7 +38,7 @@ func titleFlowHarness(t *testing.T, required bool, script func(ctx *Context, awa
 }
 
 func TestTitleFlowDeclined(t *testing.T) {
-	got, ok := titleFlowHarness(t, false, func(ctx *Context, await func(string), pump func()) {
+	got, ok := titleFlowHarness(t, false, "", func(ctx *Context, await func(string), pump func()) {
 		await("Name this wallet")
 		click(&ctx.Router, Down)
 		await("NO TITLE")
@@ -52,7 +52,7 @@ func TestTitleFlowDeclined(t *testing.T) {
 func TestTitleFlowTyped(t *testing.T) {
 	// The editor opens on the lowercase layer; runes must speak the
 	// active layer's alphabet, as on the device.
-	got, ok := titleFlowHarness(t, true, func(ctx *Context, await func(string), pump func()) {
+	got, ok := titleFlowHarness(t, true, "", func(ctx *Context, await func(string), pump func()) {
 		await("Wallet Title")
 		runes(&ctx.Router, "vault 1")
 		pump()
@@ -67,7 +67,7 @@ func TestTitleFlowTyped(t *testing.T) {
 // steel: the screens and every plate of the set must agree on the name.
 func TestTitleFlowTooLong(t *testing.T) {
 	long := strings.Repeat("a", backup.MaxTitleLen+1)
-	_, ok := titleFlowHarness(t, true, func(ctx *Context, await func(string), pump func()) {
+	_, ok := titleFlowHarness(t, true, "", func(ctx *Context, await func(string), pump func()) {
 		await("Wallet Title")
 		runes(&ctx.Router, long)
 		pump()
@@ -79,6 +79,55 @@ func TestTitleFlowTooLong(t *testing.T) {
 	})
 	if ok {
 		t.Error("an over-cap title was accepted")
+	}
+}
+
+// A key that types fine but cannot cut bounces at entry with its name
+// on screen, and the editor keeps the text for correction. The crash
+// this replaces fired inside the fit walk, after the operator had
+// typed and confirmed a full seed.
+func TestTitleFlowUnengravable(t *testing.T) {
+	_, ok := titleFlowHarness(t, true, "Savings!", func(ctx *Context, await func(string), pump func()) {
+		await("Wallet Title")
+		click(&ctx.Router, Button2)
+		await("cannot engrave")
+		await("'!'")
+		click(&ctx.Router, Button3)
+		pump()
+		// The editor kept the text: confirming again re-rejects. A
+		// cleared editor would silently reopen instead.
+		click(&ctx.Router, Button2)
+		await("cannot engrave")
+		click(&ctx.Router, Button3)
+		pump()
+		click(&ctx.Router, Button1)
+	})
+	if ok {
+		t.Error("an unengravable title was accepted")
+	}
+}
+
+// Every key the title keyboard offers must either engrave through the
+// constant face or bounce at entry. A regenerated constant font that
+// loses a glyph has to fail here, not on the bench.
+func TestTitleAlphabetMatchesEntryCheck(t *testing.T) {
+	m := testMnemonic(t, 12)
+	seen := map[rune]bool{}
+	for _, layer := range passLayers {
+		for _, r := range layer {
+			if r == '\n' || r == layerKey || seen[r] {
+				continue
+			}
+			seen[r] = true
+			if _, rejected := unengravableTitleRune(string(r)); rejected {
+				continue
+			}
+			plan, err := engraveSeed(engraverParams, SquarePlate, m, "", string(r))
+			if err != nil {
+				t.Fatalf("entry accepts %q, engraving refuses it: %v", r, err)
+			}
+			measureLayout(plan)
+		}
 	}
 }
 

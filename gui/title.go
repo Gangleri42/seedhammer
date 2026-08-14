@@ -2,9 +2,11 @@ package gui
 
 import (
 	"errors"
+	"fmt"
+	"unicode"
 
 	"seedhammer.com/backup"
-	"seedhammer.com/font/sh"
+	"seedhammer.com/font/constant"
 )
 
 // A title longer than the plate cap engraves truncated, and a set
@@ -50,11 +52,34 @@ func titleFlow(ctx *Context, th *Colors, required bool, initial string) (string,
 			showError(ctx, th, errTitleTooLong, blankScreen)
 			continue
 		}
-		if backup.TitleString(sh.Font, title) == "" {
-			// Unreachable from the device keyboard, whose characters all
-			// engrave; guards a future initial value that does not.
+		// The length gate's engraving twin: seed plates cut the title
+		// in constant.Font, whose alphabet is narrower than the
+		// keyboard's. sh.Font, the descriptor plates' face, covers
+		// every key, so the constant face is the binding constraint,
+		// and rejecting here keeps all plates of a set carrying the
+		// same title.
+		if r, bad := unengravableTitleRune(title); bad {
+			showError(ctx, th, fmt.Errorf("A title cannot engrave %q.", r), blankScreen)
+			continue
+		}
+		if title == "" {
+			// Confirming an empty title reopens the editor: NO TITLE is
+			// the deliberate way to skip, and a required flow has none.
 			continue
 		}
 		return title, true
 	}
+}
+
+// unengravableTitleRune returns the first typed character whose
+// uppercase form the seed-plate engraving font cannot cut.
+// backup.TitleString uppercases titles before engraving, so the check
+// runs on the uppercased rune while naming the one typed.
+func unengravableTitleRune(title string) (rune, bool) {
+	for _, r := range title {
+		if _, _, ok := constant.Font.Decode(unicode.ToUpper(r)); !ok {
+			return r, true
+		}
+	}
+	return 0, false
 }

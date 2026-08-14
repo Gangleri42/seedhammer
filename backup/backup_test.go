@@ -373,6 +373,38 @@ func TestTitleString(t *testing.T) {
 	}
 }
 
+// The seventeen keys the keyboard offers that the constant face cannot
+// cut. A title carrying one must come back as an error before the
+// first command: the closures otherwise panic mid-walk, after the
+// operator typed and confirmed a full seed.
+func TestHostileTitles(t *testing.T) {
+	for _, r := range "!\"$%&+;<=>?\\^_`|~" {
+		title := "A" + string(r) + "B"
+		seed := genSeed(t, title, 12)
+		if _, err := EngraveSeed(params, seed); err == nil {
+			t.Errorf("EngraveSeed accepted title %q", title)
+		}
+		str := SeedString{
+			Title: title,
+			Seed:  "MS10TESTSXXXXXXXXXXXXXXXXXXXXXXXXXX",
+			Font:  constant.Font,
+		}
+		if _, err := EngraveSeedString(params, str); err == nil {
+			t.Errorf("EngraveSeedString accepted title %q", title)
+		}
+	}
+	// Lowercase saves on the plate: ToUpper runs before the face check.
+	for _, title := range []string{"", "Savings", "my wallet-1", "A.B:C(D)#7"} {
+		seed := genSeed(t, title, 12)
+		plan, err := EngraveSeed(params, seed)
+		if err != nil {
+			t.Fatalf("EngraveSeed refused title %q: %v", title, err)
+		}
+		for range plan {
+		}
+	}
+}
+
 func genSeed(t testing.TB, title string, seedlen int) Seed {
 	m := make(bip39.Mnemonic, seedlen)
 	for j := range m {

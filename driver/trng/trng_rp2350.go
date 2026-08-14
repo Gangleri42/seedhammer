@@ -56,14 +56,23 @@ func init() {
 	health = autocorrStats
 }
 
-// reset returns the block to a known configuration. The bootrom leaves
-// it out of reset with every health check bypassed in TRNG_DEBUG_CONTROL
-// and does not clear that on its way out, so inheriting the register
-// state would silently disable the checks this package relies on.
-func reset() {
+// reset returns the block to a known configuration and reports
+// whether it came back. The bootrom leaves the block out of reset
+// with every health check bypassed in TRNG_DEBUG_CONTROL and does not
+// clear that on its way out, so inheriting the register state would
+// silently disable the checks this package relies on. The RESET_DONE
+// spin carries the same deadline discipline as waitRun: a block that
+// never leaves reset reports false instead of hanging the screen,
+// and every caller fails closed rather than configure registers on a
+// block still in reset.
+func reset() bool {
 	rp.RESETS.SetRESET_TRNG(1)
 	rp.RESETS.SetRESET_TRNG(0)
+	deadline := time.Now().Add(runTimeout)
 	for rp.RESETS.GetRESET_DONE_TRNG() == 0 {
+		if time.Now().After(deadline) {
+			return false
+		}
 	}
 	rp.TRNG.RND_SOURCE_ENABLE.Set(0)
 	rp.TRNG.TRNG_DEBUG_CONTROL.Set(0)
@@ -71,12 +80,15 @@ func reset() {
 	rp.TRNG.RNG_ICR.Set(0xffffffff)
 	rp.TRNG.SAMPLE_CNT1.Set(sampleCount)
 	rp.TRNG.TRNG_CONFIG.Set(roscChain)
+	return true
 }
 
 // fillEHR runs generations until one passes the block's entropy checks,
 // and copies its 192 bits into ehr.
 func fillEHR(ehr *[ehrBytes]byte) error {
-	reset()
+	if !reset() {
+		return ErrUnhealthy
+	}
 	defer rp.TRNG.RND_SOURCE_ENABLE.Set(0)
 	for range attempts {
 		rp.TRNG.RNG_ICR.Set(0xffffffff)
@@ -90,7 +102,9 @@ func fillEHR(ehr *[ehrBytes]byte) error {
 			// setting 0, alternating TRNG_CONFIG here is the lever the
 			// datasheet points at.
 			rp.TRNG.RND_SOURCE_ENABLE.Set(0)
-			reset()
+			if !reset() {
+				return ErrUnhealthy
+			}
 			continue
 		case isr&isrRecoverable != 0:
 			// A failed check presents an all-zero EHR, so there is
@@ -100,7 +114,9 @@ func fillEHR(ehr *[ehrBytes]byte) error {
 		case isr&isrEHRValid == 0:
 			// Timed out, or a state the datasheet does not describe.
 			// Start the block over rather than read a stale bank.
-			reset()
+			if !reset() {
+				return ErrUnhealthy
+			}
 			continue
 		}
 		// Read every word: the last one clears the bank and re-arms

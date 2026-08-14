@@ -10,6 +10,20 @@ import (
 	"testing"
 )
 
+// A top-right drawing (large X, small Y) has Max.Y well below Min.X,
+// which the axis-crossed comparison misread as empty; the bspline
+// twin had the same typo.
+func TestBoundsEmptyTopRight(t *testing.T) {
+	topRight := Bounds{Min: Point{X: 100, Y: 1}, Max: Point{X: 200, Y: 5}}
+	if topRight.Empty() {
+		t.Error("a top-right rectangle reported empty")
+	}
+	inverted := Bounds{Min: Point{X: 0, Y: 10}, Max: Point{X: 5, Y: 2}}
+	if !inverted.Empty() {
+		t.Error("a Y-inverted rectangle reported non-empty")
+	}
+}
+
 func TestSampleFineSpacing(t *testing.T) {
 	// Sampling finer than the internal length-estimate partition
 	// must not emit duplicate or zero-value points.

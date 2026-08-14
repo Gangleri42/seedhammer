@@ -340,7 +340,10 @@ ensure_go() {
     act "= go on PATH: $("$GO" version | awk '{print $3}')"
     return 0
   fi
-  if [ -x "$HOME/.local/go/bin/go" ]; then GO="$HOME/.local/go/bin/go"; act "= go at ~/.local/go"; return 0; fi
+  # The same version gate as PATH go: a stranded pre-1.21 toolchain
+  # here would fail on GOTOOLCHAIN later, and the move-it-aside
+  # message below is the honest answer.
+  if [ -x "$HOME/.local/go/bin/go" ] && go_new_enough "$HOME/.local/go/bin/go"; then GO="$HOME/.local/go/bin/go"; act "= go at ~/.local/go"; return 0; fi
   if command -v go >/dev/null 2>&1; then
     say "go on PATH is older than 1.21 and cannot fetch the pinned toolchain"
   fi

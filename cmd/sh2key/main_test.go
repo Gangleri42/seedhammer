@@ -501,15 +501,72 @@ func TestWriteKeyPEMFileNeverClobbers(t *testing.T) {
 	if err := writeKeyPEMFile(target, data, true, fingerprint(priv)); err == nil {
 		t.Fatal("-f overwrote a different key")
 	}
-	// Same key: idempotent restore may overwrite with -f.
+	// Same key: idempotent restore may overwrite with -f, and the
+	// replacement is a fresh 0600 file even when the old copy was
+	// left world-readable. The chmod matters: WriteFile ignores its
+	// perm argument on an existing file, which is the bug itself.
 	os.WriteFile(target, data, 0o600)
+	os.Chmod(target, 0o644)
 	if err := writeKeyPEMFile(target, data, true, fingerprint(priv)); err != nil {
 		t.Fatalf("-f refused an identical key: %v", err)
 	}
-	// A non-key file yields to -f.
+	if fi, err := os.Stat(target); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("restored key mode = %v, want 0600", fi.Mode().Perm())
+	}
+	// A non-key file yields to -f, at 0600 like every key write.
 	os.WriteFile(target, []byte("scratch\n"), 0o600)
+	os.Chmod(target, 0o644)
 	if err := writeKeyPEMFile(target, data, true, fingerprint(priv)); err != nil {
 		t.Fatalf("-f refused a non-key file: %v", err)
+	}
+	if fi, err := os.Stat(target); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("restored key mode = %v, want 0600", fi.Mode().Perm())
+	}
+}
+
+// The shared -o guard: a target holding a private key is refused, and
+// everything else (absent, derived output, scratch) passes through.
+func TestRefuseKeyPEMTarget(t *testing.T) {
+	dir := t.TempDir()
+	key := filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(key, fixturePEM(t), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseKeyPEMTarget(key); err == nil {
+		t.Fatal("a key PEM target was accepted")
+	}
+	uf2 := filepath.Join(dir, "firmware.signed.uf2")
+	if err := os.WriteFile(uf2, []byte("UF2\nnot a key"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseKeyPEMTarget(uf2); err != nil {
+		t.Fatalf("a derived output was refused: %v", err)
+	}
+	if err := refuseKeyPEMTarget(filepath.Join(dir, "absent.uf2")); err != nil {
+		t.Fatalf("an absent target was refused: %v", err)
+	}
+}
+
+// The unflagged twin of signing onto the key: the instructions plate
+// aimed back at the PEM must refuse rather than replace the thing
+// being backed up with its own manual.
+func TestBackupInstructionsRefusesKeyTarget(t *testing.T) {
+	key := fixtureKeyFile(t)
+	before, err := os.ReadFile(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	rerr := run(&out, nil, []string{"backup", key, "-instructions", "-o", key})
+	if rerr == nil || !strings.Contains(rerr.Error(), "private key") {
+		t.Fatalf("backup -instructions onto the key: %v", rerr)
+	}
+	after, err := os.ReadFile(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("the key file changed")
 	}
 }
 
@@ -788,6 +845,22 @@ func TestSignImage(t *testing.T) {
 	}
 	if info.sigZero {
 		t.Fatal("signature still zero after signing")
+	}
+	// -o aimed at a key PEM is refused with the key intact: a slipped
+	// argument must never replace the boot key with firmware bytes.
+	keyPath := filepath.Join(t.TempDir(), "key.pem")
+	if err := os.WriteFile(keyPath, marshalKeyPEM(priv), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := signImage(u, priv, unsigned, keyPath); err == nil || !strings.Contains(err.Error(), "private key") {
+		t.Fatalf("signing onto a key file: %v", err)
+	}
+	kb, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(kb, marshalKeyPEM(priv)) {
+		t.Fatal("the key file changed")
 	}
 }
 

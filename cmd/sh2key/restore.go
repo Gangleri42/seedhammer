@@ -304,5 +304,19 @@ func writeKeyPEMFile(path string, data []byte, force bool, fp [32]byte) error {
 			}
 		}
 	}
-	return os.WriteFile(path, data, 0600)
+	// Replacing is a fresh 0600 create, never an in-place write: an
+	// in-place write keeps the existing file's mode, and a looser one
+	// (say 0644) must not survive onto restored key material.
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	f, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }

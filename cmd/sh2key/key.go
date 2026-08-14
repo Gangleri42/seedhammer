@@ -82,6 +82,25 @@ func keyFromScalar(b []byte) (*secp256k1.PrivateKey, error) {
 	return secp256k1.NewPrivateKey(&s), nil
 }
 
+// refuseKeyPEMTarget refuses a write target that holds a private key.
+// Signing and the instructions plate both take -o, and a slipped
+// argument must never replace the only copy of a boot key with
+// derived output: boards fused to it could never be signed for again.
+// No force flag, matching mintKey; keys are never written through
+// these paths. Derived outputs stay overwritable, since UF2 bytes and
+// curves payloads never parse as a key PEM.
+func refuseKeyPEMTarget(path string) error {
+	existing, err := os.ReadFile(path)
+	if err != nil {
+		// Absent or unreadable: nothing here this write could destroy.
+		return nil
+	}
+	if _, perr := parseKeyPEM(existing); perr == nil {
+		return fmt.Errorf("%s holds a private key; refusing to overwrite it", path)
+	}
+	return nil
+}
+
 // parseKeyPEM parses a secp256k1 private key from PEM data. It
 // accepts the SEC1 form the howto ceremony mints and the unencrypted
 // PKCS#8 form other tools emit, skips EC PARAMETERS blocks, and

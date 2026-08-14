@@ -217,6 +217,9 @@ func signImage(u *ui, priv *secp256k1.PrivateKey, inPath, outPath string) error 
 	if err != nil {
 		return err
 	}
+	if err := refuseKeyPEMTarget(outPath); err != nil {
+		return err
+	}
 	if err := os.WriteFile(outPath, raw, 0o644); err != nil {
 		return err
 	}

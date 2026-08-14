@@ -86,6 +86,12 @@ type partHeader struct {
 	Checksum   uint32
 }
 
+// Ceilings on the attacker-controlled header sizes Add accepts.
+const (
+	maxSeqLen     = 1 << 12
+	maxMessageLen = 1 << 20
+)
+
 func (d *Decoder) Progress() float32 {
 	estimated := float32(d.header.SeqLen) * 1.75
 	p := float32(len(d.completed)+len(d.mixed)) / estimated
@@ -106,6 +112,18 @@ func (d *Decoder) Add(data []byte) error {
 	p := new(part)
 	if err := mode.Unmarshal(data, p); err != nil {
 		return fmt.Errorf("fountain: failed to decode fragment: %w", err)
+	}
+	// The header fields size allocations directly (chooseFragments and
+	// chooseDegree make seqLen-long slices; Result trusts MessageLen),
+	// and both arrive in attacker CBOR. The decoder has no production
+	// caller today, but it is one wiring change from scanning hostile
+	// taps; the ceilings sit far above any payload the 32 KiB scan
+	// buffer could carry.
+	if p.SeqLen < 1 || p.SeqLen > maxSeqLen {
+		return fmt.Errorf("fountain: sequence length %d outside 1..%d", p.SeqLen, maxSeqLen)
+	}
+	if p.MessageLen < 1 || p.MessageLen > maxMessageLen {
+		return fmt.Errorf("fountain: message length %d outside 1..%d", p.MessageLen, maxMessageLen)
 	}
 	if d.header.SeqLen > 0 {
 		if d.header != p.partHeader {

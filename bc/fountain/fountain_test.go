@@ -10,8 +10,31 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/fxamacker/cbor/v2"
 	"seedhammer.com/bc/xoshiro256"
 )
+
+// Add sizes slices straight from the part header, and the header is
+// attacker CBOR. Hostile sizes must error instead of allocating.
+func TestHostileHeaderSizes(t *testing.T) {
+	hostile := []part{
+		{SeqNum: 1, partHeader: partHeader{SeqLen: 1 << 30, MessageLen: 10}},
+		{SeqNum: 1, partHeader: partHeader{SeqLen: 0, MessageLen: 10}},
+		{SeqNum: 1, partHeader: partHeader{SeqLen: -1, MessageLen: 10}},
+		{SeqNum: 1, partHeader: partHeader{SeqLen: 2, MessageLen: 1 << 40}},
+		{SeqNum: 1, partHeader: partHeader{SeqLen: 2, MessageLen: 0}},
+	}
+	for _, p := range hostile {
+		enc, err := cbor.Marshal(&p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := new(Decoder)
+		if err := d.Add(enc); err == nil {
+			t.Errorf("accepted SeqLen %d MessageLen %d", p.SeqLen, p.MessageLen)
+		}
+	}
+}
 
 func TestDecoding(t *testing.T) {
 	tests := []struct {

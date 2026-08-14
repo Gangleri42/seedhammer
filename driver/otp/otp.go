@@ -182,9 +182,17 @@ func ReadWhiteLabelString(idx uint8) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if flags&WHITE_LABEL_ADDR_VALID == 0 || flags|(0b1<<idx) == 0 {
+	if flags&WHITE_LABEL_ADDR_VALID == 0 || flags&(0b1<<idx) == 0 {
 		return "", nil
 	}
+	return readWhiteLabelEntry(tblRow, idx)
+}
+
+// readWhiteLabelEntry decodes the table entry at idx without
+// consulting the valid bits, so an interrupted write (entry and data
+// burned, valid bit not yet) stays visible to the repair path in
+// WriteWhiteLabelString.
+func readWhiteLabelEntry(tblRow uint16, idx uint8) (string, error) {
 	entry, err := readECCRow(tblRow + uint16(idx))
 	if err != nil {
 		return "", err
@@ -199,6 +207,9 @@ func ReadWhiteLabelString(idx uint8) (string, error) {
 		return "", errors.New("otp: UTF-16 label not supported")
 	}
 	n := entry & 0x7f
+	if n == 0 {
+		return "", nil
+	}
 	row := entry >> 8
 	buf := make([]byte, n)
 	if err := readECC(buf, row+tblRow); err != nil {
@@ -248,6 +259,15 @@ func WriteWhiteLabelString(idx uint8, s string) error {
 	}
 	if tblRow == 0 {
 		return errors.New("otp: white label address is not set")
+	}
+	// An interrupted earlier write can have burned the entry and its
+	// data without reaching the final valid-bit OR below. The rows
+	// are immutable now, so a fresh allocation would try to burn a
+	// conflicting entry value into the same row; when the burned
+	// entry already decodes to s, the only missing piece is the valid
+	// bit, and writeOrRow is OR-idempotent.
+	if burned, err := readWhiteLabelEntry(tblRow, idx); err == nil && burned == s {
+		return writeOrRow(USB_BOOT_FLAGS, 3, 0b1<<idx|WHITE_LABEL_ADDR_VALID)
 	}
 	const whiteLabelTableSize = 16
 	// Find space for the string, starting at the end of the

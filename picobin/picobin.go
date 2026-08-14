@@ -329,8 +329,8 @@ func (in *Image) HashData(img io.ReadSeeker, imageAddr uint32) ([]byte, error) {
 		storageStart := r.Uint32(eidx + i*12 + 0)
 		size := r.Uint32(eidx + i*12 + 8)
 		if storageStart == 0 {
-			// The size itself is hashed, not the storage.
-			if err := hashData(r, hasher, buf, eidx+8, 4); err != nil {
+			// The entry's own size word is hashed, not the storage.
+			if err := hashData(r, hasher, buf, eidx+i*12+8, 4); err != nil {
 				return nil, err
 			}
 			continue

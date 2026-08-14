@@ -104,11 +104,6 @@ func hdkeyFor(k bip380.Key) hdKey {
 			}
 		}
 	}
-	depth := len(k.DerivationPath)
-	if depth == len(k.DerivationPath) {
-		// No need to store the depth if the derivation path is present.
-		depth = 0
-	}
 	network := mainnet
 	if k.Network == &chaincfg.TestNet3Params {
 		network = testnet
@@ -122,8 +117,11 @@ func hdkeyFor(k bip380.Key) hdKey {
 		ParentFingerprint: k.ParentFingerprint,
 		Origin: keyPath{
 			Fingerprint: k.MasterFingerprint,
-			Depth:       uint8(depth),
-			Components:  pathComponents(k.DerivationPath),
+			// No need to store the depth when the derivation path is
+			// present, and the goldens pin the emitted bytes: a
+			// non-zero depth here would change every engraved UR QR.
+			Depth:      0,
+			Components: pathComponents(k.DerivationPath),
 		},
 		Children: keyPath{
 			Components: children,

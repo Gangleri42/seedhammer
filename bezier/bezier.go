@@ -421,7 +421,7 @@ func (b Bounds) Union(b2 Bounds) Bounds {
 }
 
 func (b Bounds) Empty() bool {
-	return b.Max.X < b.Min.X || b.Max.Y < b.Min.X
+	return b.Max.X < b.Min.X || b.Max.Y < b.Min.Y
 }
 
 func (b Bounds) Dx() int {

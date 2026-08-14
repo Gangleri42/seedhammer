@@ -183,6 +183,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             return self._json(400, {"error": "bad content-length"})
+        # A negative length passes the ceiling check and rfile.read(-1)
+        # then reads until EOF, unbounded.
+        if n < 0:
+            return self._json(400, {"error": "bad content-length"})
         if n > MAX_BODY:
             return self._json(413, {"error": "payload too large"})
         try:
@@ -199,7 +203,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 payload = payload.encode()
             if not payload:
                 raise ValueError("empty payload")
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError, binascii.Error) as e:
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError, binascii.Error, RecursionError) as e:
+            # RecursionError: deeply nested JSON ("["*100000) is not a
+            # ValueError and would otherwise kill the handler thread.
             return self._json(400, {"error": f"bad request: {e}"})
         if not _write_lock.acquire(blocking=False):
             return self._json(409, {"status": "busy"})

@@ -41,6 +41,32 @@ func TestReader(t *testing.T) {
 	}
 }
 
+// A tag claiming more memory than the uint8 read address can reach:
+// cc[2] 0x7f claims 254 blocks, but the wire address block+ccBlock+1
+// caps the reachable span at 251 blocks. The reader must stop there;
+// past it the address byte wraps to the low blocks and the loop never
+// finds its terminator.
+func TestReaderClaimPastAddressSpace(t *testing.T) {
+	data := make([]byte, 254*blockSize)
+	for i := range data {
+		data[i] = byte(i)
+	}
+	capContainer := []byte{ccMagic, 0x10, 0x7f, 0x00}
+	tag := &Tag{uid: 0xdeadbeef, mem: append(capContainer, data...)}
+	r, err := NewReader(tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bufr := bufio.NewReaderSize(r, 128)
+	got, err := io.ReadAll(bufr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := data[:maxMemBlocks*blockSize]; !bytes.Equal(got, want) {
+		t.Errorf("read %d bytes, want the %d the address byte reaches", len(got), len(want))
+	}
+}
+
 // Tag implements a NFC forum type 2 tag.
 type Tag struct {
 	uid   uint32

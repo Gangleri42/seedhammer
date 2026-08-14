@@ -343,21 +343,36 @@ func TestParseTransformMalformed(t *testing.T) {
 	}
 }
 
+// Trailing transform garbage and unit-suffixed lengths are silent
+// geometry changes in a browser (whole attribute dropped, length
+// zeroed); the converter errors so the author sees the problem in the
+// terminal instead of on the device preview.
+func TestSilentGeometryRejected(t *testing.T) {
+	if _, err := parseTransform("translate(5) garbage"); err == nil {
+		t.Error("trailing transform garbage was accepted")
+	}
+	for _, doc := range []string{
+		`<svg viewBox="0 0 100 100"><rect x="0" y="0" width="10mm" height="50"/></svg>`,
+		`<svg viewBox="0 0 100 100"><circle cx="10px" cy="10" r="5"/></svg>`,
+		`<svg viewBox="0 0 100 100"><rect x="0" y="0" width="10" height="50" rx="2mm"/></svg>`,
+	} {
+		if _, err := extractSVG([]byte(doc)); err == nil {
+			t.Errorf("accepted: %s", doc)
+		}
+	}
+	// A clean unitless drawing still parses.
+	if _, err := extractSVG([]byte(`<svg viewBox="0 0 100 100"><rect x="0" y="0" width="10" height="50"/></svg>`)); err != nil {
+		t.Errorf("a unitless drawing was rejected: %v", err)
+	}
+}
+
 func TestNonFiniteRejected(t *testing.T) {
-	// A NaN attribute is sanitized to 0 by num, so it never reaches
+	// A NaN attribute is rejected loudly by num, so it never reaches
 	// the payload; and finish's guard catches any non-finite that
 	// slips through by another path.
 	const doc = `<svg viewBox="0 0 100 100"><rect x="NaN" y="0" width="50" height="50"/></svg>`
-	raw, err := extractSVG([]byte(doc))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, s := range raw.flatten() {
-		for i := 0; i < s.npts(); i++ {
-			if math.IsNaN(s.p[i].X) || math.IsNaN(s.p[i].Y) {
-				t.Fatalf("NaN reached geometry: %v", s.p[i])
-			}
-		}
+	if _, err := extractSVG([]byte(doc)); err == nil {
+		t.Fatal("a NaN attribute was accepted")
 	}
 	// The guard itself rejects a hand-built non-finite segment.
 	bad := []fseg{{op: svgpath.MoveTo, p: [3]fpt{{math.Inf(1), 0}}}}
@@ -499,7 +514,10 @@ func TestRectRadii(t *testing.T) {
 		{"-5", "", 20, 10, 0, 0, "negative is no radius"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			x, y := rectRadii(tc.rx, tc.ry, tc.w, tc.h)
+			x, y, err := rectRadii(tc.rx, tc.ry, tc.w, tc.h)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !approx(x, tc.wantX, 1e-9) || !approx(y, tc.wantY, 1e-9) {
 				t.Errorf("got (%g,%g), want (%g,%g)", x, y, tc.wantX, tc.wantY)
 			}

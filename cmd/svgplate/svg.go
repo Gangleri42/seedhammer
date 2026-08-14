@@ -204,7 +204,11 @@ func (b *builder) expandUse(n *node, m matrix, depth int) error {
 	if err != nil {
 		return err
 	}
-	m = m.mul(translateM(num(attr(n.el, "x")), num(attr(n.el, "y"))))
+	off, err := nums(n.el, "x", "y")
+	if err != nil {
+		return err
+	}
+	m = m.mul(translateM(off[0], off[1]))
 	return b.walk(target, m, depth+1, true)
 }
 
@@ -261,28 +265,47 @@ func shapeSegments(e xml.StartElement) ([]fseg, error) {
 	case "path":
 		return parsePath(attr(e, "d"))
 	case "rect":
-		x, y := num(attr(e, "x")), num(attr(e, "y"))
-		w, h := num(attr(e, "width")), num(attr(e, "height"))
+		v, err := nums(e, "x", "y", "width", "height")
+		if err != nil {
+			return nil, err
+		}
+		x, y, w, h := v[0], v[1], v[2], v[3]
 		if w <= 0 || h <= 0 {
 			return nil, nil
 		}
-		if rx, ry := rectRadii(attr(e, "rx"), attr(e, "ry"), w, h); rx > 0 && ry > 0 {
+		rx, ry, err := rectRadii(attr(e, "rx"), attr(e, "ry"), w, h)
+		if err != nil {
+			return nil, err
+		}
+		if rx > 0 && ry > 0 {
 			return roundRect(x, y, w, h, rx, ry), nil
 		}
 		return polygon([]fpt{{x, y}, {x + w, y}, {x + w, y + h}, {x, y + h}}, true), nil
 	case "line":
+		v, err := nums(e, "x1", "y1", "x2", "y2")
+		if err != nil {
+			return nil, err
+		}
 		return []fseg{
-			{op: svgpath.MoveTo, p: [3]fpt{{num(attr(e, "x1")), num(attr(e, "y1"))}}},
-			{op: svgpath.LineTo, p: [3]fpt{{num(attr(e, "x2")), num(attr(e, "y2"))}}},
+			{op: svgpath.MoveTo, p: [3]fpt{{v[0], v[1]}}},
+			{op: svgpath.LineTo, p: [3]fpt{{v[2], v[3]}}},
 		}, nil
 	case "polyline":
 		return polyPoints(attr(e, "points"), false)
 	case "polygon":
 		return polyPoints(attr(e, "points"), true)
 	case "circle":
-		return ellipse(num(attr(e, "cx")), num(attr(e, "cy")), num(attr(e, "r")), num(attr(e, "r"))), nil
+		v, err := nums(e, "cx", "cy", "r")
+		if err != nil {
+			return nil, err
+		}
+		return ellipse(v[0], v[1], v[2], v[2]), nil
 	case "ellipse":
-		return ellipse(num(attr(e, "cx")), num(attr(e, "cy")), num(attr(e, "rx")), num(attr(e, "ry"))), nil
+		v, err := nums(e, "cx", "cy", "rx", "ry")
+		if err != nil {
+			return nil, err
+		}
+		return ellipse(v[0], v[1], v[2], v[3]), nil
 	}
 	return nil, nil
 }
@@ -322,26 +345,35 @@ const kappa = 0.5522847498307936
 // attribute alone sets both axes, and each clamps to half its side,
 // per SVG's rect geometry rules. Absent, "auto" and negative all mean
 // no radius on that axis.
-func rectRadii(rxs, rys string, w, h float64) (float64, float64) {
-	rx, hasX := radius(rxs)
-	ry, hasY := radius(rys)
+func rectRadii(rxs, rys string, w, h float64) (float64, float64, error) {
+	rx, hasX, err := radius(rxs)
+	if err != nil {
+		return 0, 0, err
+	}
+	ry, hasY, err := radius(rys)
+	if err != nil {
+		return 0, 0, err
+	}
 	switch {
 	case !hasX && !hasY:
-		return 0, 0
+		return 0, 0, nil
 	case !hasX:
 		rx = ry
 	case !hasY:
 		ry = rx
 	}
-	return math.Min(rx, w/2), math.Min(ry, h/2)
+	return math.Min(rx, w/2), math.Min(ry, h/2), nil
 }
 
-func radius(s string) (float64, bool) {
+func radius(s string) (float64, bool, error) {
 	if s = strings.TrimSpace(s); s == "" || s == "auto" {
-		return 0, false
+		return 0, false, nil
 	}
-	v := num(s)
-	return v, v > 0
+	v, err := num(s)
+	if err != nil {
+		return 0, false, err
+	}
+	return v, v > 0, nil
 }
 
 // roundRect outlines a rect with elliptical corners, as four sides and
@@ -386,7 +418,11 @@ func parseTransform(s string) (matrix, error) {
 	for s != "" {
 		open := strings.IndexByte(s, '(')
 		if open < 0 {
-			break
+			// Trailing bytes that are not a function call. A browser
+			// discards the whole attribute for this; keeping the
+			// parsed prefix would silently move the geometry, so the
+			// author gets an error instead.
+			return m, fmt.Errorf("svg: trailing transform garbage %q", s)
 		}
 		name := strings.TrimSpace(s[:open])
 		close := strings.IndexByte(s, ')')
@@ -435,15 +471,37 @@ func arg(a []float64, i int, def float64) float64 {
 	return def
 }
 
-// num parses a lone float, returning 0 on failure (missing attribute)
-// or a non-finite value. strconv.ParseFloat accepts "NaN" and "Inf",
-// which would otherwise poison the geometry.
-func num(s string) float64 {
-	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0
+// num parses a lone float. An empty value (a missing attribute) is 0;
+// anything else must parse fully, so a unit-suffixed length ("10mm",
+// "10px") errors instead of silently becoming 0 and shrinking the
+// shape to nothing. strconv.ParseFloat accepts "NaN" and "Inf", which
+// would poison the geometry; they error too.
+func num(s string) (float64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
 	}
-	return f
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, fmt.Errorf("svg: invalid length %q; unit suffixes are not supported, use unitless user units", s)
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("svg: non-finite length %q", s)
+	}
+	return f, nil
+}
+
+// nums parses the named attributes of e in order.
+func nums(e xml.StartElement, names ...string) ([]float64, error) {
+	out := make([]float64, len(names))
+	for i, n := range names {
+		v, err := num(attr(e, n))
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
+	}
+	return out, nil
 }
 
 // floats scans every number out of a whitespace/comma separated list.

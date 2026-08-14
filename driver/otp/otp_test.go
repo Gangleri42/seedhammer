@@ -172,6 +172,53 @@ func TestWhiteLabel(t *testing.T) {
 	}
 }
 
+// An interrupted LockBoot: the entry and its data burn, the final
+// valid-bit OR does not. The valid check keeps the half-written
+// entry invisible between runs, and the rerun repairs it by
+// re-asserting the bit instead of burning a conflicting entry.
+func TestWhiteLabelInterruptedWrite(t *testing.T) {
+	resetOTP()
+	if err := WriteWhiteLabelAddr(FirstUserRow); err != nil {
+		t.Fatal(err)
+	}
+	// A completed neighbor first, so WHITE_LABEL_ADDR_VALID is set
+	// and only the interrupted string's own bit is at stake.
+	if err := WriteWhiteLabelString(INDEX_INFO_UF2_TXT_MODEL_STRDEF, "model"); err != nil {
+		t.Fatal(err)
+	}
+	const want = "boardid"
+	inner := otp_access
+	failFlags := true
+	otp_access = func(bufPtr *uint8, buf_len, row_and_flags uint32) int {
+		row := uint16(row_and_flags & 0xffff)
+		write := row_and_flags&(_IS_WRITE<<16) != 0
+		if failFlags && write && USB_BOOT_FLAGS <= row && row < USB_BOOT_FLAGS+3 {
+			return _BOOTROM_ERROR_NOT_PERMITTED
+		}
+		return inner(bufPtr, buf_len, row_and_flags)
+	}
+	if err := WriteWhiteLabelString(INDEX_INFO_UF2_TXT_BOARD_ID_STRDEF, want); err == nil {
+		t.Fatal("the interrupted write reported success")
+	}
+	// Between runs the entry must be invisible: its valid bit is not
+	// set, whatever the burned rows hold.
+	if got, err := ReadWhiteLabelString(INDEX_INFO_UF2_TXT_BOARD_ID_STRDEF); err != nil || got != "" {
+		t.Fatalf("half-written label reads %q, %v; want invisible", got, err)
+	}
+	// The rerun repairs: same value, no conflicting entry burn.
+	failFlags = false
+	if err := WriteWhiteLabelString(INDEX_INFO_UF2_TXT_BOARD_ID_STRDEF, want); err != nil {
+		t.Fatalf("repair rerun failed: %v", err)
+	}
+	if got, err := ReadWhiteLabelString(INDEX_INFO_UF2_TXT_BOARD_ID_STRDEF); err != nil || got != want {
+		t.Fatalf("repaired label reads %q, %v; want %q", got, err, want)
+	}
+	// The neighbor survived throughout.
+	if got, err := ReadWhiteLabelString(INDEX_INFO_UF2_TXT_MODEL_STRDEF); err != nil || got != "model" {
+		t.Fatalf("neighbor label reads %q, %v; want %q", got, err, "model")
+	}
+}
+
 func resetOTP() {
 	mem := make([]byte, numRows*3)
 	otp_access = func(bufPtr *uint8, buf_len, row_and_flags uint32) int {

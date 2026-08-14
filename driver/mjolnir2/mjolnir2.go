@@ -272,6 +272,16 @@ func (d *Device) stalled() bool {
 }
 
 func (d *Device) advanceDMA() int {
+	if d.status != running {
+		// Between Reset and ensureStarted the channel is not yet
+		// configured for this job, so whatever TRANS_COUNT reads is
+		// not this job's progress: a stale remainder R would credit
+		// len(dmaBuf)-R phantom words into the ring and from there
+		// into SafePointer's resume ledger. Zero here is correct
+		// under either reading of what CHAN_ABORT leaves in the
+		// counter, so nothing rests on the datasheet's word.
+		return 0
+	}
 	dch := dma.ChannelFor(d.channels.At(0))
 	remaining := int(dch.TRANS_COUNT.Get())
 	completed := d.ring.AdvanceRead(remaining)

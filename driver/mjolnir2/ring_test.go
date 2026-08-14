@@ -6,6 +6,26 @@ import (
 	"testing"
 )
 
+// After a Reset the only truthful advance is zero words: the ring
+// maps a remaining-count R to len(buf)-R completed words, so a stale
+// TRANS_COUNT remainder from an aborted job credits words this job
+// never wrote. The ring cannot tell the difference, which is why
+// Device.advanceDMA is gated on a running job.
+func TestRingAdvanceAfterReset(t *testing.T) {
+	r := newRing(make([]uint32, 16))
+	r.Write(make([]uint32, 10))
+	r.AdvanceRead(16 - 6)
+	r.Reset()
+	if got := r.AdvanceRead(0); got != 0 {
+		t.Errorf("a zero post-reset advance credited %d words", got)
+	}
+	// The phantom shape the gate exists for: a stale remainder
+	// credits words the ring never carried.
+	if got := r.AdvanceRead(5); got != 16-5 {
+		t.Errorf("a stale remainder of 5 credited %d words, not the %d the arithmetic implies", got, 16-5)
+	}
+}
+
 func TestRing(t *testing.T) {
 	buf := make([]uint32, 1024)
 	r := newRing(buf)

@@ -128,7 +128,12 @@ func emitInstructions(stdout io.Writer, priv *secp256k1.PrivateKey, outPath stri
 		delivered = true
 	default:
 		// The instructions are public and regenerable at any time;
-		// unlike key material they may be overwritten freely.
+		// unlike key material they may be overwritten freely. The one
+		// exception is the key itself: -o aimed back at the PEM must
+		// not replace the thing being backed up with its own manual.
+		if err := refuseKeyPEMTarget(outPath); err != nil {
+			return err
+		}
 		if err := os.WriteFile(outPath, payload, 0o644); err != nil {
 			return err
 		}

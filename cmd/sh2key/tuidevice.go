@@ -424,12 +424,6 @@ func (p *provisionScreen) handle(ev keyEvent) navAction {
 		if a.priv == nil {
 			return a.message(p.title(), true, "no key; mint or restore from home first")
 		}
-		if a.board == nil {
-			a.refreshBoard()
-			if a.board == nil {
-				return nil
-			}
-		}
 		if !p.esb && p.fw == "" {
 			if len(p.fwCands) > 1 {
 				// Ambiguity is a choice, not an error: enter opens
@@ -440,6 +434,15 @@ func (p *provisionScreen) handle(ev keyEvent) navAction {
 			if p.fw == "" {
 				return nil
 			}
+		}
+		// Fuses burn on whatever board is attached now: the ceremony
+		// and its consent line run on a fresh scan, never on the one
+		// this screen was rendering, so a board swapped in after that
+		// scan cannot ride a cached identity into an irreversible
+		// write. The flash path set the pattern.
+		a.refreshBoard()
+		if a.board == nil {
+			return nil
 		}
 		u := a.paneUI(p.pane)
 		var err error

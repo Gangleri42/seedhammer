@@ -554,3 +554,159 @@ func TestProvisionKeyMintsOnlyOnAbsence(t *testing.T) {
 		}
 	})
 }
+
+// otpScanTranscript renders a full board state the way picotool
+// prints it, so a canned pico serves scanBoard the same shapes
+// hardware would.
+func otpScanTranscript(secureBoot bool, keyValid uint8, slots [4][16]uint16) string {
+	var b strings.Builder
+	sb := 0
+	if secureBoot {
+		sb = 1
+	}
+	fmt.Fprintf(&b, "ROW 0x0040: OTP_DATA_CRIT1 (CRIT)\n    VALUE 0x%06x\n    field SECURE_BOOT_ENABLE (bit 0) = %d\n", sb, sb)
+	fmt.Fprintf(&b, "ROW 0x004b: OTP_DATA_BOOT_FLAGS1 (RBIT-3)\n    RAW_VALUE=0x%06[1]x;0x%06[1]x;0x%06[1]x\n    VALUE 0x%06[1]x\n    field KEY_VALID (bits 0-3) = %[1]x\n    field KEY_INVALID (bits 8-11) = 0\n", uint32(keyValid))
+	addr := 0x90
+	for slot := range 4 {
+		for row := range 16 {
+			fmt.Fprintf(&b, "ROW 0x%04x: OTP_DATA_BOOTKEY%d_%d (ECC)\n    VALUE 0x%06x\n", addr, slot, row, slots[slot][row])
+			addr++
+		}
+	}
+	return b.String()
+}
+
+// swapHarness is a tuiApp on a canned pico: every scan parses the
+// given transcript, and OTP writes are recorded instead of reaching a
+// device. Consent runs the TUI's modal reader against /dev/null,
+// which declines instantly.
+type swapHarness struct {
+	app    *tuiApp
+	infos  int
+	writes []string
+}
+
+func newSwapHarness(t *testing.T, transcript string) *swapHarness {
+	t.Helper()
+	devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { devnull.Close() })
+	priv, _ := loadFixture(t)
+	h := &swapHarness{}
+	pico := &pico{run: func(args ...string) (string, error) {
+		if len(args) > 1 && args[0] == "otp" && args[1] == "set" {
+			h.writes = append(h.writes, strings.Join(args, " "))
+			return "", nil
+		}
+		if args[0] == "info" {
+			h.infos++
+			return "RP2350 in BOOTSEL mode", nil
+		}
+		return transcript, nil
+	}}
+	h.app = &tuiApp{tty: devnull, u: newUI(devnull), keyPath: fixtureKeyName, priv: priv, pico: pico}
+	return h
+}
+
+// virginTUIBoard is a cached scan of a board every gate would accept.
+func virginTUIBoard() *otpBoard {
+	b := &otpBoard{}
+	for i := range b.slots {
+		b.slots[i].readable = true
+		b.slots[i].zero = true
+	}
+	return b
+}
+
+// A board swapped in between the screen's scan and the enter press
+// must not inherit the cached identity: enter rescans, so the
+// ceremony and its consent see the board that is actually attached.
+// The swapped-in board fails the slot gates, and nothing may reach
+// it, consent included.
+func TestProvisionEnterRescansTheBoard(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var foreign [4][16]uint16
+	for s := range foreign {
+		for r := range foreign[s] {
+			foreign[s][r] = 0x00aa
+		}
+	}
+	h := newSwapHarness(t, otpScanTranscript(true, 0xf, foreign))
+	h.app.board = virginTUIBoard()
+	p := newProvisionScreen(h.app, false)
+	p.fw = "firmware.uf2"
+	h.app.push(p)
+	p.handle(keyEvent{kind: keyEnter})
+	if h.infos == 0 {
+		t.Fatal("enter ran the ceremony without a fresh board scan")
+	}
+	transcript := strings.Join(p.pane.lines, "\n")
+	if !strings.Contains(transcript, "halting") {
+		t.Errorf("the ceremony did not halt on the fresh scan; pane:\n%s", transcript)
+	}
+	if len(h.writes) > 0 {
+		t.Errorf("OTP writes reached the swapped board: %q", h.writes)
+	}
+	if p.ran {
+		t.Error("the ceremony reported success on the swapped board")
+	}
+}
+
+// The same press with the same board still reaches consent: the
+// rescan must not wedge the ordinary case.
+func TestProvisionEnterSameBoardReachesConsent(t *testing.T) {
+	t.Chdir(t.TempDir())
+	h := newSwapHarness(t, otpScanTranscript(false, 0, [4][16]uint16{}))
+	h.app.board = virginTUIBoard()
+	p := newProvisionScreen(h.app, false)
+	p.fw = "firmware.uf2"
+	h.app.push(p)
+	p.handle(keyEvent{kind: keyEnter})
+	if h.infos == 0 {
+		t.Fatal("enter ran the ceremony without a fresh board scan")
+	}
+	// The consent prompt lands in the pane with its declined outcome,
+	// pinning that the ceremony got past every gate and stopped at
+	// exactly the typed-consent line.
+	transcript := strings.Join(p.pane.lines, "\n")
+	if !strings.Contains(transcript, "type FUSE to continue") {
+		t.Errorf("the ceremony never reached consent; pane:\n%s", transcript)
+	}
+	if len(h.writes) > 0 {
+		t.Errorf("OTP written despite declined consent: %q", h.writes)
+	}
+}
+
+// Revoke re-derives its gate from a fresh scan at enter: the cursor
+// browsed a board whose slot 1 was safely revocable, but the board
+// attached at enter holds that key as its last usable one. Revoking
+// it would brick the fresh board, so nothing may reach it.
+func TestRevokeEnterRegatesOnFreshScan(t *testing.T) {
+	t.Chdir(t.TempDir())
+	priv, _ := loadFixture(t)
+	fp := fingerprint(priv)
+	var ours [4][16]uint16
+	ours[1] = expectedRows(fp)
+	h := newSwapHarness(t, otpScanTranscript(true, 0b0010, ours))
+	h.app.board = revokeBoard(t, fp)
+	s := newRevokeScreen(h.app)
+	s.cur = 1
+	h.app.push(s)
+	s.handle(keyEvent{kind: keyEnter})
+	if h.infos == 0 {
+		t.Fatal("enter revoked without a fresh board scan")
+	}
+	// The fresh gate refuses before the core runs, so the pane never
+	// carries a revoke transcript.
+	if lines := s.pane.lines; len(lines) > 0 {
+		t.Errorf("the revoke core ran against the swapped board; pane:\n%s", strings.Join(lines, "\n"))
+	}
+	if len(h.writes) > 0 {
+		t.Errorf("OTP writes reached the swapped board: %q", h.writes)
+	}
+	if s.ran {
+		t.Error("the revoke reported success on the swapped board")
+	}
+}

@@ -2,6 +2,7 @@ package bip380
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcutil/v2/hdkeychain"
@@ -230,6 +231,9 @@ func TestParseRejects(t *testing.T) {
 		"wsh(sortedmulti(-1," + xp + "," + xp2 + "))",
 		"wsh(sortedmulti(3," + xp + "," + xp2 + "))",
 		"wsh(sortedmulti(1))",
+		// A 256-deep origin cannot belong to any extended key; the
+		// depth byte would wrap on re-encode.
+		"wpkh([dc567276/" + strings.TrimSuffix(strings.Repeat("0/", 256), "/") + "]" + xp + ")",
 	} {
 		if _, err := Parse(desc); err == nil {
 			t.Errorf("parsed: %s", desc)

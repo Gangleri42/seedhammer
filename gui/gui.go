@@ -1103,6 +1103,7 @@ func inputWordsFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, selected 
 // what determine the completions.
 func lastWordOffer(mnemonic bip39.Mnemonic, selected int, frag string) bool {
 	return selected == len(mnemonic)-1 && frag == "" &&
+		mnemonic[selected] == -1 &&
 		!slices.Contains(mnemonic[:selected], bip39.Word(-1))
 }
 

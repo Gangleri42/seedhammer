@@ -375,3 +375,16 @@ func TestBuiltDescriptorPlateParity(t *testing.T) {
 		}
 	}
 }
+
+// A tapped cosigner key carrying a hardened child after the xpub
+// names a derivation no watch-only wallet can perform; the parser
+// stops it at the tap instead of at the first-address cross-check.
+func TestCosignerRejectsHardenedChildren(t *testing.T) {
+	const xp = "xpub6DiYrfRwNnjeX4vHsWMajJVFKrbEEnu8gAW9vDuQzgTWEsEHE16sGWeXXUV1LBWQE1yCTmeprSNcqZ3W74hqVdgDbtYHUv3eM4W2TEUhpan"
+	if _, ok := cosignerFromPayload(plainText("[dc567276/48h/0h/0h/2h]" + xp + "/0h/1")); ok {
+		t.Error("a hardened tapped key became a cosigner")
+	}
+	if _, ok := cosignerFromPayload(plainText("[dc567276/48h/0h/0h/2h]" + xp + "/0/1")); !ok {
+		t.Error("an unhardened tapped key was rejected")
+	}
+}

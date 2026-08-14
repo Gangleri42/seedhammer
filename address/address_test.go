@@ -3,6 +3,7 @@ package address
 import (
 	"testing"
 
+	"seedhammer.com/bip380"
 	"seedhammer.com/nonstandard"
 )
 
@@ -80,6 +81,47 @@ func TestAddresses(t *testing.T) {
 			if got != want {
 				t.Errorf("descriptor %s: got change address %d:%s, want %s", test.desc, i, got, want)
 			}
+		}
+	}
+}
+
+// Hand-built descriptors skip the parser, so derivation holds the
+// same lines itself: no key-less descriptor, no out-of-quorum script,
+// no hardened derivation from a public key.
+func TestAddressRejects(t *testing.T) {
+	const xp = "xpub6DiYrfRwNnjeX4vHsWMajJVFKrbEEnu8gAW9vDuQzgTWEsEHE16sGWeXXUV1LBWQE1yCTmeprSNcqZ3W74hqVdgDbtYHUv3eM4W2TEUhpan"
+	const xp2 = "xpub6DnT4E1fT8VxuAZW29avMjr5i99aYTHBp9d7fiLnpL5t4JEprQqPMbTw7k7rh5tZZ2F5g8PJpssqrZoebzBChaiJrmEvWwUTEMAbHsY39Ge"
+	multi, err := nonstandard.OutputDescriptor([]byte("wsh(sortedmulti(2," + xp + "," + xp2 + "))"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	single, err := nonstandard.OutputDescriptor([]byte("wpkh(" + xp + ")"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]*bip380.Descriptor{}
+	d := *multi
+	d.Keys = nil
+	cases["multisig without keys"] = &d
+	d2 := *multi
+	d2.Threshold = 0
+	cases["threshold 0"] = &d2
+	d3 := *multi
+	d3.Threshold = -1
+	cases["threshold -1"] = &d3
+	d4 := *multi
+	d4.Threshold = 3
+	cases["threshold past the keys"] = &d4
+	d5 := *single
+	d5.Keys = nil
+	cases["singlesig without a key"] = &d5
+	d6 := *multi
+	d6.Keys = append([]bip380.Key{}, multi.Keys...)
+	d6.Keys[0].Children = []bip380.Derivation{{Index: 0, Hardened: true}, {Type: bip380.WildcardDerivation}}
+	cases["hardened child"] = &d6
+	for name, desc := range cases {
+		if got, err := Receive(desc, 0); err == nil {
+			t.Errorf("%s: derived %s, want an error", name, got)
 		}
 	}
 }

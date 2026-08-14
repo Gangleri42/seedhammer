@@ -37,6 +37,12 @@ func addressAt(desc *bip380.Descriptor, index uint32, change bool) (string, erro
 	var network *chaincfg.Params
 	switch desc.Type {
 	case bip380.SortedMulti:
+		// The parser bounds the quorum; hand-built descriptors get the
+		// same arithmetic here, where zero keys would panic below and
+		// an out-of-quorum threshold builds a script nobody intends.
+		if len(desc.Keys) == 0 || desc.Threshold < 1 || desc.Threshold > len(desc.Keys) {
+			return "", fmt.Errorf("address: threshold %d of %d keys is not a spendable quorum: %w", desc.Threshold, len(desc.Keys), errUnsupported)
+		}
 		var keys []*address.AddressPubKey
 		for _, k := range desc.Keys {
 			pub, err := derivePubKey(k, index, change)
@@ -73,6 +79,9 @@ func addressAt(desc *bip380.Descriptor, index uint32, change bool) (string, erro
 			return "", fmt.Errorf("address: %w", err)
 		}
 	case bip380.Singlesig:
+		if len(desc.Keys) == 0 {
+			return "", fmt.Errorf("address: descriptor carries no key: %w", errUnsupported)
+		}
 		k := desc.Keys[0]
 		network = k.Network
 		pub, err := derivePubKey(k, index, change)
@@ -130,6 +139,12 @@ func derivePubKey(k bip380.Key, index uint32, change bool) (*secp256k1.PublicKey
 	}
 	xpub := k.ExtendedKey()
 	for _, c := range children {
+		// The parser rejects hardened children; belt and braces for
+		// hand-built keys, because deriving the unhardened sibling of
+		// what the descriptor names is a different wallet.
+		if c.Hardened {
+			return nil, errors.New("hardened path element cannot be derived from a public key")
+		}
 		var id uint32
 		switch c.Type {
 		case bip380.ChildDerivation:

@@ -130,6 +130,16 @@ func TestDecoder(t *testing.T) {
 	}
 }
 
+// The pMofN header sizes the parts table; a hostile count must not.
+func TestDecoderHostileCounts(t *testing.T) {
+	for _, p := range []string{"p1of99999999 x", "p0of3 x", "p4of3 x", "p-1of3 x"} {
+		var d Decoder
+		if err := d.Add(p); err == nil {
+			t.Errorf("accepted %q", p)
+		}
+	}
+}
+
 func TestElectrumSeed(t *testing.T) {
 	phrase := "head orient raw shoulder size fancy front cycle lamp giant camera jacket"
 	if !ElectrumSeed(phrase) {

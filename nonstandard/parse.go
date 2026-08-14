@@ -191,6 +191,13 @@ func (d *Decoder) Add(part string) error {
 	if m < 1 || m > n {
 		return errors.New("nonstandard: invalid animated QR part")
 	}
+	// n sizes the parts table straight from the header. Real exports
+	// run a handful of parts; the ceiling only keeps a hostile header
+	// from sizing the table itself.
+	const maxParts = 256
+	if n > maxParts {
+		return errors.New("nonstandard: invalid animated QR part")
+	}
 	if n != len(d.parts) {
 		d.parts = make([][]byte, n)
 	}

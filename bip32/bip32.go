@@ -96,6 +96,13 @@ func ParsePath(path string) (Path, error) {
 		return nil, fmt.Errorf("bip32: missing m/ prefix: %q", path)
 	}
 	parts = parts[1:]
+	// BIP32 serializes depth as one byte, so no extended key at a
+	// deeper path can exist. bip380's key encoding writes
+	// uint8(len(path)): unbounded, a 260-deep origin re-encodes
+	// byte-identical to a genuine 4-deep key.
+	if len(parts) > 255 {
+		return nil, fmt.Errorf("bip32: %d path elements; BIP32 depth is one byte", len(parts))
+	}
 	for _, p := range parts {
 		p, err := ParsePathElement(p)
 		if err != nil {

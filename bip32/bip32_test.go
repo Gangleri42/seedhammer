@@ -1,6 +1,7 @@
 package bip32
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcutil/v2/hdkeychain"
@@ -50,5 +51,18 @@ func TestPathRoundTrip(t *testing.T) {
 	}
 	if enc, want := p.Encode(), "/48h/0h/0h/2h/1/2147483647"; enc != want {
 		t.Errorf("Encode = %q, want %q", enc, want)
+	}
+}
+
+// BIP32 depth is one byte: a 255-element path is the deepest legal
+// key, and one more must fail instead of wrapping the depth byte on
+// re-encode.
+func TestPathDepthBound(t *testing.T) {
+	deep := "m" + strings.Repeat("/0", 255)
+	if _, err := ParsePath(deep); err != nil {
+		t.Fatalf("a 255-deep path failed: %v", err)
+	}
+	if _, err := ParsePath(deep + "/0"); err == nil {
+		t.Fatal("a 256-deep path parsed")
 	}
 }

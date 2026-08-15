@@ -31,7 +31,7 @@ BRIDGE="$REPO/cmd/nfc-bridge/bridge.py"
 # The bridge allow-list REPLACES its built-in default, so the full set
 # must always be listed: hosted Studio, the bridge's own loopback
 # origins, and the local Studio serve (seedhammer-studio/serve.sh).
-ORIGINS="https://gangleri42.github.io,http://127.0.0.1:8787,http://localhost:8787,http://127.0.0.1:8788,http://localhost:8788"
+ORIGINS="https://studio.seedhammer.space,https://gangleri42.github.io,http://127.0.0.1:8787,http://localhost:8787,http://127.0.0.1:8788,http://localhost:8788"
 
 GO_VERSION=go1.25.10
 GO_SHA_LINUX_AMD64=42d4f7a32316aa66591eca7e89867256057a4264451aca10570a715b3637ba70

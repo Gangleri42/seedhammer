@@ -26,16 +26,22 @@ const (
 )
 
 // sampleCount is the rng_clk cycles between ring oscillator samples.
-// The datasheet's own words about its recommended 20-25 are that the
-// setting "increases the chance of NIST test-failing results", and that
-// larger counts such as 100 "significantly reduce, but do not eliminate"
-// entropy check failures. Ten milliseconds per generation instead of two
-// is nothing on a screen the user just pressed a button on, and every
-// failed check costs a whole retry.
-const sampleCount = 100
+// Measured on the bench, not taken from the datasheet: at 100 the
+// conditioned output carries temperature-drifting bit-alternation
+// structure (min-entropy 6.0 to 6.8 bits per byte against the 7.88 an
+// honest source reads), at 400 it passes the full statistical battery
+// across hours of thermal drift, and at 800 it overshoots into mild
+// repetition bias. The clean zone is a window the sampling beat can
+// wander in, not a plateau, so hold this at the measured point.
+// Forty milliseconds per generation is nothing on a screen the user
+// just pressed a button on.
+const sampleCount = 400
 
 // roscChain selects the ring oscillator's inverter chain length. The
-// datasheet gives no lengths for the four settings and recommends 0 or 1.
+// datasheet gives no lengths for the four settings and recommends 0
+// or 1, but on this silicon chain 1 starves under the health checks
+// (nearly every generation rejected until the driver fails closed),
+// so 0 it stays.
 const roscChain = 0
 
 // attempts bounds the retries across recoverable health failures. Each
@@ -47,8 +53,8 @@ const attempts = 8
 
 // runTimeout bounds one generation. The datasheet warns the tail can run
 // "in excess of 100 times the average", so this is deliberately far
-// above the expected ten milliseconds; it exists to keep a wedged block
-// from hanging the screen, not to cut a slow run short.
+// above the expected forty milliseconds; it exists to keep a wedged
+// block from hanging the screen, not to cut a slow run short.
 const runTimeout = 500 * time.Millisecond
 
 func init() {

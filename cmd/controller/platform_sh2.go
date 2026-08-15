@@ -169,19 +169,14 @@ const (
 	stepperPower = 18_000
 	// TMC2209 SGTHRS stall thresholds; higher is more sensitive.
 	// StallGuard reads back-EMF, so the signal scales with motor
-	// speed: the 58.2 mm/rev drives turn their motors 7.3 times
-	// slower than the original leadscrews at the same mm/s and live
-	// in the marginal low-RPM regime across the whole speed
+	// speed: at these drive ratios the motors turn slowly enough to
+	// sit in the marginal low-RPM regime across the whole speed
 	// envelope. Each axis is split by regime: homing cruises at a
-	// steady 21 RPM and wants a prompt catch, while engraving
-	// travels accelerate through the weakest speeds under
-	// acceleration load, which depresses SG_RESULT and false-fires
-	// the homing threshold. A real jam collapses SG_RESULT toward
-	// zero, so the engrave thresholds only need to sit above that.
-	// X values are bench-tuned; Y starts on X's values since the
-	// drives match, but carries different axis mass, so tune it on
-	// its own: homing against catch promptness, engrave against the
-	// QA jog's stall counter staying flat.
+	// steady speed and wants a prompt catch, while engraving travels
+	// accelerate through the weakest speeds under acceleration load,
+	// which depresses SG_RESULT and false-fires the homing
+	// threshold. A real jam collapses SG_RESULT toward zero, so the
+	// engrave thresholds only need to sit above that.
 	// The light X sled skip-rattles at the hard stop, and the
 	// oscillation back-EMF holds SG_RESULT well above a dead stall,
 	// so X needs the higher trip level; the heavier Y axis stalls
@@ -223,8 +218,7 @@ const (
 	// The coordinates of the plate's reference corner relative to the
 	// homing zero. The prototype seats the plate at the Y bumper
 	// plane: Y travel is exactly the plate height, so only a zero Y
-	// offset makes the whole plate reachable. The old 3.2 was the
-	// previous machine's plate position.
+	// offset makes the whole plate reachable.
 	originX, originY = 5.0 * mm, 0 * mm
 	// The idle parking position, in the plate frame: mid-plate, so the
 	// head rests over the plate center after the boot home and after
@@ -234,9 +228,10 @@ const (
 	// Maximum distance to travel before giving up homing.
 	homingDist = 200 * mm
 	// homingSpeed is the homing path speed. Homing runs both axes on
-	// the diagonal, so each motor sees the path speed over sqrt(2):
-	// 30 mm/s path turns the 60 mm/rev drives near 21 RPM, fast
-	// enough for StallGuard's back-EMF signal. The engraver's stroke
+	// the diagonal and the planner paces lines by Manhattan distance,
+	// so each motor sees half the path speed: 30 mm/s path turns the
+	// 60 mm/rev drives near 15 RPM, fast enough for StallGuard's
+	// back-EMF signal. The engraver's stroke
 	// width, speeds, acceleration, and jerk are the shared
 	// engrave.SH2Params (single source).
 	homingSpeed = 30 * mm

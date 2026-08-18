@@ -21,7 +21,10 @@ func TestHostileHeaderSizes(t *testing.T) {
 		{SeqNum: 1, partHeader: partHeader{SeqLen: 1 << 30, MessageLen: 10}},
 		{SeqNum: 1, partHeader: partHeader{SeqLen: 0, MessageLen: 10}},
 		{SeqNum: 1, partHeader: partHeader{SeqLen: -1, MessageLen: 10}},
-		{SeqNum: 1, partHeader: partHeader{SeqLen: 2, MessageLen: 1 << 40}},
+		// 1<<30 rather than a wider literal: the fields are int, and
+		// the firmware target is 32-bit even though tests run on the
+		// host, so the constant has to fit int32 to compile everywhere.
+		{SeqNum: 1, partHeader: partHeader{SeqLen: 2, MessageLen: 1 << 30}},
 		{SeqNum: 1, partHeader: partHeader{SeqLen: 2, MessageLen: 0}},
 	}
 	for _, p := range hostile {

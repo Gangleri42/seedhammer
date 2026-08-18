@@ -123,12 +123,15 @@ func (s *revokeScreen) handle(ev keyEvent) navAction {
 		// Fuses burn on whatever board is attached now: rescan and
 		// re-derive the slot gate from the fresh state, never from
 		// the cached scan the cursor was browsing. The refusal shows
-		// up on the redrawn screen, which lists every slot's reason.
+		// up on the redrawn screen, which lists every slot's reason,
+		// and the cursor moves to a slot the fresh board still
+		// allows, as it does after an r rescan.
 		a.refreshBoard()
 		if a.board == nil {
 			return nil
 		}
 		if p := makeRevokePlan(a.board, a.priv, a.keyPath, s.cur); p.refuse != "" {
+			s.cur = s.firstAllowed()
 			return nil
 		}
 		u := a.paneUI(s.pane)

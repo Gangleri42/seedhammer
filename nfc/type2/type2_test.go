@@ -43,9 +43,9 @@ func TestReader(t *testing.T) {
 
 // A tag claiming more memory than the uint8 read address can reach:
 // cc[2] 0x7f claims 254 blocks, but the wire address block+ccBlock+1
-// caps the reachable span at 251 blocks. The reader must stop there;
-// past it the address byte wraps to the low blocks and the loop never
-// finds its terminator.
+// caps the reachable span at 252 blocks, the last read returning
+// address 255. The reader must stop there; past it the address byte
+// wraps to the low blocks and the loop never finds its terminator.
 func TestReaderClaimPastAddressSpace(t *testing.T) {
 	data := make([]byte, 254*blockSize)
 	for i := range data {

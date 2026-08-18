@@ -5,6 +5,7 @@ package poller
 import (
 	"bufio"
 	"io"
+	"time"
 
 	"seedhammer.com/nfc/ndef"
 	"seedhammer.com/nfc/type2"
@@ -99,6 +100,16 @@ func (p *Poller) RecordType() []byte {
 	return p.r.RecordType()
 }
 
+// goodbyeTimeout bounds how long Close keeps the transport alive for a
+// writer's trailing frames. A record ends at its declared length, one
+// frame before the writer's closing NLEN commit, so the commit is
+// still in flight when the flow that consumed the record returns and
+// closes the poller; switching off then leaves it unacknowledged and
+// the writer reports the delivered write as failed. The commit follows
+// within a few milliseconds and the DESELECT shortly after; the
+// deadline only bounds a writer that walks away without one.
+const goodbyeTimeout = 300 * time.Millisecond
+
 func (p *Poller) Close() error {
 	select {
 	case p.reading <- struct{}{}:
@@ -106,7 +117,45 @@ func (p *Poller) Close() error {
 		p.d.Interrupt()
 		p.reading <- struct{}{}
 	}
-	return p.d.Close()
+	p.goodbye()
+	err := p.d.Close()
+	// Release the token: a scan goroutine that raced past its stop
+	// signal into Read blocks on the token, and holding it here would
+	// park that goroutine forever with its stop waiting on the join.
+	// The device is closed, so the read fails and the loop exits.
+	<-p.reading
+	return err
+}
+
+// goodbye sees a writer's conversation out before the device switches
+// off: it keeps servicing the tag emulator, discarding data, until the
+// writer ends with DESELECT, the transport reports the field gone, or
+// the deadline passes. Frames go through the emulator alone, never the
+// record layer, so the next session's framing sees none of this.
+func (p *Poller) goodbye() {
+	if p.emu.Idle() {
+		return
+	}
+	deadline := time.Now().Add(goodbyeTimeout)
+	// The driver's own read timeouts stretch to seconds; the timer
+	// interrupts a wait that would outlive the deadline.
+	t := time.AfterFunc(goodbyeTimeout, p.d.Interrupt)
+	defer t.Stop()
+	var discard [128]byte
+	for time.Now().Before(deadline) {
+		_, err := p.emu.Read(discard[:])
+		switch {
+		case err == nil:
+		case err == io.EOF && !p.emu.Idle():
+			// A completed write was acknowledged mid-conversation,
+			// or the driver reported the field down. The writer may
+			// still have its DESELECT to send: keep listening.
+		default:
+			// DESELECT (the emulator is idle again), or a transport
+			// error. Either way the conversation is over.
+			return
+		}
+	}
 }
 
 // poll attempts to select a tag, trying each protocol in turn.

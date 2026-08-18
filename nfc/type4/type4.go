@@ -46,6 +46,13 @@ func NewTag(d Device) *Tag {
 	}
 }
 
+// Idle reports whether the tag sits outside any conversation: no
+// writer has activated it since the last reset. A closing poller asks
+// before it lingers for a writer's trailing frames.
+func (t *Tag) Idle() bool {
+	return t.state == initState
+}
+
 func (t *Tag) Reset() {
 	t.state = initState
 	t.readBytes = 0

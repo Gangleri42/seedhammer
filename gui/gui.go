@@ -3404,13 +3404,13 @@ func (s *DescriptorScreen) Draw(ctx *Context, th *Colors, dims image.Point) op.O
 	bodytxt.Y += infoSpacing
 	bodytxt.Add(&ctx.B, subst, body.Dx(), th.Text, "Script")
 	bodytxt.Add(&ctx.B, bodyst, body.Dx(), th.Text, desc.Script.String())
-	if desc.NoChecksum {
-		// Checksum-less input stays accepted (the plate QR drops the
+	if notice := transcriptionNotice(desc.Transcription); notice != "" {
+		// Unverified input stays accepted (the plate QR drops the
 		// checksum by design, so re-tapping one is ordinary), but
 		// nothing verified the transcription; the eye must.
 		bodytxt.Y += infoSpacing
 		bodytxt.Add(&ctx.B, subst, body.Dx(), th.Text, "Notice")
-		bodytxt.Add(&ctx.B, bodyst, body.Dx(), th.Text, "No checksum. Compare it with the wallet before engraving.")
+		bodytxt.Add(&ctx.B, bodyst, body.Dx(), th.Text, notice)
 	}
 
 	bodyOp := bodytxt.Content.Offset(body.Min.Add(image.Pt(0, scrollFadeDist)))
@@ -3462,6 +3462,21 @@ func textNotice(text string) string {
 		if known >= n-1 {
 			return "Looks like a seed phrase with a bad word or checksum." + engraved
 		}
+	}
+	return ""
+}
+
+// transcriptionNotice is the confirm-screen line for a descriptor
+// whose wire form did not vouch for its transcription: descriptor
+// text that dropped its checksum says so by name, and a form with no
+// checksum to drop (a BlueWallet export, a bare key) gets the same
+// advice without a word that would read as a defect in the export.
+func transcriptionNotice(t bip380.Transcription) string {
+	switch t {
+	case bip380.NoChecksum:
+		return "No checksum. Compare it with the wallet before engraving."
+	case bip380.Unchecked:
+		return "Nothing verified this transcription. Compare it with the wallet before engraving."
 	}
 	return ""
 }

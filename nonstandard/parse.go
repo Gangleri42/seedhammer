@@ -43,6 +43,9 @@ var ErrUnrecognized = errors.New("nonstandard: unrecognized output descriptor fo
 func OutputDescriptor(enc []byte) (*bip380.Descriptor, error) {
 	bw, bwErr := parseBlueWalletDescriptor(string(enc))
 	if bwErr == nil && bw.Title != "" {
+		// The export has no checksum to carry; nothing verified its
+		// transcription, and the confirm screen says so.
+		bw.Transcription = bip380.Unchecked
 		return bw, nil
 	}
 	desc, parseErr := bip380.Parse(string(enc))
@@ -76,6 +79,8 @@ func OutputDescriptor(enc []byte) (*bip380.Descriptor, error) {
 				Keys: []bip380.Key{
 					k,
 				},
+				// A key expression carries no checksum either.
+				Transcription: bip380.Unchecked,
 			}, nil
 		}
 	}

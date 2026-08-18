@@ -280,19 +280,21 @@ func TestDescriptorSkipIsAChoice(t *testing.T) {
 // scan stays notice-free.
 func TestDescriptorChecksumNotice(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		noChecksum bool
+		name          string
+		transcription bip380.Transcription
+		notice        string
 	}{
-		{"without checksum", true},
-		{"with checksum", false},
+		{"without checksum", bip380.NoChecksum, "No checksum"},
+		{"unchecked form", bip380.Unchecked, "Nothing verified this transcription"},
+		{"with checksum", bip380.Checksummed, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			desc := &bip380.Descriptor{
-				Script:     bip380.P2WSH,
-				Type:       bip380.SortedMulti,
-				Threshold:  2,
-				Keys:       make([]bip380.Key, 3),
-				NoChecksum: tc.noChecksum,
+				Script:        bip380.P2WSH,
+				Type:          bip380.SortedMulti,
+				Threshold:     2,
+				Keys:          make([]bip380.Key, 3),
+				Transcription: tc.transcription,
 			}
 			fillDescriptor(t, desc, desc.Script.DerivationPath(), 12, 0)
 			ctx := NewContext(newPlatform())
@@ -305,8 +307,12 @@ func TestDescriptorChecksumNotice(t *testing.T) {
 			if !ok {
 				t.Fatal("confirm screen exited immediately")
 			}
-			if got := uiContains(content, "No checksum"); got != tc.noChecksum {
-				t.Errorf("notice shown = %v, want %v; frame: %q", got, tc.noChecksum, content)
+			shown := uiContains(content, "Notice")
+			if shown != (tc.notice != "") {
+				t.Errorf("notice shown = %v, want %v; frame: %q", shown, tc.notice != "", content)
+			}
+			if tc.notice != "" && !uiContains(content, tc.notice) {
+				t.Errorf("notice text missing %q; frame: %q", tc.notice, content)
 			}
 		})
 	}

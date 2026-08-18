@@ -106,7 +106,7 @@ c5d87297: xpub6DjrnfAyuonMaboEb3ZQZzhQ2ZEgaKV2r64BFmqymZqJqviLTe1JzMr2X2RfQF892R
 		want.Title = test.name
 		// want is parsed from canonical descriptor text, whose
 		// checksum presence need not match the scanned format's.
-		want.NoChecksum = got.NoChecksum
+		want.Transcription = got.Transcription
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("%q\ndecoded to\n%#v\nexpected\n%#v\n", test.encoded, got, want)
 		}
@@ -205,6 +205,39 @@ func TestOutputDescriptorKeepsTheReason(t *testing.T) {
 	for _, in := range []string{"hello plate", "IN CASE OF FIRE", "abandon abandon about"} {
 		if _, err := OutputDescriptor([]byte(in)); !errors.Is(err, ErrUnrecognized) {
 			t.Errorf("%q: error %v, want ErrUnrecognized", in, err)
+		}
+	}
+}
+
+// Each entry form says how far it vouched for its transcription:
+// checksummed descriptor text is Checksummed, the same text without
+// its checksum is NoChecksum, and the forms with no checksum to carry
+// (a BlueWallet export, a bare key expression) are Unchecked.
+func TestOutputDescriptorTranscription(t *testing.T) {
+	const xp = "xpub6DiYrfRwNnjeX4vHsWMajJVFKrbEEnu8gAW9vDuQzgTWEsEHE16sGWeXXUV1LBWQE1yCTmeprSNcqZ3W74hqVdgDbtYHUv3eM4W2TEUhpan"
+	const xp2 = "xpub6DnT4E1fT8VxuAZW29avMjr5i99aYTHBp9d7fiLnpL5t4JEprQqPMbTw7k7rh5tZZ2F5g8PJpssqrZoebzBChaiJrmEvWwUTEMAbHsY39Ge"
+	const text = "wsh(sortedmulti(2," + xp + "," + xp2 + "))"
+	checksummed, err := bip380.Parse(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		in   string
+		want bip380.Transcription
+	}{
+		{"checksummed text", checksummed.Encode(), bip380.Checksummed},
+		{"checksum-less text", text, bip380.NoChecksum},
+		{"bluewallet export", "Name: t\nPolicy: 2 of 2\nDerivation: m/48'/0'/0'/2'\nFormat: P2WSH\ndc567276: " + xp + "\nf245ae38: " + xp2 + "\n", bip380.Unchecked},
+		{"bare key", "[dc567276/84h/0h/0h]" + xp, bip380.Unchecked},
+	} {
+		d, err := OutputDescriptor([]byte(tc.in))
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if d.Transcription != tc.want {
+			t.Errorf("%s: transcription %d, want %d", tc.name, d.Transcription, tc.want)
 		}
 	}
 }

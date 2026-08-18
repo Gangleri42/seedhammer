@@ -42,7 +42,7 @@ func TestCompactDescriptors(t *testing.T) {
 		for i := range d.Keys {
 			d.Keys[i].MasterFingerprint = 0
 		}
-		d.NoChecksum = compact.NoChecksum
+		d.Transcription = compact.Transcription
 		if !reflect.DeepEqual(d, compact) {
 			t.Errorf("%q\ndiffers in its compact representation:\n%#v\n%#v\n", test.desc, d, compact)
 		}
@@ -221,14 +221,14 @@ func TestParseRecordsChecksumPresence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.NoChecksum {
+	if d.Transcription != Checksummed {
 		t.Error("a checksummed descriptor was flagged as checksum-less")
 	}
 	d, err = Parse(strings.TrimSuffix(with, "#79u003t6"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !d.NoChecksum {
+	if d.Transcription != NoChecksum {
 		t.Error("a checksum-less descriptor was not flagged")
 	}
 }

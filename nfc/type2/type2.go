@@ -69,9 +69,13 @@ func (t *Reader) readCC() (int, error) {
 	return memBlocks, nil
 }
 
-// maxMemBlocks keeps every read address (block + ccBlock + 1) inside
-// the uint8 the wire format carries.
-const maxMemBlocks = 255 - ccBlock - 1
+// maxMemBlocks keeps every read address inside the uint8 the wire
+// format carries. Read stops at block == memBlocks and each read
+// covers four blocks, so the last address issued is memBlocks-4 +
+// ccBlock + 1 and the last block it returns is memBlocks + ccBlock:
+// at 255 - ccBlock that is address 255 exactly, and one more would
+// wrap.
+const maxMemBlocks = 255 - ccBlock
 
 func (t *Reader) sensReq() (uint16, error) {
 	sensReq := t.scratch[:1]

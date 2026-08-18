@@ -39,6 +39,56 @@ func TestHostileHeaderSizes(t *testing.T) {
 	}
 }
 
+// A part's Data length is fixed by its header. Two parts that share a
+// header but not a length are not one message; the shorter one must
+// be refused at Add rather than run reducePart's XOR off its end.
+func TestMismatchedFragmentLength(t *testing.T) {
+	msg := make([]byte, 100)
+	for i := range msg {
+		msg[i] = byte(i)
+	}
+	const seqLen = 2
+	d := new(Decoder)
+	// A mixed part first, so a later single-fragment part reduces
+	// against it. Sequence numbers past seqLen mix; keep adding until
+	// one carries both fragments.
+	for sn := seqLen + 1; sn < 64; sn++ {
+		var p part
+		enc := Encode(msg, sn, seqLen)
+		if err := cbor.Unmarshal(enc, &p); err != nil {
+			t.Fatal(err)
+		}
+		if len(chooseFragments(p.SeqNum, p.SeqLen, p.Checksum)) != seqLen {
+			continue
+		}
+		if err := d.Add(enc); err != nil {
+			t.Fatal(err)
+		}
+		break
+	}
+	var short part
+	if err := cbor.Unmarshal(Encode(msg, 1, seqLen), &short); err != nil {
+		t.Fatal(err)
+	}
+	short.Data = short.Data[:1]
+	enc, err := cbor.Marshal(&short)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Add(enc); err == nil {
+		t.Fatal("a fragment shorter than its header says was accepted")
+	}
+	// The right length still decodes.
+	for sn := 1; sn <= seqLen; sn++ {
+		if err := d.Add(Encode(msg, sn, seqLen)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := d.Result(); err != nil || !bytes.Equal(got, msg) {
+		t.Fatalf("Result = %x, %v; want the message", got, err)
+	}
+}
+
 func TestDecoding(t *testing.T) {
 	tests := []struct {
 		parts   []string

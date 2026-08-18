@@ -307,6 +307,14 @@ func parseHDKey(enc []byte) (bip380.Key, error) {
 	if err != nil {
 		return bip380.Key{}, err
 	}
+	for _, c := range children {
+		// The same line the text parser holds: a hardened child
+		// cannot be derived from a public key, and deriving its
+		// unhardened sibling would be a different wallet.
+		if c.Hardened {
+			return bip380.Key{}, errors.New("ur: hardened child derivation cannot be derived from a public key")
+		}
+	}
 	if len(k.KeyData) != 33 {
 		return bip380.Key{}, fmt.Errorf("ur: crypto-hdkey key is %d bytes, expected 33", len(k.KeyData))
 	}
@@ -336,6 +344,11 @@ func parseHDKey(enc []byte) (bip380.Key, error) {
 			idx += hdkeychain.HardenedKeyStart
 		}
 		devPath = append(devPath, idx)
+	}
+	// BIP32 serializes depth as one byte, so no extended key at a
+	// deeper origin can exist; the text parser bounds it too.
+	if len(devPath) > 255 {
+		return bip380.Key{}, fmt.Errorf("ur: origin path has %d elements; BIP32 depth is one byte", len(devPath))
 	}
 	depth := k.Origin.Depth
 	if depth != 0 && int(depth) != len(devPath) {
@@ -415,6 +428,11 @@ func parseOutputDescriptor(mode cbor.DecMode, enc []byte) (*bip380.Descriptor, e
 		var m multi
 		if err := mode.Unmarshal(enc, &m); err != nil {
 			return nil, err
+		}
+		// The same quorum arithmetic bip380.Parse enforces: 0-of-n is
+		// anyone-can-spend and m > n is unspendable.
+		if m.Threshold < 1 || m.Threshold > len(m.Keys) {
+			return nil, fmt.Errorf("ur: threshold %d of %d keys is not a spendable quorum", m.Threshold, len(m.Keys))
 		}
 		desc.Threshold = m.Threshold
 		for _, k := range m.Keys {

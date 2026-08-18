@@ -331,6 +331,55 @@ func TestIncompleteCryptoAccount(t *testing.T) {
 // BlueWallet shows a */* tail on the vault key), so the key encodes
 // origin-only, the childless shape multisig exchange runs on, and
 // everything else round-trips intact.
+// The CBOR path holds the lines the text parser holds: no quorum
+// outside 1..n, no hardened child after a public key, no origin deeper
+// than the BIP32 depth byte. Encode does not validate, so a descriptor
+// built with each defect encodes and must then fail to parse.
+func TestDecodeRejects(t *testing.T) {
+	key := func() bip380.Key {
+		return bip380.Key{
+			Network:           &chaincfg.MainNetParams,
+			MasterFingerprint: 0xdd4fadee,
+			DerivationPath:    bip32.Path{hdkeychain.HardenedKeyStart + 48, hdkeychain.HardenedKeyStart, hdkeychain.HardenedKeyStart, hdkeychain.HardenedKeyStart + 2},
+			Children: []bip380.Derivation{
+				{Type: bip380.RangeDerivation, Index: 0, End: 1},
+				{Type: bip380.WildcardDerivation},
+			},
+			KeyData:           []byte{0x2, 0x21, 0x96, 0xad, 0xc2, 0x5f, 0xde, 0x16, 0x9f, 0xe9, 0x2e, 0x70, 0x76, 0x90, 0x59, 0x10, 0x22, 0x75, 0xd2, 0xb4, 0xc, 0xc9, 0x87, 0x76, 0xea, 0xab, 0x92, 0xb8, 0x2a, 0x86, 0x13, 0x5e, 0x92},
+			ChainCode:         []byte{0x43, 0x8e, 0xff, 0x7b, 0x3b, 0x36, 0xb6, 0xd1, 0x1a, 0x60, 0xa2, 0x2c, 0xcb, 0x93, 0x6, 0xee, 0xa3, 0x5, 0xb0, 0x43, 0x9f, 0x1e, 0xa0, 0x9d, 0x59, 0x28, 0x1, 0x5d, 0xe3, 0x73, 0x81, 0x16},
+			ParentFingerprint: 0x22969377,
+		}
+	}
+	multi := func(threshold int) *bip380.Descriptor {
+		return &bip380.Descriptor{Script: bip380.P2WSH, Type: bip380.SortedMulti, Threshold: threshold, Keys: []bip380.Key{key(), key()}}
+	}
+	hardened := key()
+	hardened.Children = []bip380.Derivation{{Type: bip380.ChildDerivation, Index: 0, Hardened: true}, {Type: bip380.WildcardDerivation}}
+	deep := key()
+	deep.DerivationPath = make(bip32.Path, 256)
+	for name, desc := range map[string]*bip380.Descriptor{
+		"threshold 0":             multi(0),
+		"threshold past the keys": multi(3),
+		"hardened child":          {Script: bip380.P2WPKH, Type: bip380.Singlesig, Threshold: 1, Keys: []bip380.Key{hardened}},
+		"256-deep origin":         {Script: bip380.P2WPKH, Type: bip380.Singlesig, Threshold: 1, Keys: []bip380.Key{deep}},
+	} {
+		if _, err := Parse("crypto-output", EncodeDescriptor(desc)); err == nil {
+			t.Errorf("%s: parsed", name)
+		}
+	}
+	// The sound shape of each still parses.
+	sound := key()
+	sound.DerivationPath = make(bip32.Path, 255)
+	for name, desc := range map[string]*bip380.Descriptor{
+		"2 of 2":          multi(2),
+		"255-deep origin": {Script: bip380.P2WPKH, Type: bip380.Singlesig, Threshold: 1, Keys: []bip380.Key{sound}},
+	} {
+		if _, err := Parse("crypto-output", EncodeDescriptor(desc)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
 func TestRangeChildrenRoundTrip(t *testing.T) {
 	desc := &bip380.Descriptor{
 		Script:    bip380.P2WSH,

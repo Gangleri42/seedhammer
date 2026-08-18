@@ -3416,6 +3416,12 @@ func textNotice(text string) string {
 	first = strings.ToLower(strings.TrimLeft(first, " "))
 	for _, p := range []string{"wsh(", "wpkh(", "sh(", "pkh(", "tr(", "multi(", "sortedmulti(", "[", "xpub", "ypub", "zpub", "tpub"} {
 		if strings.HasPrefix(first, p) {
+			// The parser that refused it knows why; a quorum that
+			// cannot spend or a hardened child is worth naming over a
+			// bare "corrupted".
+			if _, err := nonstandard.OutputDescriptor([]byte(text)); err != nil && !errors.Is(err, nonstandard.ErrUnrecognized) {
+				return "Looks like a corrupted descriptor: " + reasonText(err) + "." + engraved
+			}
 			return "Looks like a corrupted descriptor." + engraved
 		}
 	}
@@ -3438,6 +3444,24 @@ func textNotice(text string) string {
 		}
 	}
 	return ""
+}
+
+// reasonText turns a parser error into a phrase for a 240 pixel
+// screen: the package tag goes, and a message that quotes the whole
+// payload (some do) is cut so the notice stays a notice.
+func reasonText(err error) string {
+	msg := err.Error()
+	for _, tag := range []string{"bip380: ", "hdkey: ", "bluewallet: ", "bip32: ", "nonstandard: "} {
+		if strings.HasPrefix(msg, tag) {
+			msg = msg[len(tag):]
+			break
+		}
+	}
+	const maxReason = 72
+	if len(msg) > maxReason {
+		msg = msg[:maxReason-3] + "..."
+	}
+	return msg
 }
 
 // plateRecorder is an optional Platform capability: a platform that wants a

@@ -402,7 +402,7 @@ func ParseKey(impliedPath bip32.Path, enc []byte) (Key, error) {
 		key.MasterFingerprint = binary.BigEndian.Uint32(fp)
 		path, err := bip32.ParsePath("m/" + originAndPath[9:])
 		if err != nil {
-			return Key{}, fmt.Errorf("hdkey: invalid derivation path: %q", k)
+			return Key{}, fmt.Errorf("hdkey: invalid derivation path: %q: %w", k, err)
 		}
 		key.DerivationPath = path
 	}
@@ -411,7 +411,10 @@ func ParseKey(impliedPath bip32.Path, enc []byte) (Key, error) {
 		k = k[:xpubEnd]
 		childPath, err := parsePath(children)
 		if err != nil {
-			return Key{}, fmt.Errorf("hdkey: invalid children path: %q", children)
+			// The element parser's reason rides along: a hardened
+			// child or wildcard is refused on purpose, and the
+			// screen names it.
+			return Key{}, fmt.Errorf("hdkey: invalid children path: %q: %w", children, err)
 		}
 		key.Children = childPath
 	}

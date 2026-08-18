@@ -187,6 +187,11 @@ type cosignerEntryAction struct {
 	scan  any
 }
 
+// rejectHold is how long a refused tap's line stays up: long enough to
+// read the reason it names, where scanStatusTimeout only has to cover
+// the decay of a transient status word.
+const rejectHold = 3 * time.Second
+
 // cosignerEntry is the cosigner's landing page: the word-count rows
 // for typing, with the scanner already listening — the start screen's
 // pattern pointed at one step. A tap dispatches by what arrived: a
@@ -206,7 +211,12 @@ func cosignerEntry(ctx *Context, th *Colors, title string) (cosignerEntryAction,
 	chooseBtn := &Clickable{Button: Button3, AltButton: Center}
 	var status scanStatus
 	var rejected bool
+	var rejectWhy string
 	var statusTimeout time.Time
+	// A refusal has a reason to read, so it holds the line past the
+	// scan status decay and is not shortened by the status updates
+	// that keep arriving while the writer sits in the field.
+	var rejectUntil time.Time
 	for !ctx.Done {
 		switch {
 		case cancelBtn.Clicked(ctx):
@@ -245,10 +255,10 @@ func cosignerEntry(ctx *Context, th *Colors, title string) (cosignerEntryAction,
 				status = max(status, scan.Status)
 			} else {
 				status = scan.Status
-				rejected = false
 			}
 			statusTimeout = now.Add(scanStatusTimeout)
 			if obj := scan.Object; obj != nil {
+				rejected, rejectWhy = false, ""
 				switch obj := obj.(type) {
 				case debugCommand:
 					// The provisioning channel belongs to the start
@@ -256,23 +266,29 @@ func cosignerEntry(ctx *Context, th *Colors, title string) (cosignerEntryAction,
 				case bip39.Mnemonic:
 					return cosignerEntryAction{scan: obj}, true
 				default:
-					if key, ok := cosignerFromPayload(obj); ok {
+					key, why, ok := cosignerFromPayloadReason(obj)
+					if ok {
 						return cosignerEntryAction{scan: key}, true
 					}
-					rejected = true
+					rejected, rejectWhy = true, why
+					rejectUntil = now.Add(rejectHold)
 				}
 			}
 		default:
 		}
 		dims := ctx.Platform.DisplaySize()
 		sttxt := ""
-		if time.Now().Before(statusTimeout) {
-			ctx.WakeupAt(statusTimeout)
-			if rejected {
-				sttxt = "Not a seed or cosigner key"
+		now := time.Now()
+		if rejected && now.Before(rejectUntil) {
+			ctx.WakeupAt(rejectUntil)
+			if rejectWhy != "" {
+				sttxt = "Not a cosigner key: " + rejectWhy
 			} else {
-				sttxt = scanStatusText(status)
+				sttxt = "Not a seed or cosigner key"
 			}
+		} else if now.Before(statusTimeout) {
+			ctx.WakeupAt(statusTimeout)
+			sttxt = scanStatusText(status)
 		}
 		subt, ssz := widget.Labelw(&ctx.B, ctx.Styles.subtitle, 300, th.Text, sttxt)
 		r := layout.Rectangle{Max: dims}
@@ -431,17 +447,40 @@ func cosignerKey(m bip39.Mnemonic, passphrase string) (bip380.Key, error) {
 // single-sig paths) and arrives as text; parse it here instead of
 // teaching the start screen a payload kind only this flow wants.
 func cosignerFromPayload(obj any) (bip380.Key, bool) {
+	k, _, ok := cosignerFromPayloadReason(obj)
+	return k, ok
+}
+
+// cosignerFromPayloadReason is cosignerFromPayload with the reason a
+// key-shaped text was refused, for the reject line. Only text that
+// opens like a key expression carries one: a rejected seed phrase or
+// free text is not a key, and its ParseKey error would mislead.
+func cosignerFromPayloadReason(obj any) (bip380.Key, string, bool) {
 	switch o := obj.(type) {
 	case *bip380.Descriptor:
 		if o.Type == bip380.Singlesig && len(o.Keys) == 1 {
-			return o.Keys[0], true
+			return o.Keys[0], "", true
 		}
 	case plainText:
-		if k, err := bip380.ParseKey(nil, []byte(o)); err == nil {
-			return k, true
+		k, err := bip380.ParseKey(nil, []byte(o))
+		if err == nil {
+			return k, "", true
+		}
+		if keyShaped(string(o)) {
+			return bip380.Key{}, reasonText(err), false
 		}
 	}
-	return bip380.Key{}, false
+	return bip380.Key{}, "", false
+}
+
+// keyShaped reports whether s opens like a key expression: an origin
+// in brackets, or an extended key of any of the version prefixes.
+func keyShaped(s string) bool {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "[") {
+		return true
+	}
+	return len(s) >= 4 && strings.EqualFold(s[1:4], "pub")
 }
 
 func slotWithFingerprint(slots []cosignerSlot, mfp uint32) int {

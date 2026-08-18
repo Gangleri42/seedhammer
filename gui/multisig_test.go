@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -383,6 +384,14 @@ func TestCosignerRejectsHardenedChildren(t *testing.T) {
 	const xp = "xpub6DiYrfRwNnjeX4vHsWMajJVFKrbEEnu8gAW9vDuQzgTWEsEHE16sGWeXXUV1LBWQE1yCTmeprSNcqZ3W74hqVdgDbtYHUv3eM4W2TEUhpan"
 	if _, ok := cosignerFromPayload(plainText("[dc567276/48h/0h/0h/2h]" + xp + "/0h/1")); ok {
 		t.Error("a hardened tapped key became a cosigner")
+	}
+	// The reject line names why for a key-shaped tap, and stays
+	// generic for text that is not a key at all.
+	if _, why, ok := cosignerFromPayloadReason(plainText("[dc567276/48h/0h/0h/2h]" + xp + "/0h/1")); ok || !strings.Contains(why, "hardened") {
+		t.Errorf("hardened tap: ok=%v why=%q, want a hardened reason", ok, why)
+	}
+	if _, why, ok := cosignerFromPayloadReason(plainText("hello plate")); ok || why != "" {
+		t.Errorf("free text: ok=%v why=%q, want no reason", ok, why)
 	}
 	if _, ok := cosignerFromPayload(plainText("[dc567276/48h/0h/0h/2h]" + xp + "/0/1")); !ok {
 		t.Error("an unhardened tapped key was rejected")

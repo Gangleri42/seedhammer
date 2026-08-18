@@ -218,8 +218,8 @@ func parseBlueWalletDescriptor(txt string) (*bip380.Descriptor, error) {
 	}
 	// The same quorum arithmetic bip380.Parse enforces: a policy of
 	// 0-of-n is anyone-can-spend and m > n is unspendable.
-	if desc.Threshold < 1 || desc.Threshold > len(desc.Keys) {
-		return nil, fmt.Errorf("bluewallet: policy %d of %d is not a spendable quorum", desc.Threshold, len(desc.Keys))
+	if err := desc.Validate(); err != nil {
+		return nil, fmt.Errorf("bluewallet: %w", err)
 	}
 	return desc, nil
 }

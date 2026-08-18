@@ -33,16 +33,16 @@ func Supported(desc *bip380.Descriptor) bool {
 var errUnsupported = errors.New("unsupported descriptor")
 
 func addressAt(desc *bip380.Descriptor, index uint32, change bool) (string, error) {
+	// The parsers validate on the way in; a hand-built descriptor
+	// meets the same line here, where a missing key would panic and
+	// an out-of-quorum threshold builds a script nobody intends.
+	if err := desc.Validate(); err != nil {
+		return "", fmt.Errorf("address: %w: %w", err, errUnsupported)
+	}
 	var addr address.Address
 	var network *chaincfg.Params
 	switch desc.Type {
 	case bip380.SortedMulti:
-		// The parser bounds the quorum; hand-built descriptors get the
-		// same arithmetic here, where zero keys would panic below and
-		// an out-of-quorum threshold builds a script nobody intends.
-		if len(desc.Keys) == 0 || desc.Threshold < 1 || desc.Threshold > len(desc.Keys) {
-			return "", fmt.Errorf("address: threshold %d of %d keys is not a spendable quorum: %w", desc.Threshold, len(desc.Keys), errUnsupported)
-		}
 		var keys []*address.AddressPubKey
 		for _, k := range desc.Keys {
 			pub, err := derivePubKey(k, index, change)
@@ -79,9 +79,6 @@ func addressAt(desc *bip380.Descriptor, index uint32, change bool) (string, erro
 			return "", fmt.Errorf("address: %w", err)
 		}
 	case bip380.Singlesig:
-		if len(desc.Keys) == 0 {
-			return "", fmt.Errorf("address: descriptor carries no key: %w", errUnsupported)
-		}
 		k := desc.Keys[0]
 		network = k.Network
 		pub, err := derivePubKey(k, index, change)

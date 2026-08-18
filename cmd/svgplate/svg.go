@@ -157,7 +157,14 @@ func (b *builder) walk(n *node, m matrix, depth int, top bool) error {
 	if invisible(n.el) {
 		return nil
 	}
-	local, _ := parseTransform(attr(n.el, "transform"))
+	// A transform that does not parse in full is an error, never a
+	// prefix: applying the part that parsed would move the geometry
+	// silently, which is what the strictness in parseTransform and
+	// floats exists to prevent.
+	local, err := parseTransform(attr(n.el, "transform"))
+	if err != nil {
+		return err
+	}
 	m = m.mul(local)
 	if n.el.Name.Local == "use" {
 		return b.expandUse(n, m, depth)
@@ -326,7 +333,10 @@ func polygon(pts []fpt, closed bool) []fseg {
 }
 
 func polyPoints(s string, closed bool) ([]fseg, error) {
-	vals := floats(s)
+	vals, err := floats(s)
+	if err != nil {
+		return nil, err
+	}
 	if len(vals)%2 != 0 || len(vals) < 4 {
 		return nil, fmt.Errorf("svg: bad points %q", s)
 	}
@@ -431,7 +441,10 @@ func parseTransform(s string) (matrix, error) {
 			// s[open+1:close] would panic.
 			return m, fmt.Errorf("svg: malformed transform %q", s)
 		}
-		args := floats(s[open+1 : close])
+		args, err := floats(s[open+1 : close])
+		if err != nil {
+			return m, err
+		}
 		s = strings.TrimLeft(s[close+1:], " ,\t\n")
 		var t matrix
 		switch name {
@@ -483,7 +496,7 @@ func num(s string) (float64, error) {
 	}
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return 0, fmt.Errorf("svg: invalid length %q; unit suffixes are not supported, use unitless user units", s)
+		return 0, fmt.Errorf("svg: invalid length %q; unit suffixes and percentages are not supported, use unitless user units", s)
 	}
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return 0, fmt.Errorf("svg: non-finite length %q", s)
@@ -505,16 +518,27 @@ func nums(e xml.StartElement, names ...string) ([]float64, error) {
 }
 
 // floats scans every number out of a whitespace/comma separated list.
-func floats(s string) []float64 {
+// The list has to be numbers to its end: a unit suffix ("10mm"), a
+// stray token or anything else the scanner cannot read is an error,
+// because stopping at the first bad token would keep the numbers
+// before it and quietly reshape a transform or a polygon. A browser
+// discards the whole attribute in that case; naming the token is
+// more useful to the author than either.
+func floats(s string) ([]float64, error) {
 	sc := scanner{s: s}
 	var out []float64
 	for {
 		v, ok := sc.number()
 		if !ok {
-			return out
+			break
 		}
 		out = append(out, v)
 	}
+	sc.sep()
+	if sc.i != len(sc.s) {
+		return nil, fmt.Errorf("svg: unexpected %q in number list %q; unit suffixes are not supported, use unitless user units", sc.s[sc.i:], s)
+	}
+	return out, nil
 }
 
 // scanner reads SVG numbers and arc flags out of path data, coping

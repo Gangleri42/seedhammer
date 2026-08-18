@@ -136,7 +136,11 @@ func TestScannerPackedNumbers(t *testing.T) {
 		".5.5":      {0.5, 0.5},
 	}
 	for in, want := range cases {
-		got := floats(in)
+		got, err := floats(in)
+		if err != nil {
+			t.Errorf("%q: %v", in, err)
+			continue
+		}
 		if len(got) != len(want) {
 			t.Errorf("%q: got %v, want %v", in, got, want)
 			continue
@@ -343,26 +347,58 @@ func TestParseTransformMalformed(t *testing.T) {
 	}
 }
 
-// Trailing transform garbage and unit-suffixed lengths are silent
-// geometry changes in a browser (whole attribute dropped, length
-// zeroed); the converter errors so the author sees the problem in the
-// terminal instead of on the device preview.
+// Trailing transform garbage, unit-suffixed lengths and unparsable
+// tokens inside number lists are silent geometry changes in a browser
+// (whole attribute dropped, length zeroed, list cut short); the
+// converter errors so the author sees the problem in the terminal
+// instead of on the device preview. The checks run through
+// extractSVG: the walk is where a parse error has to surface, and a
+// prefix that parsed must never be applied.
 func TestSilentGeometryRejected(t *testing.T) {
 	if _, err := parseTransform("translate(5) garbage"); err == nil {
 		t.Error("trailing transform garbage was accepted")
 	}
 	for _, doc := range []string{
+		// Lengths.
 		`<svg viewBox="0 0 100 100"><rect x="0" y="0" width="10mm" height="50"/></svg>`,
 		`<svg viewBox="0 0 100 100"><circle cx="10px" cy="10" r="5"/></svg>`,
 		`<svg viewBox="0 0 100 100"><rect x="0" y="0" width="10" height="50" rx="2mm"/></svg>`,
+		`<svg viewBox="0 0 100 100"><rect width="100%" height="100%"/><path d="M0 0 L10 10"/></svg>`,
+		// Transforms: trailing garbage after a parsed prefix, and
+		// units or junk inside the argument list.
+		`<svg viewBox="0 0 100 100"><rect transform="translate(50) garbage" x="0" y="0" width="10" height="10"/></svg>`,
+		`<svg viewBox="0 0 100 100"><rect transform="translate(1in, 2in)" x="0" y="0" width="10" height="10"/></svg>`,
+		`<svg viewBox="0 0 100 100"><rect transform="rotate(45,10mm,10)" x="0" y="0" width="10" height="10"/></svg>`,
+		`<svg viewBox="0 0 100 100"><rect transform="scale(2x)" x="0" y="0" width="10" height="10"/></svg>`,
+		`<svg viewBox="0 0 100 100"><g transform="translate(5) garbage"><rect x="0" y="0" width="10" height="10"/></g></svg>`,
+		`<svg viewBox="0 0 100 100"><defs><rect id="r" transform="skewX(1) junk" width="10" height="10"/></defs><use href="#r"/></svg>`,
+		// Point lists.
+		`<svg viewBox="0 0 100 100"><polygon points="0,0 10,0 10,10 junk"/></svg>`,
+		`<svg viewBox="0 0 100 100"><polyline points="0,0 10mm,0 10,10"/></svg>`,
 	} {
 		if _, err := extractSVG([]byte(doc)); err == nil {
 			t.Errorf("accepted: %s", doc)
 		}
 	}
-	// A clean unitless drawing still parses.
-	if _, err := extractSVG([]byte(`<svg viewBox="0 0 100 100"><rect x="0" y="0" width="10" height="50"/></svg>`)); err != nil {
-		t.Errorf("a unitless drawing was rejected: %v", err)
+	// Clean unitless drawings still parse, including the compact
+	// forms the transform and point scanners exist for.
+	for _, doc := range []string{
+		`<svg viewBox="0 0 100 100"><rect x="0" y="0" width="10" height="50"/></svg>`,
+		`<svg viewBox="0 0 100 100"><rect transform="translate(10,10) rotate(90) scale(2)" x="0" y="0" width="10" height="10"/></svg>`,
+		`<svg viewBox="0 0 100 100"><rect transform=" translate(10 , 10) , rotate(90 20 20) " x="0" y="0" width="10" height="10"/></svg>`,
+		`<svg viewBox="0 0 100 100"><polygon points="0,0 10,0 10,10 0,10"/></svg>`,
+		`<svg viewBox="0 0 100 100"><polygon points="0 0 10 0 10 10 0 10 "/></svg>`,
+		`<svg viewBox="0 0 100 100"><polygon points="0,0,10,0,10,10,0,10"/></svg>`,
+		`<svg viewBox="0 0 100 100"><polygon points="1.5.5-2-2 10 10 0 10"/></svg>`,
+	} {
+		if _, err := extractSVG([]byte(doc)); err != nil {
+			t.Errorf("a clean drawing was rejected: %v\n%s", err, doc)
+		}
+	}
+	// The prefix of a rejected transform must not have been applied
+	// anywhere: the whole document fails, so nothing is placed.
+	if d, err := extractSVG([]byte(`<svg viewBox="0 0 100 100"><rect x="0" y="0" width="10" height="10"/><rect transform="translate(50) garbage" x="0" y="0" width="10" height="10"/></svg>`)); err == nil {
+		t.Errorf("a document with a garbage transform produced %d shapes", len(d.shapes))
 	}
 }
 

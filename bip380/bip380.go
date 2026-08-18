@@ -23,13 +23,30 @@ type Descriptor struct {
 	Threshold int
 	Type      MultisigType
 	Keys      []Key
-	// NoChecksum records that Parse saw no #checksum, so nothing
-	// verified the transcription of what rode in. The checksum is
-	// error detection, not authentication (anyone can recompute it),
-	// and the plate QR deliberately drops it, so checksum-less input
-	// stays accepted; the confirm screen surfaces the notice instead.
-	NoChecksum bool
+	// Transcription records what the wire form did to vouch for its
+	// own transcription. A checksum is error detection, not
+	// authentication (anyone can recompute it), and the plate QR
+	// deliberately drops it, so no value here refuses input; the
+	// confirm screen turns anything but Checksummed into a notice.
+	Transcription Transcription
 }
+
+// Transcription is how far a descriptor's wire form vouched for its
+// own transcription.
+type Transcription uint8
+
+const (
+	// Checksummed input carried a checksum that verified, or was built
+	// on the device and never transcribed. The zero value.
+	Checksummed Transcription = iota
+	// NoChecksum is descriptor text without its #checksum, which is
+	// how the plate QR encodes it and how re-tapping a plate arrives.
+	NoChecksum
+	// Unchecked is a form that has no checksum to carry: a BlueWallet
+	// export, or a bare key expression promoted to a single-sig
+	// descriptor.
+	Unchecked
+)
 
 type Key struct {
 	Network           *chaincfg.Params
@@ -304,8 +321,10 @@ func Parse(desc string) (*Descriptor, error) {
 		return nil, fmt.Errorf("bip380: script: %w", err)
 	}
 	r := &Descriptor{
-		Threshold:  1,
-		NoChecksum: !ok,
+		Threshold: 1,
+	}
+	if !ok {
+		r.Transcription = NoChecksum
 	}
 	switch script {
 	case "wsh":

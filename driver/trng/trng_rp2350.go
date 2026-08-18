@@ -45,16 +45,22 @@ const sampleCount = 400
 const roscChain = 0
 
 // attempts bounds the retries across recoverable health failures. Each
-// costs a generation, so the expected worst case is under a second; the
-// hard ceiling is attempts x runTimeout, four seconds, and reaching it
-// needs hardware that never asserts any terminal status bit. Past it the
-// caller gets ErrUnhealthy rather than weaker entropy.
+// costs a generation, so the expected worst case is well under a
+// second per raw generation. The hard ceiling per raw generation is
+// the reset deadline plus attempts x (run deadline + reset deadline),
+// about 8.5 seconds at runTimeout, and a served block draws two raw
+// generations, so a block that never asserts any terminal status bit
+// can hold the caller for about 17 seconds before it gets
+// ErrUnhealthy rather than weaker entropy. Reaching that needs
+// hardware that answers nothing.
 const attempts = 8
 
-// runTimeout bounds one generation. The datasheet warns the tail can run
-// "in excess of 100 times the average", so this is deliberately far
-// above the expected forty milliseconds; it exists to keep a wedged
-// block from hanging the screen, not to cut a slow run short.
+// runTimeout bounds one generation and one reset release. It is twelve
+// times the expected forty milliseconds at sampleCount. The datasheet
+// warns the tail can run "in excess of 100 times the average", which
+// at this sampling rate would be four seconds; a healthy run that slow
+// is cut short here and costs one attempt, failing closed rather than
+// hanging the screen, which is the trade this constant makes.
 const runTimeout = 500 * time.Millisecond
 
 func init() {
@@ -95,7 +101,17 @@ func fillEHR(ehr *[ehrBytes]byte) error {
 	if !reset() {
 		return ErrUnhealthy
 	}
-	defer rp.TRNG.RND_SOURCE_ENABLE.Set(0)
+	// The block answers only after its reset release completes. A
+	// reset() that reported false has left it in reset, and what a
+	// register write does to a block in that state is not something to
+	// rest on, so the disable on the way out is skipped after such a
+	// failure: there is nothing running to disable.
+	up := true
+	defer func() {
+		if up {
+			rp.TRNG.RND_SOURCE_ENABLE.Set(0)
+		}
+	}()
 	for range attempts {
 		rp.TRNG.RNG_ICR.Set(0xffffffff)
 		rp.TRNG.RND_SOURCE_ENABLE.Set(1)
@@ -109,6 +125,7 @@ func fillEHR(ehr *[ehrBytes]byte) error {
 			// datasheet points at.
 			rp.TRNG.RND_SOURCE_ENABLE.Set(0)
 			if !reset() {
+				up = false
 				return ErrUnhealthy
 			}
 			continue
@@ -121,6 +138,7 @@ func fillEHR(ehr *[ehrBytes]byte) error {
 			// Timed out, or a state the datasheet does not describe.
 			// Start the block over rather than read a stale bank.
 			if !reset() {
+				up = false
 				return ErrUnhealthy
 			}
 			continue

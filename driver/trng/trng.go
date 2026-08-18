@@ -76,10 +76,12 @@ func (r *Reader) Read(p []byte) (int, error) {
 // refill serves the next block: the SHA-256 of two raw generations,
 // truncated to the block width. Two-to-one compression keeps the
 // served bytes at or below the entropy the raw stream measurably
-// carries; the raw input and the hash remainder are cleared after
-// use, matching the session-only memory posture.
+// carries; the raw input and the hash remainder are cleared on every
+// path out, including a second generation that fails after the first
+// has landed, matching the session-only memory posture.
 func (r *Reader) refill() error {
 	var raw [2 * ehrBytes]byte
+	defer clear(raw[:])
 	if err := fill((*[ehrBytes]byte)(raw[:ehrBytes])); err != nil {
 		return err
 	}
@@ -88,7 +90,6 @@ func (r *Reader) refill() error {
 	}
 	sum := sha256.Sum256(raw[:])
 	copy(r.buf[:], sum[:ehrBytes])
-	clear(raw[:])
 	clear(sum[:])
 	return nil
 }

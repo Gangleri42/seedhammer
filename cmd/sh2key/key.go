@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -88,12 +89,25 @@ func keyFromScalar(b []byte) (*secp256k1.PrivateKey, error) {
 // derived output: boards fused to it could never be signed for again.
 // No force flag, matching mintKey; keys are never written through
 // these paths. Derived outputs stay overwritable, since UF2 bytes and
-// curves payloads never parse as a key PEM.
+// curves payloads never parse as a key PEM. A target that exists but
+// cannot be read is refused too, because a guard that cannot look has
+// to assume the worst; and one that is not a regular file is refused
+// before it is read, since reading a FIFO or a terminal would block.
 func refuseKeyPEMTarget(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// Absent: nothing here this write could destroy.
+			return nil
+		}
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file; refusing to write over it", path)
+	}
 	existing, err := os.ReadFile(path)
 	if err != nil {
-		// Absent or unreadable: nothing here this write could destroy.
-		return nil
+		return fmt.Errorf("%s exists but cannot be read, so it may hold a private key; refusing to overwrite it: %w", path, err)
 	}
 	if _, perr := parseKeyPEM(existing); perr == nil {
 		return fmt.Errorf("%s holds a private key; refusing to overwrite it", path)

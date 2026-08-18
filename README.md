@@ -109,7 +109,9 @@ fit. The fork walks a fallback ladder (text at 3.8/3.4/3.0 mm, QR module scale
 3 then 2), taking QR-backed capacity to roughly 1500 compact characters; a
 973-character 5-of-7 descriptor engraved and transcribed back without errors.
 The Type-4 tag emulator also replays retransmitted frames instead of aborting
-the write, so long writes from phone apps complete.
+the write, so long writes from phone apps complete, and it acknowledges the
+writer's closing commit before the reader switches off, so the app reports
+the success it had.
 
 ### Multisig descriptors split across the cosigner plates
 

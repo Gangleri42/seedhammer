@@ -68,7 +68,13 @@ around its code:
 
 1. **Scan.** Hold the tag or phone against the reader while the start screen
    shows. The descriptor screen lists the wallet title, quorum, and script
-   type; check them against your setup and press the checkmark.
+   type; check them against your setup and press the checkmark. A Notice
+   line appears when nothing verified the transcription: descriptor text
+   that arrived without its checksum, a BlueWallet export, a bare account
+   key. The machine accepts it anyway; compare it with the wallet before
+   engraving. A descriptor the machine refuses (a quorum that cannot spend,
+   a hardened child after an xpub) lands in the text flow with the reason
+   named on its hold gate.
 
    ![The descriptor screen before the split choice](images/msw-14-descriptor.png)
 

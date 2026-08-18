@@ -164,9 +164,12 @@ choose. One or two words entered as `?` are recovered the same way.
 
 Without `-o`, a terminal gets the fingerprint only (the howto's
 plate-verification mode) and a pipe gets the PEM. `-o` writes 0600
-and never overwrites; `-f` relaxes that for a non-key file or an
-identical key, and a file holding a *different* key is refused even
-then.
+and never overwrites; `-f` relaxes that for a readable regular file
+that is not a key or holds this same key. A file holding a *different*
+key is refused even then, and so is anything `-f` cannot inspect: an
+unreadable file, a directory, a device. Replacing goes through a fresh
+0600 file and a rename, so the key is on disk under its name at every
+instant and a symlink stays a symlink.
 
 ### nsec
 

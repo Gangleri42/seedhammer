@@ -260,14 +260,18 @@ func WriteWhiteLabelString(idx uint8, s string) error {
 	if tblRow == 0 {
 		return errors.New("otp: white label address is not set")
 	}
-	// An interrupted earlier write can have burned the entry and its
-	// data without reaching the final valid-bit OR below. The rows
-	// are immutable now, so a fresh allocation would try to burn a
-	// conflicting entry value into the same row; when the burned
-	// entry already decodes to s, the only missing piece is the valid
-	// bit, and writeOrRow is OR-idempotent.
-	if burned, err := readWhiteLabelEntry(tblRow, idx); err == nil && burned == s {
-		return writeOrRow(USB_BOOT_FLAGS, 3, 0b1<<idx|WHITE_LABEL_ADDR_VALID)
+	// An interrupted earlier write can have burned the entry row, and
+	// some or all of the data rows, without reaching the final
+	// valid-bit OR below. The rows are immutable now, so a fresh
+	// allocation would try to burn a conflicting entry value into the
+	// same row and the label could never be finished; instead the
+	// rerun picks up where the write stopped.
+	entry, err := readECCRow(tblRow + uint16(idx))
+	if err != nil {
+		return err
+	}
+	if entry != 0 {
+		return finishWhiteLabel(tblRow, idx, entry, s)
 	}
 	const whiteLabelTableSize = 16
 	// Find space for the string, starting at the end of the
@@ -296,12 +300,55 @@ func WriteWhiteLabelString(idx uint8, s string) error {
 	if startRow < FirstUserRow || LastUserRow <= startRow+nrows {
 		return errors.New("otp: no space for white label string")
 	}
-	entry := rowOffset<<8 | len16
+	entry = rowOffset<<8 | len16
 	if err := writeECCRow(tblRow+uint16(idx), entry); err != nil {
 		return err
 	}
 	if err := writeECC([]byte(s), startRow); err != nil {
 		return err
+	}
+	return writeOrRow(USB_BOOT_FLAGS, 3, 0b1<<idx|WHITE_LABEL_ADDR_VALID)
+}
+
+// finishWhiteLabel completes a white-label write whose entry row is
+// already burned. The entry has to describe s (same length; the data
+// rows it names are then compared byte for byte), and each data row
+// is written where it is still blank, left where it already holds s's
+// bytes, and refused where it holds anything else. The valid bit is
+// asserted last, as in the uninterrupted order, so a second
+// interruption leaves the same shape for a third run. Every write
+// here is one the interrupted run would have made, so nothing burns
+// that the label would not have burned anyway.
+func finishWhiteLabel(tblRow uint16, idx uint8, entry uint16, s string) error {
+	if entry&0x80 != 0 {
+		return errors.New("otp: UTF-16 label not supported")
+	}
+	n := int(entry & 0x7f)
+	if n != len(s) {
+		return fmt.Errorf("otp: white label %d already holds a %d-byte entry, cannot hold %q", idx, n, s)
+	}
+	row := tblRow + entry>>8
+	data := []byte(s)
+	for i := 0; i < n; i += 2 {
+		// The last row of an odd-length string carries a zero high
+		// byte, as writeECC pads it.
+		var pair [2]byte
+		copy(pair[:], data[i:min(i+2, n)])
+		want := binary.LittleEndian.Uint16(pair[:])
+		r := row + uint16(i/2)
+		got, err := readECCRow(r)
+		if err != nil {
+			return err
+		}
+		switch got {
+		case want:
+		case 0:
+			if err := writeECCRow(r, want); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("otp: white label %d data row %d holds %#04x, want %#04x", idx, i/2, got, want)
+		}
 	}
 	return writeOrRow(USB_BOOT_FLAGS, 3, 0b1<<idx|WHITE_LABEL_ADDR_VALID)
 }

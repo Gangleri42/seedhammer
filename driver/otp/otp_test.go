@@ -219,6 +219,76 @@ func TestWhiteLabelInterruptedWrite(t *testing.T) {
 	}
 }
 
+// An interruption earlier than the valid-bit OR: the entry row burns,
+// the data rows do not (or only some do). The rerun must finish the
+// same entry rather than allocate a conflicting one, and read back
+// the string it was asked for.
+func TestWhiteLabelInterruptedData(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		dataRows int // rows the interrupted run manages to burn
+	}{
+		{"no data row burned", 0},
+		{"first data row burned", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetOTP()
+			if err := WriteWhiteLabelAddr(FirstUserRow); err != nil {
+				t.Fatal(err)
+			}
+			if err := WriteWhiteLabelString(INDEX_INFO_UF2_TXT_MODEL_STRDEF, "model"); err != nil {
+				t.Fatal(err)
+			}
+			const want = "boardid" // seven bytes, four rows, odd tail
+			inner := otp_access
+			interrupt := true
+			otp_access = func(bufPtr *uint8, buf_len, row_and_flags uint32) int {
+				row := uint16(row_and_flags & 0xffff)
+				write := row_and_flags&(_IS_WRITE<<16) != 0
+				ecc := row_and_flags&(_IS_ECC<<16) != 0
+				// The data write is the multi-row ECC write outside the
+				// entry table; burn tc.dataRows rows of it and drop.
+				if interrupt && write && ecc && buf_len > 2 && row >= FirstUserRow+16 {
+					if tc.dataRows > 0 {
+						inner(bufPtr, uint32(2*tc.dataRows), row_and_flags)
+					}
+					return _BOOTROM_ERROR_NOT_PERMITTED
+				}
+				return inner(bufPtr, buf_len, row_and_flags)
+			}
+			if err := WriteWhiteLabelString(INDEX_INFO_UF2_TXT_BOARD_ID_STRDEF, want); err == nil {
+				t.Fatal("the interrupted write reported success")
+			}
+			entryBefore, err := readECCRow(FirstUserRow + uint16(INDEX_INFO_UF2_TXT_BOARD_ID_STRDEF))
+			if err != nil || entryBefore == 0 {
+				t.Fatalf("the entry row did not burn: %#x, %v", entryBefore, err)
+			}
+			if got, err := ReadWhiteLabelString(INDEX_INFO_UF2_TXT_BOARD_ID_STRDEF); err != nil || got != "" {
+				t.Fatalf("half-written label reads %q, %v; want invisible", got, err)
+			}
+			interrupt = false
+			if err := WriteWhiteLabelString(INDEX_INFO_UF2_TXT_BOARD_ID_STRDEF, want); err != nil {
+				t.Fatalf("finishing rerun failed: %v", err)
+			}
+			if got, err := ReadWhiteLabelString(INDEX_INFO_UF2_TXT_BOARD_ID_STRDEF); err != nil || got != want {
+				t.Fatalf("finished label reads %q, %v; want %q", got, err, want)
+			}
+			// The same entry, not a fresh allocation.
+			if entryAfter, _ := readECCRow(FirstUserRow + uint16(INDEX_INFO_UF2_TXT_BOARD_ID_STRDEF)); entryAfter != entryBefore {
+				t.Fatalf("entry changed from %#x to %#x", entryBefore, entryAfter)
+			}
+			if got, err := ReadWhiteLabelString(INDEX_INFO_UF2_TXT_MODEL_STRDEF); err != nil || got != "model" {
+				t.Fatalf("neighbor label reads %q, %v", got, err)
+			}
+			// A different string of the same length is refused with
+			// its reason, not burned over.
+			if err := WriteWhiteLabelString(INDEX_INFO_UF2_TXT_BOARD_ID_STRDEF, "boardxx"); err == nil {
+				t.Fatal("a different string was written over a finished label")
+			}
+		})
+	}
+}
+
 func resetOTP() {
 	mem := make([]byte, numRows*3)
 	otp_access = func(bufPtr *uint8, buf_len, row_and_flags uint32) int {

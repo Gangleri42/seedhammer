@@ -1,6 +1,7 @@
 package nonstandard
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -175,6 +176,35 @@ func TestBlueWalletRejectsMalformed(t *testing.T) {
 	} {
 		if d, err := OutputDescriptor([]byte(p)); err == nil {
 			t.Errorf("missing Format accepted as %v, want rejected", d.Script)
+		}
+	}
+}
+
+// A format that recognizes the shape of the input and then refuses it
+// hands its reason out; only input no format claims gets the generic
+// error. The confirm-screen notice and the cosigner reject line show
+// what comes back here.
+func TestOutputDescriptorKeepsTheReason(t *testing.T) {
+	const xp = "xpub6DiYrfRwNnjeX4vHsWMajJVFKrbEEnu8gAW9vDuQzgTWEsEHE16sGWeXXUV1LBWQE1yCTmeprSNcqZ3W74hqVdgDbtYHUv3eM4W2TEUhpan"
+	const xp2 = "xpub6DnT4E1fT8VxuAZW29avMjr5i99aYTHBp9d7fiLnpL5t4JEprQqPMbTw7k7rh5tZZ2F5g8PJpssqrZoebzBChaiJrmEvWwUTEMAbHsY39Ge"
+	for _, tc := range []struct{ in, want string }{
+		{"wsh(sortedmulti(0," + xp + "," + xp2 + "))", "quorum"},
+		{"wpkh(" + xp + "/0h/1)", "hardened"},
+		{"wsh(sortedmulti(2," + xp + "))#deadbeef", "checksum"},
+		{"Name: t\nPolicy: 3 of 2\nDerivation: m/48'/0'/0'/2'\nFormat: P2WSH\ndc567276: " + xp + "\nf245ae38: " + xp2 + "\n", "quorum"},
+	} {
+		_, err := OutputDescriptor([]byte(tc.in))
+		if err == nil {
+			t.Errorf("%q parsed", tc.in)
+			continue
+		}
+		if errors.Is(err, ErrUnrecognized) || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%q: error %q, want a mention of %q", tc.in, err, tc.want)
+		}
+	}
+	for _, in := range []string{"hello plate", "IN CASE OF FIRE", "abandon abandon about"} {
+		if _, err := OutputDescriptor([]byte(in)); !errors.Is(err, ErrUnrecognized) {
+			t.Errorf("%q: error %v, want ErrUnrecognized", in, err)
 		}
 	}
 }

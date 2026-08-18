@@ -33,12 +33,20 @@ func ElectrumSeed(phrase string) bool {
 	return false
 }
 
+// ErrUnrecognized reports input that none of the descriptor formats
+// claim. Input one of them does claim, and then rejects, comes back
+// with that format's own error instead, so the reason (a quorum that
+// cannot spend, a hardened child after an xpub) survives to the
+// screen.
+var ErrUnrecognized = errors.New("nonstandard: unrecognized output descriptor format")
+
 func OutputDescriptor(enc []byte) (*bip380.Descriptor, error) {
-	if bw, err := parseBlueWalletDescriptor(string(enc)); err == nil && bw.Title != "" {
+	bw, bwErr := parseBlueWalletDescriptor(string(enc))
+	if bwErr == nil && bw.Title != "" {
 		return bw, nil
 	}
-	desc, err := bip380.Parse(string(enc))
-	if err == nil {
+	desc, parseErr := bip380.Parse(string(enc))
+	if parseErr == nil {
 		return desc, nil
 	}
 	var jsonDesc struct {
@@ -71,7 +79,43 @@ func OutputDescriptor(enc []byte) (*bip380.Descriptor, error) {
 			}, nil
 		}
 	}
-	return nil, errors.New("nonstandard: unrecognized output descriptor format")
+	// Nothing parsed. The format that recognized the shape of the
+	// input holds the useful error; the generic one is for input no
+	// format claims.
+	if descriptorShaped(enc) {
+		return nil, parseErr
+	}
+	if bwErr != nil && blueWalletShaped(enc) {
+		return nil, bwErr
+	}
+	return nil, ErrUnrecognized
+}
+
+// descriptorShaped reports whether enc opens like a textual output
+// descriptor: one of the script functions bip380.Parse knows, followed
+// by '('.
+func descriptorShaped(enc []byte) bool {
+	s := strings.TrimSpace(string(enc))
+	i := strings.IndexByte(s, '(')
+	if i < 0 {
+		return false
+	}
+	switch s[:i] {
+	case "wsh", "wpkh", "sh", "pkh", "tr":
+		return true
+	}
+	return false
+}
+
+// blueWalletShaped reports whether enc carries the Policy header a
+// BlueWallet multisig export always has.
+func blueWalletShaped(enc []byte) bool {
+	for l := range strings.SplitSeq(string(enc), "\n") {
+		if strings.HasPrefix(l, "Policy: ") {
+			return true
+		}
+	}
+	return false
 }
 
 func parseBlueWalletDescriptor(txt string) (*bip380.Descriptor, error) {

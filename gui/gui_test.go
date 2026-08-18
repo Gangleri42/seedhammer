@@ -442,6 +442,9 @@ func TestTextNotice(t *testing.T) {
 		{"plain text", "IN CASE OF FIRE\n\nBREAK GLASS", ""},
 		{"prose with common words", "in case of fire break glass and stay calm for the day", ""},
 		{"corrupted descriptor", "wsh(sortedmulti(2,[dc567276/48h", "descriptor"},
+		// A descriptor a parser refused for a reason names it.
+		{"unspendable quorum", "wsh(sortedmulti(0,xpub6DiYrfRwNnjeX4vHsWMajJVFKrbEEnu8gAW9vDuQzgTWEsEHE16sGWeXXUV1LBWQE1yCTmeprSNcqZ3W74hqVdgDbtYHUv3eM4W2TEUhpan,xpub6DnT4E1fT8VxuAZW29avMjr5i99aYTHBp9d7fiLnpL5t4JEprQqPMbTw7k7rh5tZZ2F5g8PJpssqrZoebzBChaiJrmEvWwUTEMAbHsY39Ge))", "quorum"},
+		{"hardened child", "wpkh(xpub6DiYrfRwNnjeX4vHsWMajJVFKrbEEnu8gAW9vDuQzgTWEsEHE16sGWeXXUV1LBWQE1yCTmeprSNcqZ3W74hqVdgDbtYHUv3eM4W2TEUhpan/0h/1)", "hardened"},
 		{"key origin", "[dc567276/48h/0h/0h/2h]xpub6DiYrf", "descriptor"},
 		{"lone xpub", "xpub6DiYrfRwNnjeX4vHsWMajJVFKrb", "descriptor"},
 		{"corrupted codex32", "ms13cashsllhdmn9m42vcsamx24zrxgs3qq", "codex32"},

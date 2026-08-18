@@ -1004,6 +1004,24 @@ func inputWordsFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, selected 
 	// and bip39.Complete("") is false, so the checkmark is not drawn then.
 	pickBtn := &Clickable{Button: Button2}
 	longest := wordBoxSize(ctx, th)
+	// A box that already holds a word opens on that word, in the box
+	// and editable like any fragment. The word leaves the phrase for
+	// the length of the edit, so the final box offers the draw once it
+	// is empty; the checkmark and the draw commit what replaces it, and
+	// Back puts the word back.
+	box, held := selected, mnemonic[selected]
+	committed := false
+	if held != -1 {
+		mnemonic[box] = -1
+		kbd.Fragment = bip39.LabelFor(held)
+		wordLabel = kbd.Fragment
+		updateValidBIP39Keys(kbd.Fragment, kbd.allKeys)
+	}
+	defer func() {
+		if !committed && held != -1 {
+			mnemonic[box] = held
+		}
+	}()
 	for !ctx.Done {
 		for kbd.Update(ctx) {
 			updateValidBIP39Keys(kbd.Fragment, kbd.allKeys)
@@ -1019,6 +1037,7 @@ func inputWordsFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, selected 
 			if pickBtn.Clicked(ctx) {
 				if w, ok := pickLastWordFlow(ctx, th, mnemonic, longest); ok {
 					mnemonic[selected] = w
+					committed = true
 					return
 				}
 				continue
@@ -1033,6 +1052,7 @@ func inputWordsFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, selected 
 				wordLabel = ""
 				updateValidBIP39Keys("", kbd.allKeys)
 				mnemonic[selected] = w
+				committed = true
 				for {
 					selected++
 					if selected == len(mnemonic) {

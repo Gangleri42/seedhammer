@@ -102,7 +102,8 @@ against the screen, then destroy the paper.
    it to accept the word and move to the next.
 3. On the final word, with nothing typed, the screen offers a random last word.
    Take the middle button. Typing a word instead hides the offer; clearing the
-   box brings it back.
+   box brings it back. A box that already holds a word opens on that word:
+   delete it to see the offer again, or press back to keep it.
 
    ![The last-word offer on an empty final word](images/seed-01-lastword-offer.png)
 

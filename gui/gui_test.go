@@ -588,7 +588,8 @@ func TestWordKeyboardScreen(t *testing.T) {
 		w := bip39.LabelFor(i)
 		runes(&ctx.Router, w)
 		click(&ctx.Router, Button2)
-		m := make(bip39.Mnemonic, 1)
+		// An empty box: a filled one opens on its word instead.
+		m := bip39.Mnemonic{-1}
 		inputWordsFlow(ctx, &descriptorTheme, m, 0)
 		if got := bip39.LabelFor(m[0]); got != w {
 			t.Errorf("keyboard mapped %q to %q", w, got)

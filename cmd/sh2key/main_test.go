@@ -522,6 +522,82 @@ func TestWriteKeyPEMFileNeverClobbers(t *testing.T) {
 	if fi, err := os.Stat(target); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("restored key mode = %v, want 0600", fi.Mode().Perm())
 	}
+	// The replacement leaves no temporary file behind.
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
+		t.Fatalf("directory after replace: %v, %v; want only the key", entries, err)
+	}
+}
+
+// -f is not a license to destroy what the guard cannot see. A target
+// that exists but cannot be read may hold a different key, so it is
+// refused rather than removed; a directory or other non-file is
+// refused; and a symlink is written through, the key staying where
+// the link points and the link staying a link.
+func TestWriteKeyPEMFileForceRefusesTheUnseen(t *testing.T) {
+	priv, _ := loadFixture(t)
+	other, err := secp256k1.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := marshalKeyPEM(priv)
+	fp := fingerprint(priv)
+	dir := t.TempDir()
+
+	if os.Geteuid() == 0 {
+		t.Log("running as root: the unreadable-file case cannot be exercised")
+	} else {
+		unreadable := filepath.Join(dir, "unreadable.pem")
+		if err := os.WriteFile(unreadable, marshalKeyPEM(other), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(unreadable, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		err := writeKeyPEMFile(unreadable, data, true, fp)
+		os.Chmod(unreadable, 0o600)
+		got, rerr := os.ReadFile(unreadable)
+		if err == nil {
+			t.Fatal("-f replaced a file it could not read")
+		}
+		if rerr != nil || !bytes.Equal(got, marshalKeyPEM(other)) {
+			t.Fatalf("the unreadable file changed: %v", rerr)
+		}
+	}
+
+	subdir := filepath.Join(dir, "keys")
+	if err := os.Mkdir(subdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeKeyPEMFile(subdir, data, true, fp); err == nil {
+		t.Fatal("-f replaced a directory")
+	}
+	if fi, err := os.Stat(subdir); err != nil || !fi.IsDir() {
+		t.Fatalf("the directory did not survive: %v", err)
+	}
+
+	real := filepath.Join(dir, "vault", "key.pem")
+	if err := os.MkdirAll(filepath.Dir(real), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(real, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.pem")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeKeyPEMFile(link, data, true, fp); err != nil {
+		t.Fatalf("-f refused an identical key behind a symlink: %v", err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the symlink was replaced by a file: %v", err)
+	}
+	if fi, err := os.Stat(real); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("key behind the link has mode %v, want 0600", fi.Mode().Perm())
+	}
+	if got, err := os.ReadFile(real); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("key behind the link: %v", err)
+	}
 }
 
 // The shared -o guard: a target holding a private key is refused, and

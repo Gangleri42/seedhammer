@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -279,9 +280,16 @@ func emitPEM(stdout io.Writer, u *ui, outPath string, force bool, priv *secp256k
 }
 
 // writeKeyPEMFile never clobbers: O_EXCL and 0600. -f relaxes that
-// for targets that are not a key or hold this same key; a target
-// holding a different key is refused even then, because overwriting
-// it would destroy the thing being backed up.
+// for a readable regular file that is not a key or holds this same
+// key; a target holding a different key is refused even then, because
+// overwriting it would destroy the thing being backed up, and so is a
+// target that cannot be read or is not a regular file, because a
+// guard that cannot look has to assume the worst. Replacing goes
+// through a fresh 0600 file in the target's directory and a rename,
+// so the key is on disk under its name at every instant and a
+// looser mode on the old file (say 0644) never survives onto restored
+// key material. A symlink is followed: the key stays where the link
+// points, and the link stays a link.
 func writeKeyPEMFile(path string, data []byte, force bool, fp [32]byte) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err == nil {
@@ -297,26 +305,51 @@ func writeKeyPEMFile(path string, data []byte, force bool, fp [32]byte) error {
 	if !force {
 		return fmt.Errorf("%s exists; refusing to overwrite a key file (rerun with -f to allow replacing an identical key or a non-key file)", path)
 	}
-	if existing, rerr := os.ReadFile(path); rerr == nil {
-		if old, perr := parseKeyPEM(existing); perr == nil {
-			if fingerprint(old) != fp {
-				return fmt.Errorf("refusing even with -f: %s holds a different key (fingerprint %s); overwriting it would destroy the thing being backed up", path, fingerprintHex(old)[:16])
-			}
-		}
-	}
-	// Replacing is a fresh 0600 create, never an in-place write: an
-	// in-place write keeps the existing file's mode, and a looser one
-	// (say 0644) must not survive onto restored key material.
-	if err := os.Remove(path); err != nil {
-		return err
-	}
-	f, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	target, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
+	fi, err := os.Stat(target)
+	if err != nil {
 		return err
 	}
-	return f.Close()
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("refusing even with -f: %s is not a regular file", path)
+	}
+	existing, err := os.ReadFile(target)
+	if err != nil {
+		return fmt.Errorf("refusing even with -f: %s exists but cannot be read, so it may hold a different key: %w", path, err)
+	}
+	if old, perr := parseKeyPEM(existing); perr == nil {
+		if fingerprint(old) != fp {
+			return fmt.Errorf("refusing even with -f: %s holds a different key (fingerprint %s); overwriting it would destroy the thing being backed up", path, fingerprintHex(old)[:16])
+		}
+	}
+	return replaceFile(target, data)
+}
+
+// replaceFile swaps a fresh 0600 file holding data in for target by
+// rename, so target is never absent and never half-written, and the
+// old file's mode is not inherited. The temporary file lives in
+// target's directory, which is what makes the rename atomic.
+func replaceFile(target string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(name)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, target); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return nil
 }

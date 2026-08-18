@@ -709,4 +709,12 @@ func TestRevokeEnterRegatesOnFreshScan(t *testing.T) {
 	if s.ran {
 		t.Error("the revoke reported success on the swapped board")
 	}
+	// The cursor does not stay on a slot the fresh board refuses: it
+	// moves where r would put it, so the redrawn screen has a cursor.
+	if want := s.firstAllowed(); s.cur != want {
+		t.Errorf("cursor on slot %d after the refusal, want %d", s.cur, want)
+	}
+	if plans := s.plans(); plans[s.cur].refuse != "" && s.cur == 1 {
+		t.Errorf("cursor left on refused slot 1: %s", plans[1].refuse)
+	}
 }

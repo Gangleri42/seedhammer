@@ -163,45 +163,11 @@ type Attributes struct {
 	Duration uint
 }
 
-// Bounds is like [image.Rectangle] with its upper
-// bound inclusive.
-type Bounds struct {
-	Min, Max bezier.Point
-}
-
-func (b Bounds) In(b2 Bounds) bool {
-	return inBounds(b.Min, b2) && inBounds(b.Max, b2)
-}
-
-func (b Bounds) Union(b2 Bounds) Bounds {
-	return Bounds{
-		Min: bezier.Point{
-			X: min(b.Min.X, b2.Min.X),
-			Y: min(b.Min.Y, b2.Min.Y),
-		},
-		Max: bezier.Point{
-			X: max(b.Max.X, b2.Max.X),
-			Y: max(b.Max.Y, b2.Max.Y),
-		},
-	}
-}
-
-func (b Bounds) Empty() bool {
-	return b.Max.X < b.Min.X || b.Max.Y < b.Min.Y
-}
-
-func (b Bounds) Dx() int {
-	return int(b.Max.X - b.Min.X)
-}
-
-func (b Bounds) Dy() int {
-	return int(b.Max.Y - b.Min.Y)
-}
-
-func inBounds(p bezier.Point, b Bounds) bool {
-	return b.Min.X <= p.X && p.X <= b.Max.X &&
-		b.Min.Y <= p.Y && p.Y <= b.Max.Y
-}
+// Bounds is [bezier.Bounds]: the same rectangle with its upper bound
+// inclusive, and the same methods. Splines are built from bezier
+// points, so the type is the same and an alias keeps one set of
+// arithmetic to get right.
+type Bounds = bezier.Bounds
 
 func Measure(spline Curve) Attributes {
 	inf := Bounds{

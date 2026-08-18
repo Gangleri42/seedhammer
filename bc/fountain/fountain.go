@@ -125,6 +125,13 @@ func (d *Decoder) Add(data []byte) error {
 	if p.MessageLen < 1 || p.MessageLen > maxMessageLen {
 		return fmt.Errorf("fountain: message length %d outside 1..%d", p.MessageLen, maxMessageLen)
 	}
+	// Encode sizes every part at ceil(MessageLen/SeqLen), and reducePart
+	// XORs parts index for index, so a part of any other length is not
+	// from this message and would run the XOR off the end of a shorter
+	// one.
+	if want := (p.MessageLen + p.SeqLen - 1) / p.SeqLen; len(p.Data) != want {
+		return fmt.Errorf("fountain: fragment is %d bytes, header says %d", len(p.Data), want)
+	}
 	if d.header.SeqLen > 0 {
 		if d.header != p.partHeader {
 			return fmt.Errorf("fountain: incompatible fragment")

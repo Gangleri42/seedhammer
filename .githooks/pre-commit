@@ -28,8 +28,13 @@ if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
   exit 0
 fi
 
-# 1. gofmt — whole-file check on every staged Go file.
-mapfile -t gofiles < <(git diff --cached --diff-filter=AM --name-only -- '*.go')
+# 1. gofmt — whole-file check on every staged Go file. A while-read
+# loop rather than mapfile: macOS ships bash 3.2, where mapfile does
+# not exist and the check would silently do nothing.
+gofiles=()
+while IFS= read -r f; do
+  [ -n "$f" ] && gofiles+=("$f")
+done < <(git diff --cached --diff-filter=AM --name-only -- '*.go')
 if [ "${#gofiles[@]}" -gt 0 ]; then
   bad_fmt="$(gofmt -l "${gofiles[@]}" 2>/dev/null || true)"
   if [ -n "$bad_fmt" ]; then

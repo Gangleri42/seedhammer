@@ -24,6 +24,10 @@ type Device struct {
 	interrupts chan struct{}
 	timer      *time.Timer
 	excludeCRC bool
+	// txPending is set when a transmit command has been issued and no
+	// transmit-end interrupt has been observed since; Close waits it
+	// out before switching the transmitter off mid-frame.
+	txPending bool
 
 	scratch [256]byte
 }
@@ -69,6 +73,11 @@ const (
 	// fieldDetectionTimeout is the time spent waiting for
 	// an external field.
 	fieldDetectionTimeout = 700 * time.Millisecond
+
+	// closeTxTimeout bounds Close's wait for a transmission still
+	// leaving the antenna. The longest frame, 256 bytes at 106 kbit/s,
+	// takes about 22 ms on the air.
+	closeTxTimeout = 25 * time.Millisecond
 
 	// Card detection thresholds.
 	ampSens   = 2
@@ -295,6 +304,27 @@ func (d *Device) Detect() (bool, error) {
 }
 
 func (d *Device) Close() error {
+	// An Interrupt sent when no read was left to cancel would sit in
+	// the buffer and cancel the next session's first wait instead.
+	select {
+	case <-d.cancel:
+	default:
+	}
+	// The last response may still be leaving the antenna, and clearing
+	// the operation register kills the transmitter mid-frame; the
+	// writer would miss the frame it was owed. The transmit-end bit
+	// latches whether or not it is unmasked, so poll it out, bounded.
+	deadline := time.Now().Add(closeTxTimeout)
+	for d.txPending {
+		intrs, _, err := d.interruptStatus()
+		if err != nil || !time.Now().Before(deadline) {
+			break
+		}
+		if intrs.Main&(0b1<<i_txe) != 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
 	if err := d.writeReg(regOpCtrl, 0); err != nil {
 		return fmt.Errorf("st25r3916: %w", err)
 	}
@@ -388,6 +418,7 @@ func (d *Device) write(tx []byte) (int, error) {
 	if err := d.command(transmitCmd); err != nil {
 		return 0, err
 	}
+	d.txPending = true
 	return len(tx), nil
 }
 
@@ -486,6 +517,11 @@ func (d *Device) interruptStatus() (intrs interrupts, mask interrupts, err error
 		return interrupts{}, interrupts{}, err
 	}
 	intrs.Main = resp[4]
+	if intrs.Main&(0b1<<i_txe) != 0 {
+		// Reading clears the register, so remember that the pending
+		// transmission finished; Close asks before switching off.
+		d.txPending = false
+	}
 	mask = interrupts{
 		Main:    ^resp[0],
 		Timer:   ^resp[1],

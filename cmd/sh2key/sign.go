@@ -181,6 +181,11 @@ func signedName(in string) string {
 // covers the embedded public key, so the key goes in before the
 // digest is taken.
 func signImage(u *ui, priv *secp256k1.PrivateKey, inPath, outPath string) error {
+	// Before any work: a refused target is refused in the time it
+	// takes to read it, not after a signature has been computed.
+	if err := refuseKeyPEMTarget(outPath); err != nil {
+		return err
+	}
 	info, err := inspectUF2(inPath)
 	if err != nil {
 		return err
@@ -215,9 +220,6 @@ func signImage(u *ui, priv *secp256k1.PrivateKey, inPath, outPath string) error 
 	// UF2 block structure, exactly as cmd/picosign does.
 	raw, err := os.ReadFile(inPath)
 	if err != nil {
-		return err
-	}
-	if err := refuseKeyPEMTarget(outPath); err != nil {
 		return err
 	}
 	if err := os.WriteFile(outPath, raw, 0o644); err != nil {

@@ -621,6 +621,23 @@ func TestRefuseKeyPEMTarget(t *testing.T) {
 	if err := refuseKeyPEMTarget(filepath.Join(dir, "absent.uf2")); err != nil {
 		t.Fatalf("an absent target was refused: %v", err)
 	}
+	// What the guard cannot read it refuses, and what is not a file it
+	// refuses without reading: a FIFO or a terminal would block.
+	if os.Geteuid() != 0 {
+		hidden := filepath.Join(dir, "hidden.pem")
+		if err := os.WriteFile(hidden, fixturePEM(t), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		os.Chmod(hidden, 0o200)
+		err := refuseKeyPEMTarget(hidden)
+		os.Chmod(hidden, 0o600)
+		if err == nil {
+			t.Fatal("an unreadable target was accepted")
+		}
+	}
+	if err := refuseKeyPEMTarget(dir); err == nil {
+		t.Fatal("a directory target was accepted")
+	}
 }
 
 // The unflagged twin of signing onto the key: the instructions plate

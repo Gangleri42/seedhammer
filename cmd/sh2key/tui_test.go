@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -268,6 +269,11 @@ func TestUdevRulesState(t *testing.T) {
 }
 
 func TestHomeOffersUdevSetup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		// The offer is linux-only (offersUdevSetup gates on GOOS);
+		// elsewhere the home screen has nothing to offer.
+		t.Skip("setup-udev is offered on linux only")
+	}
 	devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
 		t.Fatal(err)

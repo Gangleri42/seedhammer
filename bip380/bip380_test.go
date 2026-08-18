@@ -285,3 +285,28 @@ func TestDerivationEncode(t *testing.T) {
 		}
 	}
 }
+
+// Validate holds the arithmetic every entry path relies on, for the
+// descriptors nothing parsed.
+func TestValidate(t *testing.T) {
+	key := Key{}
+	for _, tc := range []struct {
+		name string
+		d    Descriptor
+		ok   bool
+	}{
+		{"single key", Descriptor{Type: Singlesig, Keys: []Key{key}}, true},
+		{"single, no key", Descriptor{Type: Singlesig}, false},
+		{"single, two keys", Descriptor{Type: Singlesig, Keys: []Key{key, key}}, false},
+		{"2 of 3", Descriptor{Type: SortedMulti, Threshold: 2, Keys: []Key{key, key, key}}, true},
+		{"1 of 1", Descriptor{Type: SortedMulti, Threshold: 1, Keys: []Key{key}}, true},
+		{"0 of 2", Descriptor{Type: SortedMulti, Threshold: 0, Keys: []Key{key, key}}, false},
+		{"3 of 2", Descriptor{Type: SortedMulti, Threshold: 3, Keys: []Key{key, key}}, false},
+		{"1 of none", Descriptor{Type: SortedMulti, Threshold: 1}, false},
+		{"unknown type", Descriptor{Type: MultisigType(9), Keys: []Key{key}}, false},
+	} {
+		if err := tc.d.Validate(); (err == nil) != tc.ok {
+			t.Errorf("%s: Validate = %v, want ok=%v", tc.name, err, tc.ok)
+		}
+	}
+}

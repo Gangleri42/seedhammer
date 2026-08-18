@@ -429,11 +429,6 @@ func parseOutputDescriptor(mode cbor.DecMode, enc []byte) (*bip380.Descriptor, e
 		if err := mode.Unmarshal(enc, &m); err != nil {
 			return nil, err
 		}
-		// The same quorum arithmetic bip380.Parse enforces: 0-of-n is
-		// anyone-can-spend and m > n is unspendable.
-		if m.Threshold < 1 || m.Threshold > len(m.Keys) {
-			return nil, fmt.Errorf("ur: threshold %d of %d keys is not a spendable quorum", m.Threshold, len(m.Keys))
-		}
 		desc.Threshold = m.Threshold
 		for _, k := range m.Keys {
 			keyDesc, err := parseHDKey([]byte(k))
@@ -444,6 +439,10 @@ func parseOutputDescriptor(mode cbor.DecMode, enc []byte) (*bip380.Descriptor, e
 		}
 	default:
 		return desc, fmt.Errorf("unknown script function tag: %d", funcNumber)
+	}
+	// The same quorum arithmetic the text parser enforces.
+	if err := desc.Validate(); err != nil {
+		return nil, fmt.Errorf("ur: %w", err)
 	}
 	return desc, nil
 }

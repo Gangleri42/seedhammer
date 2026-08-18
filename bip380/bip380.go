@@ -117,6 +117,28 @@ const (
 	SortedMulti
 )
 
+// Validate checks the arithmetic every entry path and every consumer
+// rely on: a single-key descriptor carries exactly one key, and a
+// multisig quorum lies in 1..n, since 0-of-n is anyone-can-spend and
+// m > n is unspendable. Parse, the nonstandard and UR decoders and
+// address derivation all call it, so a hand-built Descriptor meets
+// the same line as a scanned one.
+func (d *Descriptor) Validate() error {
+	switch d.Type {
+	case Singlesig:
+		if len(d.Keys) != 1 {
+			return fmt.Errorf("bip380: single-key descriptor carries %d keys", len(d.Keys))
+		}
+	case SortedMulti:
+		if d.Threshold < 1 || d.Threshold > len(d.Keys) {
+			return fmt.Errorf("bip380: threshold %d of %d keys is not a spendable quorum", d.Threshold, len(d.Keys))
+		}
+	default:
+		return fmt.Errorf("bip380: unknown descriptor type %d", d.Type)
+	}
+	return nil
+}
+
 func (k Key) ExtendedKey() *hdkeychain.ExtendedKey {
 	var fp [4]byte
 	binary.BigEndian.PutUint32(fp[:], k.ParentFingerprint)
@@ -379,13 +401,6 @@ func Parse(desc string) (*Descriptor, error) {
 			return nil, fmt.Errorf("bip380: invalid multikey threshold: %q", desc)
 		}
 		keys = args[1:]
-		// An out-of-quorum threshold builds a script nobody should
-		// spend from (0-of-n is anyone-can-spend) or nobody can
-		// (m > n). The confirm screen renders whatever parses, so the
-		// arithmetic has to hold here.
-		if threshold < 1 || threshold > len(keys) {
-			return nil, fmt.Errorf("bip380: threshold %d of %d keys is not a spendable quorum", threshold, len(keys))
-		}
 		r.Threshold = threshold
 	}
 	for _, k := range keys {
@@ -394,6 +409,11 @@ func Parse(desc string) (*Descriptor, error) {
 			return nil, err
 		}
 		r.Keys = append(r.Keys, key)
+	}
+	// The confirm screen renders whatever parses, so the quorum
+	// arithmetic has to hold here.
+	if err := r.Validate(); err != nil {
+		return nil, err
 	}
 	return r, nil
 }

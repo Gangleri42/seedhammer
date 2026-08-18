@@ -191,6 +191,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(413, {"error": "payload too large"})
         try:
             data = json.loads(self.rfile.read(n) or b"{}")
+            # A body that is valid JSON but not an object (null, a number,
+            # a list) has no .get; the AttributeError is not in the tuple
+            # below and would kill the handler thread the same way the
+            # RecursionError did.
+            if not isinstance(data, dict):
+                raise ValueError("body must be a JSON object")
             # payloadB64 carries a binary v2 curves payload (arbitrary bytes,
             # which JSON cannot hold as a string); payload stays a plain string
             # for text envelopes.

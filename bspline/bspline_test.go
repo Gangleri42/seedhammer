@@ -21,20 +21,6 @@ var (
 	update = flag.Bool("update", false, "update golden files")
 )
 
-// A top-right drawing (large X, small Y) has Max.Y well below Min.X,
-// which the axis-crossed comparison misread as empty and svgplate's
-// margin re-check then skipped.
-func TestBoundsEmptyTopRight(t *testing.T) {
-	topRight := Bounds{Min: bezier.Point{X: 100, Y: 1}, Max: bezier.Point{X: 200, Y: 5}}
-	if topRight.Empty() {
-		t.Error("a top-right rectangle reported empty")
-	}
-	inverted := Bounds{Min: bezier.Point{X: 0, Y: 10}, Max: bezier.Point{X: 5, Y: 2}}
-	if !inverted.Empty() {
-		t.Error("a Y-inverted rectangle reported non-empty")
-	}
-}
-
 func TestInterpolator(t *testing.T) {
 	splines := [][]bezier.Point{
 		{

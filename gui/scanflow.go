@@ -23,6 +23,7 @@ func scanWorker(ctx *Context, scans chan scanResult) (stop func()) {
 	go func() {
 		s := new(scanner)
 		var lastStatus scanStatus
+		var lastDetail string
 		var lastWake time.Time
 		for {
 			select {
@@ -38,6 +39,9 @@ func scanWorker(ctx *Context, scans chan scanResult) (stop func()) {
 			switch {
 			case errors.Is(err, errScanInProgress):
 				scan.Status = scanStarted
+			case errors.Is(err, errScanProgress):
+				scan.Status = scanParts
+				scan.Detail = s.detail
 			case errors.Is(err, errScanUnknownFormat):
 				scan.Status = scanUnknownFormat
 			case err == nil || err == io.EOF:
@@ -50,6 +54,7 @@ func scanWorker(ctx *Context, scans chan scanResult) (stop func()) {
 			// past the writer's frame waiting time. Unchanged status
 			// is refreshed at half the label decay interval.
 			if scan.Object == nil && scan.Status == lastStatus &&
+				scan.Detail == lastDetail &&
 				time.Since(lastWake) < scanStatusTimeout/2 {
 				continue
 			}
@@ -59,12 +64,16 @@ func scanWorker(ctx *Context, scans chan scanResult) (stop func()) {
 				if scan.Object == nil {
 					scan.Object = old.Object
 				}
+				if scan.Detail == "" {
+					scan.Detail = old.Detail
+				}
 				scan.Status = max(scan.Status, old.Status)
 			default:
 			}
 			scans <- scan
 			wakeup()
 			lastStatus = scan.Status
+			lastDetail = scan.Detail
 			lastWake = time.Now()
 			if scan.Status == scanFailed {
 				// Wait a bit before attempting to scan again, but let a
@@ -84,14 +93,15 @@ func scanWorker(ctx *Context, scans chan scanResult) (stop func()) {
 	}
 }
 
-// scanStatusText is the label a scan status shows while it decays.
+// scanStatusText is the label a scan status shows while it decays. The
+// scanParts progress label carries its own detail text.
 func scanStatusText(status scanStatus) string {
 	switch status {
 	case scanFailed:
 		return "Scan error"
 	case scanOverflow:
 		return "Content too large"
-	case scanStarted:
+	case scanStarted, scanParts:
 		return "Scanning..."
 	case scanUnknownFormat:
 		return "Unknown format"

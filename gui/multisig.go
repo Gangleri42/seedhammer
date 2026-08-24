@@ -210,6 +210,7 @@ func cosignerEntry(ctx *Context, th *Colors, title string) (cosignerEntryAction,
 	cancelBtn := &Clickable{Button: Button1}
 	chooseBtn := &Clickable{Button: Button3, AltButton: Center}
 	var status scanStatus
+	var detail string
 	var rejected bool
 	var rejectWhy string
 	var statusTimeout time.Time
@@ -256,6 +257,7 @@ func cosignerEntry(ctx *Context, th *Colors, title string) (cosignerEntryAction,
 			} else {
 				status = scan.Status
 			}
+			detail = scan.Detail
 			statusTimeout = now.Add(scanStatusTimeout)
 			if obj := scan.Object; obj != nil {
 				rejected, rejectWhy = false, ""
@@ -289,6 +291,9 @@ func cosignerEntry(ctx *Context, th *Colors, title string) (cosignerEntryAction,
 		} else if now.Before(statusTimeout) {
 			ctx.WakeupAt(statusTimeout)
 			sttxt = scanStatusText(status)
+			if status == scanParts && detail != "" {
+				sttxt = detail
+			}
 		}
 		subt, ssz := widget.Labelw(&ctx.B, ctx.Styles.subtitle, 300, th.Text, sttxt)
 		r := layout.Rectangle{Max: dims}

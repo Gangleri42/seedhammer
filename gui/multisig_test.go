@@ -1,12 +1,15 @@
 package gui
 
 import (
+	"bytes"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"seedhammer.com/address"
+	"seedhammer.com/bc/urtypes"
 	"seedhammer.com/bip380"
 	"seedhammer.com/bip39"
 )
@@ -305,10 +308,12 @@ func TestMultisigPassphraseWarning(t *testing.T) {
 }
 
 // TestBuiltDescriptorPlateParity: the plates a built wallet cuts must
-// be the plates a rescan of its own exported descriptor cuts, or an
-// aborted set could not resume from a rescan. The descriptor string
-// carries no title, so the rescan reinstates it the way the flow's
-// operator would; everything else must agree byte for byte.
+// be the plates a rescan of its own exported descriptor cuts. The
+// descriptor string carries no title, so the rescan reinstates it the
+// way the flow's operator would; the single-plate variants must then
+// agree byte for byte. Share sessions differ by fresh randomness, so
+// for the split only the partitioning and the pairing headers up to
+// the session tag are comparable.
 func TestBuiltDescriptorPlateParity(t *testing.T) {
 	built := goldenDescriptor(t)
 	rescanned, err := bip380.Parse(built.Encode())
@@ -340,39 +345,56 @@ func TestBuiltDescriptorPlateParity(t *testing.T) {
 		}
 	}
 
-	bData, bSize, bScale, err := fitShares(engraverParams, built, nil)
+	// The split sessions differ by fresh randomness, so the share
+	// bytes and session tags are not comparable; what must agree is
+	// the partitioning: the CBOR input, the fit cell and the plate
+	// shapes.
+	if got, want := urtypes.EncodeDescriptor(built), urtypes.EncodeDescriptor(rescanned); !bytes.Equal(got, want) {
+		t.Fatal("descriptor CBOR diverges between built and rescanned")
+	}
+	bLab, bPlans, err := fitShares(engraverParams, built, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rData, rSize, rScale, err := fitShares(engraverParams, rescanned, nil)
+	rLab, rPlans, err := fitShares(engraverParams, rescanned, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(bData) != string(rData) || bSize != rSize || bScale != rScale {
+	if !slices.Equal(bLab, rLab) {
+		t.Fatalf("offered variants diverge: %v vs %v", bLab, rLab)
+	}
+	bSP, rSP := bPlans[0], rPlans[0]
+	if bSP.fontSize != rSP.fontSize || bSP.scale != rSP.scale {
 		t.Fatal("share partitions diverge between built and rescanned")
 	}
 	for k := range built.Keys {
-		bTxt, bURs, err := shareText(built, bData, k, bSize, bScale)
+		bTxt, bParts, err := shareText(built, bSP.shares[k].Parts, k, bSP.tag, bSP.fontSize, bSP.scale)
 		if err != nil {
 			t.Fatal(err)
 		}
-		rTxt, rURs, err := shareText(rescanned, rData, k, rSize, rScale)
+		rTxt, rParts, err := shareText(rescanned, rSP.shares[k].Parts, k, rSP.tag, rSP.fontSize, rSP.scale)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(bURs) != len(rURs) {
-			t.Fatalf("share %d UR counts diverge", k)
+		if len(bParts) != len(rParts) {
+			t.Fatalf("share %d part counts diverge", k)
 		}
-		for i := range bURs {
-			if bURs[i] != rURs[i] {
-				t.Errorf("share %d UR %d diverges:\n%s\n%s", k, i, bURs[i], rURs[i])
+		for i := range bParts {
+			if len(bParts[i]) != len(rParts[i]) {
+				t.Errorf("share %d part %d lengths diverge", k, i)
 			}
 		}
-		for i := range bTxt.Paragraphs {
-			if bTxt.Paragraphs[i].Text != rTxt.Paragraphs[i].Text {
-				t.Errorf("share %d paragraph %d diverges:\n%q\n%q",
-					k, i, bTxt.Paragraphs[i].Text, rTxt.Paragraphs[i].Text)
-			}
+		if len(bTxt.Paragraphs) != len(rTxt.Paragraphs) {
+			t.Fatalf("share %d paragraph counts diverge", k)
+		}
+		// The pairing header (plate number, threshold, fingerprint,
+		// title) must agree up to the per-session tag, or a rescan
+		// would cut plates that no longer name their cosigners the
+		// same way.
+		bHead, _, bOK := strings.Cut(bTxt.Paragraphs[0].Text, " #")
+		rHead, _, rOK := strings.Cut(rTxt.Paragraphs[0].Text, " #")
+		if !bOK || !rOK || bHead != rHead {
+			t.Errorf("share %d headers diverge:\n%q\n%q", k, bHead, rHead)
 		}
 	}
 }

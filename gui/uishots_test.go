@@ -303,6 +303,8 @@ func shootMultisig(t *testing.T, dir string) {
 	click(&s.ctx.Router, Down)
 	s.pump(2)
 	click(&s.ctx.Router, Button3)
+	s.await("Choose engraving")
+	click(&s.ctx.Router, Button3) // TEXT + QR
 	s.await("For cosigner 9A6A2580")
 	s.capture("msw-18-share-gate")
 	click(&s.ctx.Router, Button3) // ENGRAVE PLATE
@@ -652,24 +654,29 @@ func shootPlates(t *testing.T, dir string) {
 	}
 	renderPlate(t, dir, "plate-descriptor", backup.EngraveText(params, txt), params, SquarePlate)
 
-	data, size, scale, err := fitShares(params, desc, nil)
+	sLabels, sPlans, err := fitShares(params, desc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stxt, urs, err := shareText(desc, data, 0, size, scale)
+	if sLabels[0] != "TEXT + QR" {
+		t.Fatalf("expected TEXT + QR first, got %v", sLabels)
+	}
+	stxt, parts, err := sPlans[0].plateContent(desc, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+	qi := 0
 	for i := range stxt.Paragraphs {
 		p := &stxt.Paragraphs[i]
 		if p.QR == nil {
 			continue
 		}
-		code, err := qr.Encode(urs[i], qr.L)
+		code, err := qr.Encode(parts[qi], qr.L)
 		if err != nil {
 			t.Fatal(err)
 		}
 		p.QR = code
+		qi++
 	}
 	renderPlate(t, dir, "plate-share-1of3", backup.EngraveText(params, stxt), params, SquarePlate)
 

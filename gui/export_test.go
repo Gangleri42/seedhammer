@@ -142,8 +142,9 @@ func TestChildrenDescriptorsStillFit(t *testing.T) {
 			t.Errorf("%d-of-%d: no single-plate variant fits", test.m, test.n)
 		}
 		t.Logf("%d-of-%d: %v", test.m, test.n, labels)
-		if ur.HasScheme(test.m, test.n) {
-			if _, _, _, err := fitShares(engraverParams, desc, nil); err != nil {
+		// Every quorum above one has a Shamir split scheme.
+		if test.m > 1 {
+			if _, _, err := fitShares(engraverParams, desc, nil); err != nil {
 				t.Errorf("%d-of-%d shares: %v", test.m, test.n, err)
 			}
 		}

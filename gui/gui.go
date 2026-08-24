@@ -21,7 +21,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/v2"
 	qr "github.com/seedhammer/kortschak-qr"
 	"seedhammer.com/backup"
-	"seedhammer.com/bc/ur"
+	"seedhammer.com/bbqr"
 	"seedhammer.com/bc/urtypes"
 	"seedhammer.com/bezier"
 	"seedhammer.com/bip32"
@@ -42,6 +42,7 @@ import (
 	"seedhammer.com/nip19"
 	"seedhammer.com/nonstandard"
 	"seedhammer.com/seedqr"
+	"seedhammer.com/shamir"
 	slip39words "seedhammer.com/slip39"
 )
 
@@ -589,6 +590,7 @@ func planDescriptorPlate(ctx *Context, th *Colors, params engrave.Params, plateS
 	cs.preview = r.preview
 	plate, err := runJob(ctx, th, func(pump func(done, total int) bool) (Plate, error) {
 		collected := false
+		qi := 0
 		for i := range txt.Paragraphs {
 			p := &txt.Paragraphs[i]
 			if p.QR == nil {
@@ -601,11 +603,14 @@ func planDescriptorPlate(ctx *Context, th *Colors, params engrave.Params, plateS
 				runtime.GC()
 				collected = true
 			}
-			qrc, err := qr.Encode(qrTexts[i], qr.L)
+			// Text-only paragraphs (a QR-only share plate's header)
+			// carry no code: the qrTexts index only advances on swaps.
+			qrc, err := qr.Encode(qrTexts[qi], qr.L)
 			if err != nil {
 				return Plate{}, err
 			}
 			p.QR = qrc
+			qi++
 		}
 		return planPlateWalk(backup.EngraveText(params, txt), params, plateSize, pump, r.knot)
 	}, planFrame(ctx, th, cs.Draw))
@@ -617,33 +622,42 @@ func planDescriptorPlate(ctx *Context, th *Colors, params engrave.Params, plateS
 }
 
 // shareText composes cosigner k's descriptor share plate: a pairing
-// header (plate number, cosigner fingerprint, wallet title) so the
-// share physically stays with the right cosigner's seed plate, then
-// every UR share as text wrapped around its code. The codes are
-// all-dark stand-ins sized by qr.MinSize; planDescriptorPlate swaps
-// in the real encodes, keeping the fit ladder encode-free like the
-// single-plate path.
-func shareText(desc *bip380.Descriptor, data []byte, k int, fontSize float32, scale int) (backup.Text, []string, error) {
-	urs := ur.Split(ur.Data{Data: data, Threshold: desc.Threshold, Shards: len(desc.Keys)}, k)
-	header := fmt.Sprintf("%d/%d", k+1, len(desc.Keys))
+// header (plate number, cosigner fingerprint, wallet title, and the
+// split session tag so plates of one session are recognizable), then
+// every BBQr part of the share as text wrapped around its code. The
+// codes are all-dark stand-ins sized by qr.MinSize; planDescriptorPlate
+// swaps in the real encodes, keeping the fit ladder encode-free like
+// the single-plate path.
+// shareHeader is the pairing line every share plate opens with: plate
+// number, the recovery threshold, cosigner fingerprint, wallet title,
+// and the split session tag so plates of one session are recognizable.
+// The threshold is the one fact a drawer of plates must know before
+// scanning anything; it reaches the metal here, not only the envelope.
+func shareHeader(desc *bip380.Descriptor, k int, tag uint16) string {
+	header := fmt.Sprintf("%d/%d ANY %d", k+1, len(desc.Keys), desc.Threshold)
 	if mfp := desc.Keys[k].MasterFingerprint; mfp != 0 {
 		header = fmt.Sprintf("%s %.8X", header, mfp)
 	}
 	if title := backup.TitleString(sh.Font, desc.Title); title != "" {
 		header += " " + title
 	}
+	return header + fmt.Sprintf(" #%04X", tag)
+}
+
+func shareText(desc *bip380.Descriptor, parts []string, k int, tag uint16, fontSize float32, scale int) (backup.Text, []string, error) {
+	header := shareHeader(desc, k, tag)
 	txt := backup.Text{Font: sh.Font, FontSize: fontSize}
-	qrTexts := make([]string, len(urs))
-	for i, u := range urs {
-		body := u
+	qrTexts := make([]string, len(parts))
+	for i, p := range parts {
+		body := p
 		if i == 0 {
-			body = header + "\n" + u
+			body = header + "\n" + p
 		}
-		// Level L, like every descriptor code on this machine: the
-		// two-UR quorums (2-of-4, 3-of-5) stack two codes plus the
-		// header on one plate, and level M's extra modules push that
-		// stack past the engravable span.
-		size, err := qr.MinSize(u, qr.L)
+		// Level L, like every descriptor code on this machine: a share
+		// plate stacks its parts plus the header on one plate, and
+		// level M's extra modules push that stack past the engravable
+		// span.
+		size, err := qr.MinSize(p, qr.L)
 		if err != nil {
 			return backup.Text{}, nil, err
 		}
@@ -652,28 +666,104 @@ func shareText(desc *bip380.Descriptor, data []byte, k int, fontSize float32, sc
 			QR:      darkCode(size),
 			QRScale: scale,
 		})
-		qrTexts[i] = u
+		qrTexts[i] = p
 	}
 	return txt, qrTexts, nil
 }
 
-// fitShares picks the single ladder cell — QR scale outranking font
-// size, mirroring fitDescriptor — at which EVERY cosigner's share
-// plate fits, so a split set engraves as a matched family instead of
-// each plate at whatever size its share happens to reach. It returns
-// the descriptor's CBOR encoding, the input to ur.Split, alongside
-// the chosen cell.
-func fitShares(params engrave.Params, desc *bip380.Descriptor, pump func(done, total int) bool) (data []byte, fontSize float32, scale int, err error) {
-	data = urtypes.EncodeDescriptor(desc)
+// shareQROnly composes cosigner k's share plate without the part
+// texts: the pairing header, then one bare code per part. Shamir
+// shares are as long as the descriptor itself, so the header plus
+// text plus code stack of shareText overruns the plate for larger
+// quorums; shareTextOnly is the hand-transcription counterpart.
+func shareQROnly(desc *bip380.Descriptor, parts []string, k int, tag uint16, fontSize float32, scale int) (backup.Text, []string, error) {
+	txt := backup.Text{
+		Font:       sh.Font,
+		FontSize:   fontSize,
+		Paragraphs: []backup.Paragraph{{Text: shareHeader(desc, k, tag)}},
+	}
+	for _, p := range parts {
+		size, err := qr.MinSize(p, qr.L)
+		if err != nil {
+			return backup.Text{}, nil, err
+		}
+		txt.Paragraphs = append(txt.Paragraphs, backup.Paragraph{
+			QR:      darkCode(size),
+			QRScale: scale,
+		})
+	}
+	return txt, parts, nil
+}
+
+// shareTextOnly composes cosigner k's share plate as pure text: the
+// pairing header, then the BBQr part strings, wrapped at the grid.
+// The engraved text is the exact QR content, so a plate remains
+// recoverable by hand transcription with no camera at all; the
+// smallest font's grid holds every quorum the machine can split up
+// to envelopes of roughly 680 bytes.
+func shareTextOnly(desc *bip380.Descriptor, parts []string, k int, tag uint16, fontSize float32, _ int) (backup.Text, []string, error) {
+	header := shareHeader(desc, k, tag)
+	txt := backup.Text{Font: sh.Font, FontSize: fontSize}
+	for i, p := range parts {
+		body := p
+		if i == 0 {
+			body = header + "\n" + p
+		}
+		txt.Paragraphs = append(txt.Paragraphs, backup.Paragraph{Text: body})
+	}
+	return txt, nil, nil
+}
+
+// shareVariant selects a share plate composition.
+type shareVariant uint8
+
+const (
+	shareVariantTextQR shareVariant = iota
+	shareVariantTextOnly
+	shareVariantQROnly
+)
+
+// fitShares splits the descriptor's CBOR encoding into a Shamir
+// threshold-of-cosigners session (one split, so every plate of the
+// run belongs together and every offered variant engraves the same
+// shares) and fits each composition variant the way fitDescriptor
+// fits the single plate: per variant, the ladder cell (QR scale
+// outranking font size, and within a scale the largest font whose
+// pairing header stays on one line) at which EVERY cosigner's share
+// plate fits. The returned variants, in offer order, are the full
+// layout (header, part texts, codes), the pure text plate for
+// camera-less recovery, and the header plus bare codes; a variant
+// that fits no cell is not offered.
+func fitShares(params engrave.Params, desc *bip380.Descriptor, pump func(done, total int) bool) (labels []string, plans []*splitPlan, err error) {
+	if Rand == nil {
+		// A build problem, not a hardware one: cmd/controller
+		// installs the source at startup.
+		return nil, nil, errNoRNG
+	}
+	data := urtypes.EncodeDescriptor(desc)
 	n := len(desc.Keys)
+	shares, err := shamir.SplitData(bbqr.TypeCBOR, data, desc.Threshold, n, Rand)
+	if err != nil {
+		return nil, nil, err
+	}
+	// The session tag for the plate headers, from the first share's
+	// envelope.
+	_, payload, err := bbqr.Join(shares[0].Parts)
+	if err != nil {
+		return nil, nil, err
+	}
+	sh0, err := shamir.ParseShare(payload)
+	if err != nil {
+		return nil, nil, err
+	}
 	// The widest code across all shares pre-drops scales the plate
 	// cannot hold, as fitDescriptor does for its lone code.
 	maxQR := 0
 	for k := range n {
-		for _, u := range ur.Split(ur.Data{Data: data, Threshold: desc.Threshold, Shards: n}, k) {
-			size, err := qr.MinSize(u, qr.L)
+		for _, p := range shares[k].Parts {
+			size, err := qr.MinSize(p, qr.L)
 			if err != nil {
-				return nil, 0, 0, err
+				return nil, nil, err
 			}
 			maxQR = max(maxQR, size)
 		}
@@ -687,33 +777,91 @@ func fitShares(params engrave.Params, desc *bip380.Descriptor, pump func(done, t
 			fitScales = append(fitScales, s)
 		}
 	}
-	attempts := 0
-	total := len(fitScales) * len(backup.FontSizes) * n
-	for _, sc := range fitScales {
-		for _, size := range backup.FontSizes {
-			all := true
-			for k := range n {
+	// The widest pairing header of the set: the font preference below
+	// keeps it on one line where any ladder font can, so the session
+	// tag never breaks across lines.
+	headerLen := 0
+	for k := range n {
+		headerLen = max(headerLen, len(shareHeader(desc, k, sh0.Tag)))
+	}
+	variants := []struct {
+		label   string
+		variant shareVariant
+		compose func(*bip380.Descriptor, []string, int, uint16, float32, int) (backup.Text, []string, error)
+		scales  []int
+	}{
+		{"TEXT + QR", shareVariantTextQR, shareText, fitScales},
+		{"TEXT ONLY", shareVariantTextOnly, shareTextOnly, []int{0}},
+		{"QR ONLY", shareVariantQROnly, shareQROnly, fitScales},
+	}
+	attempts, total := 0, 0
+	for _, v := range variants {
+		total += len(v.scales) * len(backup.FontSizes)
+	}
+	for _, v := range variants {
+		var plan *splitPlan
+		for _, sc := range v.scales {
+			// Scale outranks font, and within a scale an unwrapped
+			// header outranks font size: the walk stops on the largest
+			// font whose header fits its line, remembering the largest
+			// that merely fits the plate as the fallback when no font
+			// holds the header whole.
+			var wrapped *splitPlan
+			for _, size := range backup.FontSizes {
 				if attempts++; pump != nil && !pump(attempts, total) {
-					return nil, 0, 0, errPlanCanceled
+					return nil, nil, errPlanCanceled
 				}
-				txt, _, err := shareText(desc, data, k, size, sc)
-				if err != nil {
-					return nil, 0, 0, err
+				// All shares of one session carry identical part
+				// lengths, so their plates differ only in the pairing
+				// header. Fit-check the widest plate of the cell, not
+				// all n: the layout walk is the expensive step and it
+				// was multiplying work the device does not have.
+				var widest backup.Text
+				widestLen := -1
+				for k := range n {
+					txt, _, err := v.compose(desc, shares[k].Parts, k, sh0.Tag, size, sc)
+					if err != nil {
+						return nil, nil, err
+					}
+					l := 0
+					for _, p := range txt.Paragraphs {
+						l += len(p.Text)
+					}
+					if l > widestLen {
+						widest, widestLen = txt, l
+					}
 				}
-				if !layoutFits(backup.EngraveText(params, txt), params, SquarePlate) {
-					all = false
+				if !layoutFits(backup.EngraveText(params, widest), params, SquarePlate) {
+					continue
+				}
+				cell := &splitPlan{shares: shares, tag: sh0.Tag, fontSize: size, scale: sc, variant: v.variant}
+				if headerLen <= backup.CharsPerLine(params, sh.Font, size) {
+					plan = cell
 					break
 				}
-			}
-			if all {
-				if pump != nil && !pump(total, total) {
-					return nil, 0, 0, errPlanCanceled
+				if wrapped == nil {
+					wrapped = cell
 				}
-				return data, size, sc, nil
+			}
+			if plan == nil {
+				plan = wrapped
+			}
+			if plan != nil {
+				break
 			}
 		}
+		if plan != nil {
+			labels = append(labels, v.label)
+			plans = append(plans, plan)
+		}
 	}
-	return nil, 0, 0, ErrTooLarge
+	if len(plans) == 0 {
+		return nil, nil, ErrTooLarge
+	}
+	if pump != nil && !pump(total, total) {
+		return nil, nil, errPlanCanceled
+	}
+	return labels, plans, nil
 }
 
 // fitText chooses the largest font size that holds the text without
@@ -2000,6 +2148,7 @@ func uiFlow(ctx *Context, version string) {
 type StartScreen struct {
 	Version     string
 	Status      scanStatus
+	Detail      string
 	prog        program
 	scanTimeout time.Time
 }
@@ -2028,6 +2177,7 @@ func (m *StartScreen) Flow(ctx *Context, th *Colors) (startScreenAction, bool) {
 			} else {
 				m.Status = scan.Status
 			}
+			m.Detail = scan.Detail
 			m.scanTimeout = time.Now().Add(scanStatusTimeout)
 			if scan.Object == nil && scan.Status == scanIdle {
 				break
@@ -2114,6 +2264,9 @@ func (m *StartScreen) draw(ctx *Context, th *Colors, dims image.Point) op.Op {
 	if time.Now().Before(m.scanTimeout) {
 		ctx.WakeupAt(m.scanTimeout)
 		sttxt = scanStatusText(m.Status)
+		if m.Status == scanParts && m.Detail != "" {
+			sttxt = m.Detail
+		}
 	}
 	subt, sz := widget.Labelw(&ctx.B, ctx.Styles.subtitle, 300, th.Text, sttxt)
 	subt = subt.Offset(r.S(sz).Sub(image.Pt(0, 16)))
@@ -2547,13 +2700,16 @@ func descriptorFlow(ctx *Context, th *Colors, desc *bip380.Descriptor) {
 
 // splitEngraveFlow cuts the descriptor backup as one plate per
 // cosigner. Every plate opens on an insert prompt — the physical
-// pause to load a blank, with SKIP to pass over plates already cut
-// in an earlier, aborted run — and closes on the another-copy
-// prompt, so extra duplicates of a plate cost one choice instead of
-// a rescan. Plates plan just in time, one layout and one code held
-// at a time; a copy re-engraves the planned plate without
-// replanning. It reports whether the operator finished the set;
-// false unwinds to the descriptor screen.
+// pause to load a blank, with SKIP to leave that cosigner without a
+// share (shares of one session never combine with another's, so
+// there is no earlier run to fill in from), and closes on the
+// another-copy prompt, so extra duplicates of a plate cost one
+// choice instead of a rescan. Plates plan just in time, one layout
+// and one code held at a time; a copy re-engraves the planned plate
+// without replanning. It reports whether the operator finished the
+// set; false unwinds to the descriptor screen. Every exit passes the
+// set-completeness warning, back-outs included: cut steel below the
+// threshold is scrap, and a partial set invites mixing sessions.
 func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitPlan) bool {
 	params := ctx.Platform.EngraverParams()
 	desc := ds.Descriptor
@@ -2561,12 +2717,33 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 	var plate Plate
 	var view *CurvesScreen
 	planned := false
+	engraved := 0
+	// warn tells the operator about a set that cannot serve as cut:
+	// below the threshold nothing recovers, and above it but short of
+	// n, the missing plates cannot come from another session. Full
+	// copies each stand alone, so only the share path warns.
+	warn := func() {
+		if sp.copies || engraved == 0 || engraved == n {
+			return
+		}
+		w := &ChoiceScreen{
+			Title:   "Partial set",
+			Lead:    fmt.Sprintf("%d of %d plates cut. Plates from another session will not combine with these.", engraved, n),
+			Choices: []string{"OK"},
+		}
+		if engraved < desc.Threshold {
+			w.Title = "Set incomplete"
+			w.Lead = fmt.Sprintf("%d plates cut; recovery needs %d. Split again and cut a full set.", engraved, desc.Threshold)
+		}
+		w.Choose(ctx, th)
+	}
 	for k := 0; k < n; k++ {
 		if !sp.copies {
 			// Every cosigner's share is its own layout; full copies
 			// share the one planned plate across the set.
 			planned = false
 		}
+		cut := false
 		for {
 			// The insert instruction itself lives on the engrave
 			// screen; the gate carries what that screen cannot know —
@@ -2585,6 +2762,7 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 			}
 			g, ok := gate.Choose(ctx, th)
 			if !ok {
+				warn()
 				return false
 			}
 			if g == 1 {
@@ -2607,6 +2785,7 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 			if !NewEngraveScreen(ctx, plate, view).Engrave(ctx, &engraveTheme) {
 				continue
 			}
+			cut = true
 			next := "NEXT PLATE"
 			if k == n-1 {
 				next = "DONE"
@@ -2618,6 +2797,10 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 			}
 			c, ok := done.Choose(ctx, th)
 			if !ok {
+				if cut {
+					engraved++
+				}
+				warn()
 				return false
 			}
 			if c == 1 {
@@ -2625,7 +2808,11 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 			}
 			break
 		}
+		if cut {
+			engraved++
+		}
 	}
+	warn()
 	return true
 }
 
@@ -3211,14 +3398,19 @@ func confirmScreen(ctx *Context, th *Colors, draw func(*Context, *Colors, image.
 
 // splitPlan carries the operator's choice to cut the descriptor
 // backup as one plate per cosigner out of the descriptor confirm:
-// the partition cell for quorums ur.Split has a scheme for, or the
-// chosen single-plate variant when every cosigner receives a full
-// copy instead.
+// one Shamir split session of the descriptor's CBOR encoding plus the
+// partition cell, or the chosen single-plate variant when every
+// cosigner receives a full copy instead.
 type splitPlan struct {
-	// data is the descriptor's CBOR encoding, ur.Split's input.
-	data     []byte
+	// shares is the split session: one BBQr series per cosigner, cut
+	// once so every plate of the run belongs together; tag is the
+	// session identifier printed on each plate.
+	shares   []bbqr.Series
+	tag      uint16
 	fontSize float32
 	scale    int
+	// variant selects the composition every plate of the set uses.
+	variant shareVariant
 
 	// copies marks the full-copy fallback; copyText and copyQR are
 	// the chosen fitDescriptor variant, engraved once per cosigner.
@@ -3233,7 +3425,14 @@ func (sp *splitPlan) plateContent(desc *bip380.Descriptor, k int) (backup.Text, 
 	if sp.copies {
 		return sp.copyText, []string{sp.copyQR}, nil
 	}
-	return shareText(desc, sp.data, k, sp.fontSize, sp.scale)
+	switch sp.variant {
+	case shareVariantTextOnly:
+		return shareTextOnly(desc, sp.shares[k].Parts, k, sp.tag, sp.fontSize, sp.scale)
+	case shareVariantQROnly:
+		return shareQROnly(desc, sp.shares[k].Parts, k, sp.tag, sp.fontSize, sp.scale)
+	default:
+		return shareText(desc, sp.shares[k].Parts, k, sp.tag, sp.fontSize, sp.scale)
+	}
 }
 
 func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (plannedPlate, *splitPlan, bool) {
@@ -3269,7 +3468,10 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (plannedPlate, *spl
 		}, planFrame(ctx, th, s.Draw))
 		labels, texts := fit.labels, fit.texts
 		n := len(desc.Keys)
-		scheme := n > 1 && ur.HasScheme(desc.Threshold, n)
+		// Shamir covers every quorum above one: any threshold k of n
+		// plates recover. A 1-of-n descriptor splits into plain copies,
+		// which the full-copy row already states honestly.
+		scheme := n > 1 && desc.Threshold > 1
 		if err != nil {
 			if errors.Is(err, errPlanCanceled) {
 				return plannedPlate{}, false, nil
@@ -3308,12 +3510,13 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (plannedPlate, *spl
 			}
 			if mchoice == len(choices)-1 {
 				if scheme {
-					sp, err := runJob(ctx, th, func(pump func(done, total int) bool) (*splitPlan, error) {
-						data, size, scale, err := fitShares(params, desc, pump)
-						if err != nil {
-							return nil, err
-						}
-						return &splitPlan{data: data, fontSize: size, scale: scale}, nil
+					type shareFit struct {
+						labels []string
+						plans  []*splitPlan
+					}
+					fit, err := runJob(ctx, th, func(pump func(done, total int) bool) (shareFit, error) {
+						labels, plans, err := fitShares(params, desc, pump)
+						return shareFit{labels, plans}, err
 					}, planFrame(ctx, th, s.Draw))
 					if err != nil {
 						if errors.Is(err, errPlanCanceled) {
@@ -3321,7 +3524,16 @@ func (s *DescriptorScreen) Confirm(ctx *Context, th *Colors) (plannedPlate, *spl
 						}
 						return plannedPlate{}, false, err
 					}
-					split = sp
+					vc := &ChoiceScreen{
+						Title:   "Engrave",
+						Lead:    "Choose engraving",
+						Choices: fit.labels,
+					}
+					vchoice, ok := vc.Choose(ctx, th)
+					if !ok {
+						return plannedPlate{}, false, nil
+					}
+					split = fit.plans[vchoice]
 					return plannedPlate{}, true, nil
 				}
 				wantCopies = true
@@ -4213,6 +4425,9 @@ func plateDims(p PlateSize, mm int) bezier.Point {
 type scanResult struct {
 	Object any
 	Status scanStatus
+	// Detail is the progress label for scanParts, such as
+	// "PART 2 OF 5" or "SHARE 1 OF 3".
+	Detail string
 }
 
 type scanStatus int
@@ -4220,6 +4435,9 @@ type scanStatus int
 const (
 	scanIdle scanStatus = iota
 	scanStarted
+	// scanParts reports multi-record BBQr assembly progress, with the
+	// count in scanResult.Detail.
+	scanParts
 	scanOverflow
 	scanUnknownFormat
 	scanFailed

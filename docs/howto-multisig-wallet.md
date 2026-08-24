@@ -160,8 +160,8 @@ changes.
 
    ![The titled descriptor plate as engraved](images/plate-descriptor.png)
 
-   And cosigner 1's share of the split, the pairing header over the UR
-   fragment; two more like it complete the set:
+   And cosigner 1's share of the split, the pairing header over the
+   share's code; two more like it complete the set:
 
    ![Cosigner 1's share plate as engraved](images/plate-share-1of3.png)
 
@@ -183,18 +183,20 @@ exactly which threat the passphrase answers.
 
 The wallet recovers from any M of the N seeds plus the descriptor,
 which is what the plate set holds in steel. The seed plates restore into
-any BIP39 signer; the descriptor restores into any wallet from the split
-plates' codes ([how](howto-multisig-plates.md#recover-into-a-wallet)), a
-single descriptor plate, or the coordinator's own backup.
+any BIP39 signer; the descriptor restores from the split plates' codes
+through the machine or a computer
+([how](howto-multisig-plates.md#recover-into-a-wallet)), a single
+descriptor plate, or the coordinator's own backup.
 
-An aborted plate session resumes the way the split how-to describes:
-scan the descriptor back in (from a plate QR, the coordinator, or a
-text record), split again, and skip the plates already cut. The share
-codes are byte-identical on every pass. One nuance: the descriptor
-string itself carries no title, so a rescan from raw text produces share
-headers without the wallet name; scanning the coordinator's export with
-the name attached (or a `{label, descriptor}` record) keeps the headers
-identical too.
+An aborted plate session is re-cut, not resumed: scan the descriptor
+back in (from a plate QR, the coordinator, or a text record), split
+again, and engrave the whole set. Each split draws fresh randomness, so
+plates of different sessions never combine; the session tag in the
+header tells the sets apart, and partial plates of an earlier tag are
+scrap. One nuance: the descriptor string itself carries no title, so a
+rescan from raw text produces share headers without the wallet name;
+scanning the coordinator's export with the name attached (or a
+`{label, descriptor}` record) keeps the headers matching.
 
 Seeds live only inside one run of the flow. Backing out discards them
 after a held warning, and finished or abandoned, the machine forgets the

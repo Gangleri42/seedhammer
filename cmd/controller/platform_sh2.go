@@ -177,15 +177,16 @@ const (
 	// which depresses SG_RESULT and false-fires the homing
 	// threshold. A real jam collapses SG_RESULT toward zero, so the
 	// engrave thresholds only need to sit above that.
-	// The light X sled skip-rattles at the hard stop, and the
-	// oscillation back-EMF holds SG_RESULT well above a dead stall,
-	// so X needs the higher trip level; the heavier Y axis stalls
-	// dead. A late catch at the stop costs noise, not position, while
-	// an early trip corrupts the origin, so both thresholds stay as
-	// low as detection allows.
-	stallThresholdXHoming  = 55
+	// The 32 mm/rev pulleys nearly double the linear force at the
+	// same current, and the homing cruise turns the motors near
+	// 28 RPM where back-EMF lifts SG_RESULT clear of the trip level;
+	// both axes run the same sensitive threshold, tripping early so
+	// the doubled force cannot build into the stop. A late catch at
+	// the stop costs noise, not position, while an early trip
+	// corrupts the origin.
+	stallThresholdXHoming  = 110
 	stallThresholdXEngrave = 15
-	stallThresholdYHoming  = 45
+	stallThresholdYHoming  = 110
 	stallThresholdYEngrave = 15
 	// minimumStallVelocity{X,Y} is the speed in physical
 	// microsteps/second for StallGuard to be enabled: 8 mm/s per axis.
@@ -197,12 +198,12 @@ const (
 	// stepsPerRevolution is the microsteps for a full motor revolution.
 	stepsPerRevolution = fullStepsPerRevolution * tmc2209.Microsteps
 	// Axis travel per motor revolution, as exact rationals in
-	// millimeters (num/den). Both axes run a 30-tooth GT2 pulley on
-	// the 2 mm belt: exactly 60. The numerators are the calibration
+	// millimeters (num/den). Both axes run a 16-tooth GT2 pulley on
+	// the 2 mm belt: exactly 32. The numerators are the calibration
 	// knobs: after a test engrave, multiply by measured/intended
 	// distance per axis.
-	xMMPerRevNum, xMMPerRevDen = 60, 1
-	yMMPerRevNum, yMMPerRevDen = 60, 1
+	xMMPerRevNum, xMMPerRevDen = 32, 1
+	yMMPerRevNum, yMMPerRevDen = 32, 1
 	// Physical microsteps per millimeter, per axis, truncated for
 	// stats display.
 	xStepsPerMM = stepsPerRevolution * xMMPerRevDen / xMMPerRevNum
@@ -230,7 +231,7 @@ const (
 	// homingSpeed is the homing path speed. Homing runs both axes on
 	// the diagonal and the planner paces lines by Manhattan distance,
 	// so each motor sees half the path speed: 30 mm/s path turns the
-	// 60 mm/rev drives near 15 RPM, fast enough for StallGuard's
+	// 32 mm/rev drives near 28 RPM, fast enough for StallGuard's
 	// back-EMF signal. The engraver's stroke
 	// width, speeds, acceleration, and jerk are the shared
 	// engrave.SH2Params (single source).

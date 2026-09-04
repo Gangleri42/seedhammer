@@ -561,8 +561,12 @@ func (d *Device) configureProtocol(prot Protocol) error {
 			overshoot:   [...]byte{0x40, 0x03},
 			undershoot:  [...]byte{0x40, 0x03},
 			maskReceive: 0x0e,
-			nrt:         0x23,
-			iso14443a:   0x00,
+			// NRT = 0x4000 -> ~77 ms in units of 64/fc (4.72 us).
+			// Stock 0x23 (~165 us) only fits hardware tags; the QR
+			// bridge's software-emulated tag answers via a UART
+			// round-trip (~18 ms) and needs the longer window.
+			nrt:       0x4000,
+			iso14443a: 0x00,
 		}
 	case ISO15693:
 		conf = config{

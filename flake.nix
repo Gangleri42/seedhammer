@@ -153,9 +153,11 @@
                 selfpkgs.copy-signature
               ];
               # The tracked hooks gate commits and pushes (gofmt, the
-              # docs doctor). Harmless outside a git checkout.
+              # docs doctor). A hooks path the committer already
+              # configured wins; harmless outside a git checkout.
               shellHook = ''
-                git config core.hooksPath .githooks 2>/dev/null || true
+                git config core.hooksPath >/dev/null 2>&1 \
+                  || git config core.hooksPath .githooks 2>/dev/null || true
               '';
             };
           };

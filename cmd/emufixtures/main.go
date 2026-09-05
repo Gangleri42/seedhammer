@@ -17,6 +17,7 @@ import (
 	"seedhammer.com/bip32"
 	"seedhammer.com/bip380"
 	"seedhammer.com/bip39"
+	"seedhammer.com/seedqr"
 )
 
 // repeatSeed completes n-1 copies of word with the one word that makes
@@ -147,6 +148,7 @@ func main() {
 	path := bip380.P2WSH.DerivationPath()
 	var keys []bip380.Key
 	var seeds []string
+	var rugQR string
 	for _, p := range pool {
 		m, err := repeatSeed(p.word, p.n, p.tail)
 		if err != nil {
@@ -160,6 +162,11 @@ func main() {
 		}
 		keys = append(keys, k)
 		seeds = append(seeds, words(m))
+		if p.word == "rug" {
+			// The same seed as a SeedQR in digit form, which is how
+			// the QR bridge forwards a scanned SeedQR.
+			rugQR = string(seedqr.QR(m))
+		}
 		fmt.Fprintf(os.Stderr, "%-6s x%-2d -> %s (mfp %.8X)\n",
 			p.word, p.n, words(m)[:min(40, len(words(m)))]+"…", k.MasterFingerprint)
 	}
@@ -200,6 +207,7 @@ func main() {
 	fmt.Fprintf(&b, "    seed12: %q,\n", seeds[1])
 	fmt.Fprintf(&b, "    seedRug: %q,\n", seeds[2])
 	fmt.Fprintf(&b, "    seedMemorial: %q,\n", memorial)
+	fmt.Fprintf(&b, "    seedQR: %q,\n", rugQR)
 	fmt.Fprintf(&b, "    desc2of3: %q,\n", desc(2, 3))
 	fmt.Fprintf(&b, "    desc3of5: %q,\n", desc(3, 5))
 	fmt.Fprintf(&b, "    desc5of7: %q,\n", desc(5, 7))

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("\xa3\x96\xca\xe078\xb109\xf0\xef120A\xb88BCY 0Z!ab1\"X#cx")

@@ -1,0 +1,2 @@
+go test fuzz v1
+string("B$Z001002P772272AY222YIA222A222")

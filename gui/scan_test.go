@@ -24,6 +24,10 @@ func TestScan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	b39x24, err := bip39.ParseMnemonic("attack pizza motion avocado network gather crop fresh patrol unusual wild holiday candy pony ranch winter theme error hybrid van cereal salon goddess expire")
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		Name    string
 		Encoded string
@@ -69,6 +73,41 @@ func TestScan(t *testing.T) {
 			Name:    "BIP39",
 			Encoded: b39.String(),
 			Content: b39,
+		},
+		{
+			Name:    "SeedQR",
+			Encoded: "101920151790203919831533203119191019201517902040",
+			Content: b39,
+		},
+		{
+			// The SeedSigner documentation's own 24-word vector.
+			Name:    "SeedQR 24 Words",
+			Encoded: "011513251154012711900771041507421289190620080870026613431420201617920614089619290300152408010643",
+			Content: b39x24,
+		},
+		{
+			Name:    "SeedQR Trailing Newline",
+			Encoded: "101920151790203919831533203119191019201517902040\r\n",
+			Content: b39,
+		},
+		{
+			// The last word moved by one: the text plate, as a
+			// misspelled seed phrase would be.
+			Name:    "SeedQR Bad Checksum",
+			Encoded: "101920151790203919831533203119191019201517902041",
+			Content: plainText("101920151790203919831533203119191019201517902041"),
+		},
+		{
+			// Four words are never a mnemonic, and the CompactSeedQR
+			// reading of the same sixteen bytes must not apply.
+			Name:    "Sixteen Digits",
+			Encoded: "1234567812345678",
+			Content: plainText("1234567812345678"),
+		},
+		{
+			Name:    "Thirty-two Digits",
+			Encoded: "12345678123456781234567812345678",
+			Content: plainText("12345678123456781234567812345678"),
 		},
 		{
 			Name:    "Command",

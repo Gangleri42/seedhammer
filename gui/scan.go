@@ -13,6 +13,7 @@ import (
 	"seedhammer.com/font/sh"
 	"seedhammer.com/nip19"
 	"seedhammer.com/nonstandard"
+	"seedhammer.com/seedqr"
 )
 
 // recordTyper is implemented by NFC readers that surface the type of
@@ -92,6 +93,8 @@ func (s *scanner) Scan(r io.Reader) (any, error) {
 		// slip39 package is only the keyboard wordlist, not a parser).
 		// The keyboard SLIP-39 entry flow is likewise gated off in
 		// newInputFlow. Revisit only if a dep-free share parser lands.
+	} else if m, ok := parseSeedQR(buf); ok {
+		return m, nil
 	} else if d, err := nonstandard.OutputDescriptor(buf); err == nil {
 		return d, nil
 	} else if s, err := codex32.New(string(buf)); err == nil {
@@ -117,6 +120,17 @@ func (s *scanner) Scan(r io.Reader) (any, error) {
 
 type debugCommand struct {
 	Command string
+}
+
+// parseSeedQR accepts the SeedQR digit form, as a phone NFC app or a
+// scanner bridge forwards a scanned SeedQR in a text record. Only that
+// form is sniffed: CompactSeedQR is raw entropy, and seedqr.Parse takes
+// any 16 or 32 bytes for one, which on an untyped text record would
+// turn a short plate into a seed. A bad checksum falls through to the
+// text plate, where textNotice names it, as a seed phrase with a bad
+// word does.
+func parseSeedQR(buf []byte) (bip39.Mnemonic, bool) {
+	return seedqr.ParseDigits(bytes.TrimSpace(buf))
 }
 
 // plainText is a free-form text payload destined for a text plate.

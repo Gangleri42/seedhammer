@@ -107,7 +107,8 @@ the plate.
 ![The same screen with the content hidden](images/text-03-hidden.png)
 
 If the text looks like a damaged backup (a descriptor fragment, a codex32
-string, a seed phrase with a bad word), a warning page appears when you
+string, a seed phrase with a bad word, a SeedQR digit string with a bad
+checksum), a warning page appears when you
 complete the hold, before anything starts; backing out returns to the plate.
 Intact backups never land here; the structured parsers catch them first. The
 warning is a nudge to re-check the source, not a block: confirm and it

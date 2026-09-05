@@ -112,3 +112,35 @@ func TestCompactSeedQR(t *testing.T) {
 		}
 	}
 }
+
+func TestParseDigits(t *testing.T) {
+	// Sixteen or thirty-two digits are four or eight words, never a
+	// mnemonic, but exactly the byte counts Parse's CompactSeedQR
+	// fallback takes for raw entropy, repairing the checksum as it
+	// goes. ParseDigits is the form for a sniffer of untyped text.
+	for _, s := range []string{"1234567812345678", "12345678123456781234567812345678"} {
+		if _, ok := ParseDigits([]byte(s)); ok {
+			t.Errorf("ParseDigits accepted %q", s)
+		}
+		if _, ok := Parse([]byte(s)); !ok {
+			t.Errorf("Parse rejected %q; the compact fallback takes any 16 or 32 bytes", s)
+		}
+	}
+	valid := []byte(tests[0].SeedQR)
+	if _, ok := ParseDigits(valid); !ok {
+		t.Fatalf("ParseDigits rejected %q", valid)
+	}
+	body := valid[:len(valid)-4]
+	for name, s := range map[string][]byte{
+		"trailing newline": append(bytes.Clone(valid), '\n'),
+		"leading space":    append([]byte(" "), valid...),
+		"bad checksum":     append(bytes.Clone(body), "0644"...),
+		"index past list":  append(bytes.Clone(body), "2048"...),
+		"sign in a group":  append(bytes.Clone(body), "+643"...),
+		"words not digits": []byte(tests[0].Phrase),
+	} {
+		if _, ok := ParseDigits(s); ok {
+			t.Errorf("%s: ParseDigits accepted %q", name, s)
+		}
+	}
+}

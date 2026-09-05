@@ -3448,6 +3448,12 @@ func textNotice(text string) string {
 	if strings.HasPrefix(first, "ms1") {
 		return "Looks like a corrupted codex32 share." + engraved
 	}
+	// A SeedQR's worth of digits. Valid ones parse before reaching the
+	// text flow, so a match here means an index past the word list or a
+	// bad checksum.
+	if seedqr.Shaped([]byte(strings.TrimSpace(text))) {
+		return "Looks like a SeedQR with a bad word index or checksum." + engraved
+	}
 	// A seed phrase length worth of words, all but at most one in the
 	// BIP39 word list. Valid mnemonics parse before reaching the text
 	// flow, so a match here means a bad word or checksum.

@@ -12,8 +12,12 @@ import (
 	"seedhammer.com/bip39"
 )
 
+// Parse decodes a payload in either format. CompactSeedQR is raw
+// entropy with no checksum of its own, so any 16 or 32 bytes decode as
+// a mnemonic: Parse suits a payload known to be a QR's content, such as
+// a file. A sniffer classifying untyped bytes uses [ParseDigits].
 func Parse(qr []byte) (bip39.Mnemonic, bool) {
-	if seed, ok := parseSeedQR(string(qr)); ok {
+	if seed, ok := ParseDigits(qr); ok {
 		return seed, true
 	}
 	return parseCompactSeedQR(qr)
@@ -41,17 +45,37 @@ func CompactQR(m bip39.Mnemonic) []byte {
 	return m.Entropy()
 }
 
-func parseSeedQR(qr string) (bip39.Mnemonic, bool) {
-	if len(qr)%4 != 0 {
+// Shaped reports whether qr has the shape of the SeedQR digit form:
+// four decimal digits per word, 12 to 24 words, nothing else. It is the
+// gate before [ParseDigits] allocates, and lets a caller tell a SeedQR
+// with a bad checksum from text that never was one.
+func Shaped(qr []byte) bool {
+	if n := len(qr); n%4 != 0 || n < 4*12 || n > 4*24 {
+		return false
+	}
+	for _, c := range qr {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// ParseDigits decodes the SeedQR digit form alone: every word index as
+// four decimal digits, no separators, the checksum word included. The
+// bytes are taken as they are; a caller expecting surrounding
+// whitespace trims first.
+func ParseDigits(qr []byte) (bip39.Mnemonic, bool) {
+	if !Shaped(qr) {
 		return nil, false
 	}
 	m := make(bip39.Mnemonic, len(qr)/4)
 	for i := range m {
-		word, err := strconv.ParseUint(qr[i*4:(i+1)*4], 10, 16)
-		if err != nil {
-			return nil, false
+		var word bip39.Word
+		for _, c := range qr[i*4 : (i+1)*4] {
+			word = word*10 + bip39.Word(c-'0')
 		}
-		m[i] = bip39.Word(word)
+		m[i] = word
 	}
 	if !m.Valid() {
 		return nil, false

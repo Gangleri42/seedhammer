@@ -448,6 +448,10 @@ func TestTextNotice(t *testing.T) {
 		{"key origin", "[dc567276/48h/0h/0h/2h]xpub6DiYrf", "descriptor"},
 		{"lone xpub", "xpub6DiYrfRwNnjeX4vHsWMajJVFKrb", "descriptor"},
 		{"corrupted codex32", "ms13cashsllhdmn9m42vcsamx24zrxgs3qq", "codex32"},
+		{"seedqr with a bad checksum", "101920151790203919831533203119191019201517902041", "SeedQR"},
+		{"seedqr with an index past the list", "101920151790203919831533203119191019201517902048", "SeedQR"},
+		{"digits short of a seedqr", "0041791234567", ""},
+		{"sixteen digits", "1234567812345678", ""},
 		{"mnemonic with a typo", "legal winner thank year wave sausage worth useful legal winner thank yelow", "seed phrase"},
 		{"mnemonic with a bad checksum", "legal winner thank year wave sausage worth useful legal winner thank abandon", "seed phrase"},
 	}

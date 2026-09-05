@@ -54,6 +54,16 @@ with the time counting down while it cuts. Text that resembles a damaged descrip
 or seed phrase gets a warning before it engraves.
 [How-to](docs/howto-text-plates.md).
 
+### SeedQR input
+
+The digit form of a
+[SeedQR](https://github.com/SeedSigner/seedsigner/blob/dev/docs/seed_qr/README.md)
+written as a text record, each word's index as four digits, 12 to 24 words
+and nothing else, is read as the seed phrase it encodes and takes the same
+path as tapped words. Digits of that shape whose checksum fails engrave as
+text, behind the damaged-backup warning. CompactSeedQR is raw entropy, not
+text, and is not read.
+
 ### Nostr key plates
 
 An `npub1`/`nsec1` string written as a text record engraves as a NIP-19 key

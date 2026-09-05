@@ -231,6 +231,14 @@ directly from [Studio](https://gangleri42.github.io/studio/), no reader and no
 bridge. It cannot replace the reader for `sh2key`'s plate sends or the CLI
 senders, which talk to the reader over USB.
 
+The [QR bridge](https://github.com/Gangleri42/qr-bridge) is the way in
+without a computer or a phone: a small board with a USB barcode scanner on
+one side and an emulated NFC tag on the other. Scan a QR code, hold the
+machine's reader to the board, and the content arrives as a tapped text
+record would: a descriptor, seed words, a SeedQR in digit form, or a text
+plate. Drawings travel as curves records and stay with the reader or the
+phone.
+
 The desktop tooling installs in one pass. From the checkout, on Linux or
 macOS:
 

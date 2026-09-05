@@ -72,6 +72,10 @@ previews the grid, the wrap, and the size as you type, using glyph geometry
 generated from this repo's font. Send works over Web NFC on Android, or
 through the [desktop bridge](../cmd/nfc-bridge/README.md).
 
+**QR bridge.** Put the text in a QR code, scan it with the
+[QR bridge](https://github.com/Gangleri42/qr-bridge), and tap; it arrives
+as the same text record.
+
 **CLI.** With a USB reader attached and the nfcpy stack available to
 `python3` (the repo installer creates it in `~/.nfc-venv`, so
 `. ~/.nfc-venv/bin/activate` first; or `pip install nfcpy ndeflib`

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"seedhammer.com/bbqr"
 )
@@ -54,6 +55,24 @@ const DefaultLimit = 1 << 20
 // instead of failing the scan.
 var ErrForeignShare = errors.New("shamir: share from a different split")
 
+// ErrCorrupt reports that a corrupt share blocks recovery: no
+// combination of the held shares passed the integrity digest, or the
+// verifying combinations disagree on which shares are clean
+// (ErrAmbiguous). Receivers keep the set and ask for another share,
+// which lets Recover get past the corrupt one and name it.
+var ErrCorrupt = errors.New("shamir: corrupt share")
+
+// ErrAmbiguous reports that the held shares verify under two different
+// polynomials with equally many agreeing shares, so the corrupt shares
+// cannot be told from the clean ones. It wraps ErrCorrupt because the
+// remedy is the same: one more clean share breaks the tie.
+var ErrAmbiguous = fmt.Errorf("%w: cannot tell which", ErrCorrupt)
+
+// attributionCap bounds the threshold-sized combinations Recover
+// enumerates to attribute corruption: the enumeration runs while
+// C(held, k) is at most this many.
+const attributionCap = 1024
+
 // Share is a parsed share envelope.
 type Share struct {
 	Threshold int    // k: shares needed to recover
@@ -100,11 +119,14 @@ type Recovered struct {
 	// split.
 	FileType byte
 	Data     []byte
-	// Corrupt is the index of the corrupt share a retry excluded to
-	// recover, zero when the first combination verified. With spare
-	// shares beyond the threshold, a single corrupt share is thereby
-	// survived and named.
-	Corrupt int
+	// Corrupt lists the index (x) of every held share whose bytes lie
+	// off the recovered polynomial, ascending; nil when every held
+	// share agrees. With spare shares beyond the threshold, corrupt
+	// shares are survived wherever they sit in the set and named by
+	// maximal agreement (see Recover): exact for one corrupt share,
+	// and for several when the clean shares outnumber every wrong
+	// reading's support.
+	Corrupt []int
 }
 
 // SplitData splits data of the given BBQr file type into n shares, any
@@ -273,11 +295,28 @@ func (s *Set) Complete() bool {
 	return len(s.shares) >= s.k && s.k > 0
 }
 
-// Recover combines shares into the original data. With spare shares
-// beyond the threshold, one corrupt share is survived: each member of
-// the failed combination is excluded in turn for a spare, and the
-// excluded index is reported in Recovered.Corrupt when that recovers.
-// The integrity digest decides which result is correct.
+// Recover combines shares into the original data. The first threshold
+// of shares is combined and its digest verified; when every other held
+// share lies on that polynomial too, the set is clean and that is the
+// result. Otherwise a corrupt share is present, and Recover attributes
+// it by maximal agreement: every threshold-sized combination of the
+// held shares is combined, the ones whose digest verifies are grouped
+// by polynomial, the polynomial with the most agreeing held shares
+// wins, and every share off it is named in Recovered.Corrupt. Two
+// polynomials tied for the most agreement are ErrAmbiguous; no
+// verifying combination at all is ErrCorrupt. The digest alone cannot
+// settle attribution: it vouches for the polynomial's value at x=0
+// only, and two corrupt members whose errors cancel there verify with
+// a wrong polynomial, which would blame the clean spares.
+//
+// The enumeration runs while C(held, k) <= 1024: at most that many
+// combinations, each O(k·len) to verify, plus one O(held·k·len)
+// agreement pass per distinct verifying polynomial. Above the cap,
+// Recover settles for one verifying combination, the first threshold
+// or, when that fails, the first threshold with each member swapped
+// for each spare in turn (at most k·(held-k) further attempts), and
+// names the shares off its polynomial; that attribution is exact for
+// one corrupt share and unverified beyond. SPEC.md states the limit.
 func (s *Set) Recover() (Recovered, error) {
 	if !s.Complete() {
 		return Recovered{}, fmt.Errorf("shamir: %d of %d required shares", len(s.shares), s.k)
@@ -286,29 +325,230 @@ func (s *Set) Recover() (Recovered, error) {
 	for i := range idx {
 		idx[i] = i
 	}
-	rec, err := s.recoverSubset(idx)
-	if err == nil || len(s.shares) <= s.k {
-		return rec, err
+	first, err := s.read(idx)
+	if err != nil && !errors.Is(err, ErrCorrupt) {
+		// A limit, deflate or type failure is a property of the sealed
+		// content, not of one share; no other combination cures it.
+		return Recovered{}, err
+	}
+	if err == nil && first.count == len(s.shares) {
+		return first.rec, nil
+	}
+	if subsetsWithin(len(s.shares), s.k, attributionCap) {
+		var known []reading
+		if err == nil {
+			known = append(known, first)
+		}
+		return s.attribute(known, idx)
+	}
+	if err == nil {
+		return s.outvote(first)
 	}
 	for j := range s.k {
-		sub := append(append(idx[:j:j], idx[j+1:]...), s.k)
-		if rec, err2 := s.recoverSubset(sub); err2 == nil {
-			rec.Corrupt = s.shares[j].Index
-			return rec, nil
+		for sp := s.k; sp < len(s.shares); sp++ {
+			idx[j] = sp
+			r, err := s.read(idx)
+			switch {
+			case err == nil:
+				return s.outvote(r)
+			case !errors.Is(err, ErrCorrupt):
+				return Recovered{}, err
+			}
+		}
+		idx[j] = j
+	}
+	// Disjoint windows of threshold positions after the first: with c
+	// corrupt shares one of the first c+1 windows is clean whenever
+	// held >= (c+1)·k, where the single swaps above all failed.
+	for start := s.k; start+s.k <= len(s.shares); start += s.k {
+		for i := range idx {
+			idx[i] = start + i
+		}
+		r, err := s.read(idx)
+		switch {
+		case err == nil:
+			return s.outvote(r)
+		case !errors.Is(err, ErrCorrupt):
+			return Recovered{}, err
 		}
 	}
 	return Recovered{}, err
 }
 
-// recoverSubset combines the shares at the given indices, verifies the
-// integrity digest and unseals the content.
-func (s *Set) recoverSubset(idx []int) (Recovered, error) {
+// outvote guards a reading found past the enumeration cap. A polynomial
+// that at most half of the held shares agree with may be a cancelling
+// pair of corrupt members outvoting the clean shares, so one
+// combination drawn from its dissenters is read and the reading with
+// the larger agreement wins; equal agreement is ErrAmbiguous.
+func (s *Set) outvote(r reading) (Recovered, error) {
+	if 2*r.count > len(s.shares) {
+		return r.result(s), nil
+	}
+	idx := make([]int, 0, s.k)
+	for i, agree := range r.agree {
+		if !agree {
+			idx = append(idx, i)
+			if len(idx) == s.k {
+				break
+			}
+		}
+	}
+	if len(idx) < s.k {
+		return r.result(s), nil
+	}
+	alt, err := s.read(idx)
+	switch {
+	case err == nil && alt.count > r.count:
+		return alt.result(s), nil
+	case err == nil && alt.count == r.count:
+		return Recovered{}, ErrAmbiguous
+	case err != nil && !errors.Is(err, ErrCorrupt):
+		return Recovered{}, err
+	}
+	return r.result(s), nil
+}
+
+// A reading is one verifying combination's polynomial: the content it
+// unseals and which held shares lie on it.
+type reading struct {
+	rec   Recovered
+	agree []bool // by position in Set.shares
+	count int    // shares agreeing, the combination's own included
+}
+
+// read combines the shares at the given positions, verifies the digest
+// and unseals the content, then evaluates the polynomial at every
+// other held share's x to record which shares agree with it.
+func (s *Set) read(idx []int) (reading, error) {
+	raw := s.points(idx)
+	rec, err := s.unseal(raw)
+	if err != nil {
+		return reading{}, err
+	}
+	r := reading{rec: rec, agree: make([]bool, len(s.shares))}
+	for i, sh := range s.shares {
+		if slices.Contains(idx, i) || bytes.Equal(interpolate(raw, byte(sh.Index)), sh.data) {
+			r.agree[i] = true
+			r.count++
+		}
+	}
+	return r, nil
+}
+
+// contains reports whether every share of the combination idx lies on
+// the reading's polynomial. k points fix a polynomial of degree below
+// k, so such a combination reads the same polynomial again.
+func (r reading) contains(idx []int) bool {
+	for _, i := range idx {
+		if !r.agree[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// result is the reading's recovered content with every held share off
+// its polynomial named in Corrupt, ascending.
+func (r reading) result(s *Set) Recovered {
+	rec := r.rec
+	for i, ok := range r.agree {
+		if !ok {
+			rec.Corrupt = append(rec.Corrupt, s.shares[i].Index)
+		}
+	}
+	slices.Sort(rec.Corrupt)
+	return rec
+}
+
+// attribute enumerates the threshold-sized combinations of the held
+// shares after idx, the first one, whose reading (if it verified) is
+// in known. Combinations inside a known reading's agreement set are
+// skipped, since they read the same polynomial; every other verifying
+// combination is a distinct polynomial. The reading with the most
+// agreeing shares wins, with its dissenters named; a tie for the most
+// is ErrAmbiguous and no reading at all is ErrCorrupt.
+func (s *Set) attribute(known []reading, idx []int) (Recovered, error) {
+	for nextCombination(idx, len(s.shares)) {
+		if slices.ContainsFunc(known, func(r reading) bool { return r.contains(idx) }) {
+			continue
+		}
+		r, err := s.read(idx)
+		switch {
+		case err == nil:
+			known = append(known, r)
+		case !errors.Is(err, ErrCorrupt):
+			return Recovered{}, err
+		}
+	}
+	if len(known) == 0 {
+		return Recovered{}, ErrCorrupt
+	}
+	best, tie := known[0], false
+	for _, r := range known[1:] {
+		switch {
+		case r.count > best.count:
+			best, tie = r, false
+		case r.count == best.count:
+			tie = true
+		}
+	}
+	if tie {
+		return Recovered{}, ErrAmbiguous
+	}
+	return best.result(s), nil
+}
+
+// nextCombination advances idx, an ascending combination of positions
+// below n, to the next one in lexicographic order and reports whether
+// there was one.
+func nextCombination(idx []int, n int) bool {
+	k := len(idx)
+	i := k - 1
+	for i >= 0 && idx[i] == n-k+i {
+		i--
+	}
+	if i < 0 {
+		return false
+	}
+	idx[i]++
+	for j := i + 1; j < k; j++ {
+		idx[j] = idx[j-1] + 1
+	}
+	return true
+}
+
+// subsetsWithin reports whether C(n, k) <= limit. The running product
+// is C(n-k+i, i) at step i, an exact integer, and stops at the limit,
+// so it never overflows.
+func subsetsWithin(n, k, limit int) bool {
+	if k > n-k {
+		k = n - k
+	}
+	c := 1
+	for i := 1; i <= k; i++ {
+		c = c * (n - k + i) / i
+		if c > limit {
+			return false
+		}
+	}
+	return true
+}
+
+// points returns the shares at the given positions in the raw (x, y)
+// form Combine takes.
+func (s *Set) points(idx []int) [][]byte {
 	raw := make([][]byte, len(idx))
 	for i, j := range idx {
 		raw[i] = make([]byte, 1+len(s.shares[j].data))
 		raw[i][0] = byte(s.shares[j].Index)
 		copy(raw[i][1:], s.shares[j].data)
 	}
+	return raw
+}
+
+// unseal combines the raw shares, verifies the integrity digest and
+// unseals the content.
+func (s *Set) unseal(raw [][]byte) (Recovered, error) {
 	inner, err := Combine(raw)
 	if err != nil {
 		return Recovered{}, err
@@ -316,7 +556,7 @@ func (s *Set) recoverSubset(idx []int) (Recovered, error) {
 	typ := inner[0]
 	payload := inner[1 : len(inner)-digestLen]
 	if !bytes.Equal(digest(s.k, typ, payload), inner[len(inner)-digestLen:]) {
-		return Recovered{}, errors.New("shamir: integrity digest mismatch")
+		return Recovered{}, ErrCorrupt
 	}
 	rec := Recovered{FileType: typ &^ flagDeflated, Data: payload}
 	if rec.FileType < 'A' || rec.FileType > 'Z' {

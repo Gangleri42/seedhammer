@@ -92,10 +92,19 @@ func Combine(shares [][]byte) ([]byte, error) {
 		}
 		seen[s[0]] = true
 	}
-	// Lagrange interpolation at x=0. Subtraction is addition in
-	// characteristic 2, so the basis coefficient of share i is
+	return interpolate(shares, 0), nil
+}
+
+// interpolate evaluates, byte by byte, the polynomial through the
+// shares' (x, y) points at x. The shares must satisfy Combine's
+// checks; Combine is the case x=0. The polynomial passes through
+// every point it was built from, so a held share lies off it exactly
+// when its bytes were changed after the split.
+func interpolate(shares [][]byte, x byte) []byte {
+	// Lagrange basis at x. Subtraction is addition in characteristic
+	// 2, so the coefficient of share i is
 	//
-	//	λ_i = Π_{m≠i} x_m / (x_m ⊕ x_i)
+	//	λ_i(x) = Π_{m≠i} (x ⊕ x_m) / (x_i ⊕ x_m)
 	lambda := make([]byte, len(shares))
 	for i, si := range shares {
 		l := byte(1)
@@ -103,19 +112,19 @@ func Combine(shares [][]byte) ([]byte, error) {
 			if m == i {
 				continue
 			}
-			l = div(mul(l, sm[0]), sm[0]^si[0])
+			l = div(mul(l, x^sm[0]), si[0]^sm[0])
 		}
 		lambda[i] = l
 	}
-	secret := make([]byte, n-1)
-	for j := range secret {
+	out := make([]byte, len(shares[0])-1)
+	for j := range out {
 		y := byte(0)
 		for i, s := range shares {
 			y ^= mul(lambda[i], s[1+j])
 		}
-		secret[j] = y
+		out[j] = y
 	}
-	return secret, nil
+	return out
 }
 
 // hedge XORs the random stream with an HMAC-SHA256 counter-mode

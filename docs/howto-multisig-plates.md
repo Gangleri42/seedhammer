@@ -42,7 +42,7 @@ less.
 A share plate as engraved, the pairing header and the BBQr part text
 wrapped around its code:
 
-![Cosigner 1's share plate of a 2-of-3](images/plate-share-1of3.png)
+![Share plate 1 of a 2-of-3 split](images/plate-share-1of3.png)
 
 ## On the machine
 
@@ -101,8 +101,11 @@ for the times you would rather the room did not read the screen.
 
 **Share k belongs to cosigner k.** The header on every plate names its plate
 number, the recovery rule (ANY 2), its cosigner fingerprint, and the split
-session tag (#5C71): plates of one set share one tag. Keep each share with
-that cosigner's seed plate. Recovery needs a quorum of *different* shares:
+session tag (#5C71): plates of one set share one tag. Plate numbers follow
+the machine's canonical key order (keys sorted by their bytes), which can
+differ from the order your wallet listed them in; pair each plate by the
+fingerprint printed in its header. Keep each share with that cosigner's
+seed plate. Recovery needs a quorum of *different* shares:
 two copies of the same share count once, so a swapped pair of plates can
 turn a valid quorum of cosigners into an insufficient set of steel. The
 full-copy fallback has no such rule; those plates are all the same.
@@ -118,12 +121,19 @@ usual ways.
   phone NFC app, `write-nfc.py`, or Studio), one plate per tap. The
   progress line counts SHARE 1 OF 2; at the quorum the descriptor
   screen opens as if the wallet had been scanned whole, ready to
-  re-engrave or to build plates.
+  re-engrave or to build plates. A bad plate inside the quorum keeps
+  the set open (BAD SHARE, TAP A SPARE), and with the spare tapped the
+  machine names the corrupt plate to re-cut before the descriptor
+  screen opens. When the plates in hand read two ways (BAD PLATES, TAP
+  ANOTHER) any further distinct plate settles it; leaving the start
+  screen and coming back clears a held set.
 - **On a computer.** Collect each plate's code into a file, one line
   per QR, a blank line between plates, and run
   `bbqr combine -descriptor` from [cmd/bbqr](../cmd/bbqr). It prints
-  the wallet descriptor as text and, given a spare plate beyond the
-  quorum, survives one corrupt share and names which plate is bad.
+  the wallet descriptor as text and, given spare plates beyond the
+  quorum, survives corrupt shares while the clean plates outnumber
+  them and names every bad plate; when the evidence is ambiguous it
+  says so and asks for one more plate.
 
 The engraved part text, on the TEXT + QR and TEXT ONLY styles, is the
 exact QR content, character for character, so hand transcription

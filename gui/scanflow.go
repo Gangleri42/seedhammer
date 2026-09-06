@@ -34,7 +34,8 @@ func scanWorker(ctx *Context, scans chan scanResult) (stop func()) {
 			}
 			obj, err := s.Scan(r)
 			scan := scanResult{
-				Object: obj,
+				Object:  obj,
+				Corrupt: s.corrupt,
 			}
 			switch {
 			case errors.Is(err, errScanInProgress):
@@ -45,6 +46,12 @@ func scanWorker(ctx *Context, scans chan scanResult) (stop func()) {
 			case errors.Is(err, errScanUnknownFormat):
 				scan.Status = scanUnknownFormat
 			case err == nil || err == io.EOF:
+				if obj == nil {
+					// A record end with nothing decoded (the poller's
+					// bare EOF after a deselect) is not news and must
+					// not clear a held status.
+					continue
+				}
 			default:
 				scan.Status = scanFailed
 				log.Printf("nfc scan: %v", err)
@@ -63,6 +70,7 @@ func scanWorker(ctx *Context, scans chan scanResult) (stop func()) {
 			case old := <-scans:
 				if scan.Object == nil {
 					scan.Object = old.Object
+					scan.Corrupt = old.Corrupt
 				}
 				if scan.Detail == "" {
 					scan.Detail = old.Detail

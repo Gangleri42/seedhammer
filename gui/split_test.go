@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"bytes"
 	"fmt"
 	"math/bits"
 	"slices"
@@ -57,9 +58,12 @@ func TestFitShares(t *testing.T) {
 // headers, and that the fit verdict agrees with the planner.
 func testFitSharesVariant(t *testing.T, threshold, nkeys, parts int, desc *bip380.Descriptor, sp *splitPlan, textOnly bool) {
 	t.Helper()
+	// Plate k names cosigner k of the canonical descriptor, whatever
+	// order the fixture listed the keys in.
+	canon := splitDescriptor(desc)
 	{
 		for k := range nkeys {
-			txt, qrTexts, err := sp.plateContent(desc, k)
+			txt, qrTexts, err := sp.plateContent(k)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -82,7 +86,7 @@ func testFitSharesVariant(t *testing.T, threshold, nkeys, parts int, desc *bip38
 			}
 			// The pairing header opens the first paragraph, threshold
 			// included: the plate itself says how many recover.
-			head := fmt.Sprintf("%d/%d ANY %d %.8X", k+1, nkeys, threshold, desc.Keys[k].MasterFingerprint)
+			head := fmt.Sprintf("%d/%d ANY %d %.8X", k+1, nkeys, threshold, canon.Keys[k].MasterFingerprint)
 			if !strings.HasPrefix(txt.Paragraphs[0].Text, head) {
 				t.Errorf("%d-of-%d share %d: header %q missing from %.40q",
 					threshold, nkeys, k, head, txt.Paragraphs[0].Text)
@@ -137,12 +141,13 @@ func splitParagraphTexts(txt backup.Text) []string {
 
 // TestShareRecovery decodes the exact strings the share plates
 // engrave — the artifact, not the scheme underneath: every
-// quorum-sized subset of plates must reconstruct the descriptor
-// through the BBQr join and Shamir set a recovering wallet runs, and
-// every smaller subset must not.
+// quorum-sized subset of plates must reconstruct the descriptor in
+// its canonical form through the BBQr join and Shamir set a
+// recovering wallet runs, and every smaller subset must not.
 func TestShareRecovery(t *testing.T) {
 	for _, test := range []struct{ threshold, nkeys int }{{2, 3}, {2, 4}, {3, 5}} {
 		desc := testMultisig(t, test.threshold, test.nkeys)
+		want := splitDescriptor(desc).Encode()
 		labels, plans, err := fitShares(engraverParams, desc, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -152,7 +157,7 @@ func TestShareRecovery(t *testing.T) {
 		sp := plans[slices.Index(labels, "QR ONLY")]
 		plates := make([][]string, test.nkeys)
 		for k := range test.nkeys {
-			_, qrTexts, err := sp.plateContent(desc, k)
+			_, qrTexts, err := sp.plateContent(k)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -194,7 +199,7 @@ func TestShareRecovery(t *testing.T) {
 				t.Errorf("%d-of-%d: subset %b: %v", test.threshold, test.nkeys, c, err)
 				continue
 			}
-			if got, want := got.(*bip380.Descriptor).Encode(), desc.Encode(); got != want {
+			if got := got.(*bip380.Descriptor).Encode(); got != want {
 				t.Errorf("%d-of-%d: subset %b recovered %q, want %q",
 					test.threshold, test.nkeys, c, got, want)
 			}
@@ -202,9 +207,189 @@ func TestShareRecovery(t *testing.T) {
 	}
 }
 
-// awaitUI pumps frames until marker renders, failing with the last
-// frame when it never does.
-func awaitUI(t *testing.T, frame func() (string, bool), marker string) {
+// The 2-of-2 of the canonical-input tests. By wire bytes canonKeyB
+// (9A6A2580) sorts below canonKeyA (2A77E0A6), so plate 1 of any
+// spelling is 9A6A2580, and canonReversed, which lists canonKeyA
+// first, arrives in the reverse of canonical order.
+const (
+	canonKeyA     = "[2a77e0a6/48h/0h/0h/2h]xpub6F8WgTkiV8iDPFG1Kv4sNrcBNMMgKK4cjfxjdZWvR3kChfbt3L2dJF7xmCHBMGMmxjyzwgjdFkh9UN3623YpsmqN1KwZGR45Y3ANLQQX87u"
+	canonKeyB     = "[9a6a2580/48h/0h/0h/2h]xpub6EeqK2JLwngrHJEQ4X4iqrySZV9qU3TgwMgf6NStLZa37AfNiHTtTE9ji1F9YQDLArJMLy8sw3Q2samVj5VQQjaaUHr5z2Hz57NWHJCfh31"
+	canonReversed = "wsh(sortedmulti(2," + canonKeyA + "/<0;1>/*," + canonKeyB + "/<0;1>/*))"
+)
+
+// TestSplitInputCanonical: the split input is the wallet, not its
+// spelling. One 2-of-2 written four ways (multipath children, plain
+// receive children, origin-only keys, keys in the other order) must
+// canonicalize to one CBOR; the scanned descriptors must come out
+// untouched; the canonical CBOR must be a fixed point through the
+// receiving parser; the title must not reach the bytes; and the share
+// plates must number cosigners in canonical order whichever order the
+// scan arrived in.
+func TestSplitInputCanonical(t *testing.T) {
+	forms := []struct{ name, text string }{
+		{"multipath", canonReversed},
+		{"plain", "wsh(sortedmulti(2," + canonKeyA + "/0/*," + canonKeyB + "/0/*))"},
+		{"origin-only", "wsh(sortedmulti(2," + canonKeyA + "," + canonKeyB + "))"},
+		{"swapped", "wsh(sortedmulti(2," + canonKeyB + "/<0;1>/*," + canonKeyA + "/<0;1>/*))"},
+	}
+	var want []byte
+	var canon *bip380.Descriptor
+	for _, f := range forms {
+		desc, err := bip380.Parse(f.text)
+		if err != nil {
+			t.Fatalf("%s: %v", f.name, err)
+		}
+		before := desc.Encode()
+		c := splitDescriptor(desc)
+		got := urtypes.EncodeDescriptor(c)
+		if after := desc.Encode(); after != before {
+			t.Errorf("%s: splitDescriptor modified its input:\n%s\n%s", f.name, before, after)
+		}
+		if want == nil {
+			want, canon = got, c
+			continue
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s: canonical CBOR differs from the multipath form's (%d vs %d bytes)", f.name, len(got), len(want))
+		}
+	}
+	if bytes.Compare(urtypes.EncodeKey(canon.Keys[0]), urtypes.EncodeKey(canon.Keys[1])) >= 0 {
+		t.Error("canonical keys are not in ascending wire order")
+	}
+	for k := range canon.Keys {
+		if len(canon.Keys[k].Children) != 0 {
+			t.Errorf("canonical key %d keeps %d children", k, len(canon.Keys[k].Children))
+		}
+	}
+
+	// What the plates carry parses back to the canonical descriptor
+	// and re-encodes to the same bytes, with or without another
+	// canonicalization: recovery and re-split agree.
+	obj, err := urtypes.Parse("crypto-output", want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := obj.(*bip380.Descriptor)
+	if got := urtypes.EncodeDescriptor(splitDescriptor(rec)); !bytes.Equal(got, want) {
+		t.Error("recovered descriptor canonicalizes to different bytes")
+	}
+	if got := urtypes.EncodeDescriptor(rec); !bytes.Equal(got, want) {
+		t.Error("recovered descriptor re-encodes to different bytes")
+	}
+	if got := rec.Encode(); got != canon.Encode() {
+		t.Errorf("recovered %q, want %q", got, canon.Encode())
+	}
+
+	// The title lives in the plate header only.
+	titled := *canon
+	titled.Title = "BENCH VAULT"
+	if got := urtypes.EncodeDescriptor(splitDescriptor(&titled)); !bytes.Equal(got, want) {
+		t.Error("the title changed the canonical CBOR")
+	}
+
+	// Two keys sharing an xpub under different origins are equal by
+	// KeyData and distinct on the wire: the wire bytes order them, so
+	// either input order canonicalizes to one CBOR.
+	twin := canon.Keys[0]
+	twin.MasterFingerprint ^= 1
+	twin.DerivationPath = append(slices.Clone(canon.Keys[0].DerivationPath), 7)
+	if !bytes.Equal(twin.KeyData, canon.Keys[0].KeyData) || bytes.Equal(urtypes.EncodeKey(twin), urtypes.EncodeKey(canon.Keys[0])) {
+		t.Fatal("the twin key must share its original's KeyData and differ on the wire")
+	}
+	var twinCBOR [][]byte
+	for _, keys := range [][]bip380.Key{{canon.Keys[0], twin}, {twin, canon.Keys[0]}} {
+		d := *canon
+		d.Keys = keys
+		c := splitDescriptor(&d)
+		if bytes.Compare(urtypes.EncodeKey(c.Keys[0]), urtypes.EncodeKey(c.Keys[1])) >= 0 {
+			t.Error("twin keys are not in ascending wire order")
+		}
+		twinCBOR = append(twinCBOR, urtypes.EncodeDescriptor(c))
+	}
+	if !bytes.Equal(twinCBOR[0], twinCBOR[1]) {
+		t.Error("the two input orders of the twin keys canonicalize to different CBOR")
+	}
+
+	// The plate headers of every form name the same cosigner at the
+	// same plate number (the swapped form's plates are not swapped),
+	// and the bytes the split sealed are the canonical CBOR: the
+	// plates' own quorum recovers them.
+	for _, f := range forms {
+		desc, err := bip380.Parse(f.text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		labels, plans, err := fitShares(engraverParams, desc, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", f.name, err)
+		}
+		sp := plans[slices.Index(labels, "QR ONLY")]
+		var set shamir.Set
+		for k := range canon.Keys {
+			txt, _, err := sp.plateContent(k)
+			if err != nil {
+				t.Fatal(err)
+			}
+			head, _, ok := strings.Cut(txt.Paragraphs[0].Text, " #")
+			want := fmt.Sprintf("%d/%d ANY 2 %.8X", k+1, len(canon.Keys), canon.Keys[k].MasterFingerprint)
+			if !ok || head != want {
+				t.Errorf("%s plate %d: header %q, want %q", f.name, k+1, head, want)
+			}
+			_, payload, err := bbqr.Join(sp.shares[k].Parts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := set.Add(payload); err != nil {
+				t.Fatal(err)
+			}
+		}
+		rec, err := set.Recover()
+		if err != nil {
+			t.Fatalf("%s: %v", f.name, err)
+		}
+		if !bytes.Equal(rec.Data, want) || len(rec.Corrupt) != 0 {
+			t.Errorf("%s: the split sealed %d bytes that differ from the canonical CBOR (corrupt %v)", f.name, len(rec.Data), rec.Corrupt)
+		}
+	}
+}
+
+// TestSplitFlowCanonicalOrder: the plate gates name the cosigners in
+// canonical key order, whichever order the scan listed them in. The
+// 2-of-2 arrives with 2A77E0A6 first and opens on 9A6A2580, its lower
+// key by wire bytes.
+func TestSplitFlowCanonicalOrder(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		desc, err := bip380.Parse(canonReversed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		splitFlowHarness(t, desc, func(ctx *Context, await func(string) string, engrave func()) {
+			await("Engrave Descriptor")
+			click(&ctx.Router, Button3)
+			await("SPLIT: 2 PLATES")
+			click(&ctx.Router, Down)
+			await("Any 2 of 2 plates recover")
+			click(&ctx.Router, Button3)
+			await("Choose engraving")
+			click(&ctx.Router, Button3)
+			order := []string{"9A6A2580", "2A77E0A6"}
+			for plate, mfp := range order {
+				gate := await(fmt.Sprintf("Plate %d of 2", plate+1))
+				other := order[1-plate]
+				if !uiContains(gate, "For cosigner "+mfp) || uiContains(gate, other) {
+					t.Errorf("plate %d gate names the wrong cosigner (want %s, not %s): %q", plate+1, mfp, other, gate)
+				}
+				click(&ctx.Router, Down)
+				await("SKIP")
+				click(&ctx.Router, Button3)
+			}
+		})
+	})
+}
+
+// awaitUI pumps frames until marker renders and returns that frame,
+// failing with the last frame when it never does.
+func awaitUI(t *testing.T, frame func() (string, bool), marker string) string {
 	t.Helper()
 	last := ""
 	for range 10000 {
@@ -213,16 +398,17 @@ func awaitUI(t *testing.T, frame func() (string, bool), marker string) {
 			t.Fatalf("flow ended waiting for %q", marker)
 		}
 		if uiContains(content, marker) {
-			return
+			return content
 		}
 		last = content
 	}
 	t.Fatalf("%q never appeared; last frame: %q", marker, last)
+	return ""
 }
 
 // splitFlowHarness drives descriptorFlow far enough to exercise the
 // per-plate loop with a mock engraver under a synctest clock.
-func splitFlowHarness(t *testing.T, desc *bip380.Descriptor, script func(ctx *Context, await func(string), engrave func())) {
+func splitFlowHarness(t *testing.T, desc *bip380.Descriptor, script func(ctx *Context, await func(string) string, engrave func())) {
 	t.Helper()
 	e := newEngraver()
 	p := newPlatform()
@@ -234,9 +420,9 @@ func splitFlowHarness(t *testing.T, desc *bip380.Descriptor, script func(ctx *Co
 		completed = true
 	})
 	defer quit()
-	await := func(marker string) {
+	await := func(marker string) string {
 		t.Helper()
-		awaitUI(t, frame, marker)
+		return awaitUI(t, frame, marker)
 	}
 	engrave := func() {
 		t.Helper()
@@ -281,7 +467,7 @@ func splitFlowHarness(t *testing.T, desc *bip380.Descriptor, script func(ctx *Co
 // steel: the flow must end on the incomplete-set warning.
 func TestSplitDescriptorFlow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		splitFlowHarness(t, testMultisig(t, 2, 2), func(ctx *Context, await func(string), engrave func()) {
+		splitFlowHarness(t, testMultisig(t, 2, 2), func(ctx *Context, await func(string) string, engrave func()) {
 			await("Engrave Descriptor")
 			click(&ctx.Router, Button3)
 			// Mode choice: the split row sits under ONE PLATE.
@@ -325,7 +511,7 @@ func TestSplitDescriptorFlow(t *testing.T) {
 // descriptor plate per cosigner.
 func TestCopiesDescriptorFlow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		splitFlowHarness(t, testMultisig(t, 1, 2), func(ctx *Context, await func(string), engrave func()) {
+		splitFlowHarness(t, testMultisig(t, 1, 2), func(ctx *Context, await func(string) string, engrave func()) {
 			await("Engrave Descriptor")
 			click(&ctx.Router, Button3)
 			await("2 FULL COPIES")
@@ -354,7 +540,7 @@ func TestCopiesDescriptorFlow(t *testing.T) {
 // another session, and the flow must say so before finishing.
 func TestSplitPartialSetFlow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		splitFlowHarness(t, testMultisig(t, 2, 3), func(ctx *Context, await func(string), engrave func()) {
+		splitFlowHarness(t, testMultisig(t, 2, 3), func(ctx *Context, await func(string) string, engrave func()) {
 			await("Engrave Descriptor")
 			click(&ctx.Router, Button3)
 			await("SPLIT: 3 PLATES")
@@ -399,8 +585,8 @@ func TestShareHeaderOneLine(t *testing.T) {
 				// below does not model.
 				continue
 			}
-			for k := range desc.Keys {
-				head := shareHeader(desc, k, sp.tag)
+			for k := range sp.desc.Keys {
+				head := shareHeader(sp.desc, k, sp.tag)
 				if cpl := backup.CharsPerLine(engraverParams, sh.Font, sp.fontSize); len(head) > cpl {
 					t.Errorf("title %q variant %s share %d: header %d chars wraps at font %.1f (cpl %d)",
 						title, labels[vi], k, len(head), sp.fontSize, cpl)

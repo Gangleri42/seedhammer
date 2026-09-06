@@ -251,6 +251,12 @@ func cosignerEntry(ctx *Context, th *Colors, title string) (cosignerEntryAction,
 		}
 		select {
 		case scan := <-scans:
+			if scan.Object != nil && len(scan.Corrupt) > 0 {
+				// A share set recovered past a bad plate: name it
+				// before judging what arrived, so the word reaches
+				// the holder wherever the recovery lands.
+				corruptPlatesFlow(ctx, th, scan.Corrupt, scan.Object)
+			}
 			now := time.Now()
 			if now.Before(statusTimeout) {
 				status = max(status, scan.Status)

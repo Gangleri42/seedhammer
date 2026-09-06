@@ -2,6 +2,9 @@ package shamir
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"math/rand"
 	"slices"
@@ -638,4 +641,173 @@ func TestTieBroken(t *testing.T) {
 	if !bytes.Equal(rec.Data, data) || !slices.Equal(rec.Corrupt, []int{1, 2, 3, 4}) {
 		t.Fatalf("corrupt %v, want [1 2 3 4]", rec.Corrupt)
 	}
+}
+
+// TestDerivedReproducible: under the derived profile the set is a
+// function of (k, data) alone. Two splits agree part for part, and a
+// different threshold or different data changes every share's y
+// values and the tag.
+func TestDerivedReproducible(t *testing.T) {
+	data := mustHex(t, descriptorCBORHex)
+	a, err := SplitDataDerived(bbqr.TypeCBOR, data, 2, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := SplitDataDerived(bbqr.TypeCBOR, data, 2, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a) != 4 || len(b) != 4 {
+		t.Fatalf("got %d and %d series, want 4", len(a), len(b))
+	}
+	for i := range a {
+		if !equalStrings(a[i].Parts, b[i].Parts) {
+			t.Fatalf("share %d differs between two derived splits of the same input", i+1)
+		}
+	}
+	other := bytes.Clone(data)
+	other[len(other)-1] ^= 1
+	higherK, err := SplitDataDerived(bbqr.TypeCBOR, data, 3, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherData, err := SplitDataDerived(bbqr.TypeCBOR, other, 2, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		series []bbqr.Series
+	}{
+		{"threshold 3", higherK},
+		{"one data bit", otherData},
+	} {
+		for i := range a {
+			ref, got := parseShare(t, a[i]), parseShare(t, tc.series[i])
+			if got.Tag == ref.Tag {
+				t.Fatalf("%s: share %d keeps the tag %04x", tc.name, i+1, ref.Tag)
+			}
+			if bytes.Equal(got.data, ref.data) {
+				t.Fatalf("%s: share %d keeps its y values", tc.name, i+1)
+			}
+		}
+	}
+}
+
+// TestDerivedPrefix: n is not an input to the derived stream, so a set
+// issued at n=5 extends the n=3 set share for share, and a share cut
+// under the larger n combines with the shares of the smaller one.
+func TestDerivedPrefix(t *testing.T) {
+	data := []byte(descriptorText)
+	three, err := SplitDataDerived(bbqr.TypeText, data, 2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	five, err := SplitDataDerived(bbqr.TypeText, data, 2, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range three {
+		if !equalStrings(three[i].Parts, five[i].Parts) {
+			t.Fatalf("share %d of the 2-of-3 set differs from the 2-of-5 set", i+1)
+		}
+	}
+	rec, err := RecoverData([][]byte{joinParts(t, three[0].Parts), joinParts(t, five[4].Parts)})
+	if err != nil {
+		t.Fatal("share 1 of the 2-of-3 set with share 5 of the 2-of-5 set:", err)
+	}
+	if !bytes.Equal(rec.Data, data) {
+		t.Fatal("mixed set recovered different data")
+	}
+}
+
+// TestDerivedTagDeterministic: the derived tag and coefficients are the
+// PRF stream of SPEC.md section 3a, HMAC-SHA256 counter mode keyed by
+// (k, sealed), computed here from the spec text with crypto/hmac over
+// the sealed content recombined from the shares. The tag is the 2
+// stream bytes after the (k-1)·len(sealed) coefficient bytes; with
+// k=2, share 1's y values XOR sealed are the coefficients themselves.
+func TestDerivedTagDeterministic(t *testing.T) {
+	data := []byte(descriptorText)
+	for _, k := range []int{2, 3} {
+		series, err := SplitDataDerived(bbqr.TypeText, data, k, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		envelopes := make([][]byte, len(series))
+		for i, s := range series {
+			envelopes[i] = joinParts(t, s.Parts)
+		}
+		sealed := sealedOf(t, envelopes, k)
+		ncoef := (k - 1) * len(sealed)
+		stream := specDerivedStream(k, sealed, ncoef+2)
+		tag := binary.BigEndian.Uint16(stream[ncoef:])
+		for i, env := range envelopes {
+			sh, err := ParseShare(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sh.Tag != tag {
+				t.Fatalf("k=%d share %d: tag %04x is not the derived stream's function of (k, sealed), %04x", k, i+1, sh.Tag, tag)
+			}
+		}
+		if k == 2 {
+			sh, err := ParseShare(envelopes[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			for j := range sealed {
+				if sh.data[j]^sealed[j] != stream[j] {
+					t.Fatalf("coefficient %d is %02x, the derived stream has %02x", j, sh.data[j]^sealed[j], stream[j])
+				}
+			}
+		}
+	}
+}
+
+// specDerivedStream restates SPEC.md section 3a: prk = HMAC-SHA256(key
+// = "seedhammer.com/shamir derived v1", k ‖ sealed), then the
+// concatenation of HMAC-SHA256(prk, u64be(i)) for i = 0, 1, ...
+func specDerivedStream(k int, sealed []byte, n int) []byte {
+	extract := hmac.New(sha256.New, []byte("seedhammer.com/shamir derived v1"))
+	extract.Write([]byte{byte(k)})
+	extract.Write(sealed)
+	prk := extract.Sum(nil)
+	var out []byte
+	for i := uint64(0); len(out) < n; i++ {
+		var ctr [8]byte
+		binary.BigEndian.PutUint64(ctr[:], i)
+		m := hmac.New(sha256.New, prk)
+		m.Write(ctr[:])
+		out = m.Sum(out)
+	}
+	return out[:n]
+}
+
+// TestSplitDataDerivedErrors: the derived profile validates as
+// SplitData does.
+func TestSplitDataDerivedErrors(t *testing.T) {
+	data := []byte("hello")
+	if _, err := SplitDataDerived(bbqr.TypeText, nil, 2, 3); err == nil {
+		t.Fatal("empty data: expected error")
+	}
+	if _, err := SplitDataDerived(bbqr.TypeText, data, 1, 3); err == nil {
+		t.Fatal("k=1: expected error")
+	}
+	if _, err := SplitDataDerived(bbqr.TypeText, data, 4, 3); err == nil {
+		t.Fatal("k>n: expected error")
+	}
+	if _, err := SplitDataDerived('b', data, 2, 3); err == nil {
+		t.Fatal("lowercase type: expected error")
+	}
+}
+
+// parseShare decodes one series to its Share.
+func parseShare(t *testing.T, s bbqr.Series) Share {
+	t.Helper()
+	sh, err := ParseShare(joinParts(t, s.Parts))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sh
 }

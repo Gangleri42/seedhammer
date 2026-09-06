@@ -2,15 +2,16 @@
 """Check shamir/testdata/vectors.json against shamir/SPEC.md.
 
 Independent implementation from SPEC.md, with BBQr.md for the
-transport: its own GF(256), hmac and hashlib for the hedge and the
-digest, zlib only to inflate. It shares no code with the Go package,
-so a vector both agree on pins the format itself and no single
-program's reading of it.
+transport: its own GF(256), hmac and hashlib for the hedge, the
+derived stream and the digest, zlib only to inflate. It shares no
+code with the Go package, so a vector both agree on pins the format
+itself and no single program's reading of it.
 
 Generator class: rebuild sealed from type_byte, payload_hex and the
-digest, split it with the recorded rand stream through the hedge,
-compare every envelope, then size and encode each envelope as a base
-32 BBQr series and compare the part strings.
+digest, split it under the vector's profile (randomized: the recorded
+rand stream through the hedge; derived: the stream keyed by k and
+sealed, no rand_hex), compare every envelope, then size and encode
+each envelope as a base 32 BBQr series and compare the part strings.
 
 Receiver class: for every k-subset of the shares, with shares and
 parts shuffled, join, parse, interpolate at x=0, verify the digest,
@@ -38,6 +39,7 @@ import sys
 import zlib
 
 HEDGE_KEY = b"seedhammer.com/shamir hedge v0"
+DERIVED_KEY = b"seedhammer.com/shamir derived v1"
 SHARE_TYPE = "M"
 HEADER_LEN = 8
 MIN_VERSION = 5
@@ -107,10 +109,13 @@ def inflate(payload):
     return data
 
 
-# Split (SPEC section 3).
+# Split (SPEC section 3) and the generator profiles (section 3a).
 
-def hedge_stream(sealed, length):
-    prk = hmac.new(HEDGE_KEY, sealed, hashlib.sha256).digest()
+def prf_stream(key, data, length):
+    """HMAC-SHA256 counter mode: prk = HMAC(key, data), then the blocks
+    HMAC(prk, u64be(0)), HMAC(prk, u64be(1)), ... truncated to
+    length."""
+    prk = hmac.new(key, data, hashlib.sha256).digest()
     out = bytearray()
     counter = 0
     while len(out) < length:
@@ -119,15 +124,30 @@ def hedge_stream(sealed, length):
     return bytes(out[:length])
 
 
-def split(sealed, k, n, rand):
-    """Envelopes for x = 1..n from the recorded stream: k-1 hedged
-    coefficients per sealed byte in ascending degree, then the tag."""
+def randomized_stream(sealed, k, rand):
+    """Coefficients and tag of the randomized profile: the recorded
+    rand stream, its coefficient bytes XORed with the hedge keyed by
+    sealed, its last 2 bytes the tag as recorded."""
     ncoef = len(sealed) * (k - 1)
     if len(rand) != ncoef + 2:
         raise Mismatch(f"rand stream is {len(rand)} bytes, the split consumes {ncoef + 2}")
-    hedge = hedge_stream(sealed, ncoef)
+    hedge = prf_stream(HEDGE_KEY, sealed, ncoef)
     coef = bytes(r ^ h for r, h in zip(rand[:ncoef], hedge))
-    tag = rand[ncoef:]
+    return coef, rand[ncoef:]
+
+
+def derived_stream(sealed, k):
+    """Coefficients and tag of the derived profile: the PRF stream
+    keyed by k (one byte) and sealed, consumed as the randomized
+    profile consumes rand, with no hedge."""
+    ncoef = len(sealed) * (k - 1)
+    stream = prf_stream(DERIVED_KEY, bytes([k]) + sealed, ncoef + 2)
+    return stream[:ncoef], stream[ncoef:]
+
+
+def split(sealed, k, n, coef, tag):
+    """Envelopes for x = 1..n: the k-1 coefficients per sealed byte in
+    ascending degree from coef, then the tag."""
     envelopes = []
     for x in range(1, n + 1):
         y = bytearray()
@@ -269,7 +289,7 @@ def first_diff(a, b):
 def check(v):
     data = bytes.fromhex(v["data_hex"])
     k, n = v["k"], v["n"]
-    rand = bytes.fromhex(v["rand_hex"])
+    profile = v["profile"]
     t = bytes.fromhex(v["type_byte"])[0]
     payload = bytes.fromhex(v["payload_hex"])
     if chr(t & 0x7F) != v["file_type"]:
@@ -284,7 +304,15 @@ def check(v):
 
     # Generator class.
     sealed = bytes([t]) + payload + sealed_digest(k, t, payload)
-    envelopes = split(sealed, k, n, rand)
+    if profile == "randomized":
+        coef, tag = randomized_stream(sealed, k, bytes.fromhex(v["rand_hex"]))
+    elif profile == "derived":
+        if "rand_hex" in v:
+            raise Mismatch("derived vector records a rand stream")
+        coef, tag = derived_stream(sealed, k)
+    else:
+        raise Mismatch(f"unknown profile {profile!r}")
+    envelopes = split(sealed, k, n, coef, tag)
     if len(v["shares"]) != n:
         raise Mismatch(f"{len(v['shares'])} shares recorded for n={n}")
     for i, (env, share) in enumerate(zip(envelopes, v["shares"]), 1):

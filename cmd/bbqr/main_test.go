@@ -254,3 +254,38 @@ func TestSubcommandHelp(t *testing.T) {
 		}
 	}
 }
+
+// TestSplitDerived: split -derived reproduces run for run, the default
+// randomized profile does not, and the derived shares combine.
+func TestSplitDerived(t *testing.T) {
+	desc, err := bip380.Parse("wsh(sortedmulti(2,xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8,xpub661MyMwAqRbcFW31YEwpkMuc5THy2PSt5bDMsktWQcFF8syAmRUapSCGu8ED9W6oDMSgv6Zz8idoc4a6mr8BDzTJY47LJhkJ8UB7WEGuduB/0/*))")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cbor := urtypes.EncodeDescriptor(desc)
+	split := func(args ...string) string {
+		var parts bytes.Buffer
+		if err := run(bytes.NewReader(cbor), &parts, &bytes.Buffer{}, append([]string{"split", "-k", "2", "-n", "3", "-type", "C"}, args...)); err != nil {
+			t.Fatal(err)
+		}
+		return parts.String()
+	}
+	a, b := split("-derived"), split("-derived")
+	if a != b {
+		t.Fatal("two derived splits of the same input differ")
+	}
+	if c, d := split(), split(); c == d {
+		t.Fatal("two randomized splits of the same input agree")
+	}
+	groups := strings.Split(strings.TrimSpace(a), "\n\n")
+	if len(groups) != 3 {
+		t.Fatalf("derived split produced %d series, want 3", len(groups))
+	}
+	var out bytes.Buffer
+	if err := run(strings.NewReader(groups[1]+"\n\n"+groups[2]+"\n"), &out, &bytes.Buffer{}, []string{"combine"}); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out.Bytes(), cbor) {
+		t.Fatal("derived shares combine to different data")
+	}
+}

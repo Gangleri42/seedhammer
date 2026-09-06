@@ -36,7 +36,11 @@ const (
 // greedy LZ77 in a fixed-Huffman block, a literal-only fixed-Huffman
 // block, and a stored block; the smallest wins. Everything is built
 // in this package over fixed tables, so firmware never pays for the
-// standard library compressor's window and hash allocations.
+// standard library compressor's window and hash allocations. The
+// emitted bitstream for a given input is part of the derived generator
+// profile's contract (shamir/SPEC.md, Conformance): shares derived from
+// compressed data reproduce only while this output does, so a change
+// here is a format change, pinned by TestCompressGolden.
 func Compress(data []byte) []byte {
 	best := compressFixed(data, true)
 	if lit := compressFixed(data, false); len(lit) < len(best) {

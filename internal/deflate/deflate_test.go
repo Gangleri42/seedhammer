@@ -2,6 +2,7 @@ package deflate
 
 import (
 	"bytes"
+	"encoding/hex"
 	"math/rand"
 	"strings"
 	"testing"
@@ -215,4 +216,15 @@ func FuzzDeflate(f *testing.F) {
 			t.Fatal(err)
 		}
 	})
+}
+
+// TestCompressGolden pins the bitstream: derived Shamir shares of
+// compressed data (shamir/SPEC.md, Conformance) reproduce only while
+// Compress emits exactly these bytes for this input.
+func TestCompressGolden(t *testing.T) {
+	const want = "2b4e4d4dc948cccd4d2d5218658e324799a34cb29900"
+	got := hex.EncodeToString(Compress([]byte(strings.Repeat("seedhammer ", 100))))
+	if got != want {
+		t.Fatalf("Compress bitstream changed:\n got %s\nwant %s", got, want)
+	}
 }

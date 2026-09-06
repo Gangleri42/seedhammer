@@ -16,12 +16,20 @@ import (
 
 var update = flag.Bool("update", false, "update testdata/vectors.json")
 
+// The generator profiles of SPEC.md, as the vectors name them.
+const (
+	profileRandomized = "randomized"
+	profileDerived    = "derived"
+)
+
 // shareVector is one split: the data and its file type, the scheme,
-// the exact random stream consumed, the sealed type byte and payload,
-// and the resulting share envelopes with their BBQr series. Feeding
-// rand_hex through a bytes.Reader must reproduce the envelopes and
-// parts exactly, in any implementation. type_byte and payload_hex
-// are recorded because DEFLATE output is not unique: an independent
+// the generator profile, the exact random stream consumed (randomized
+// profile only), the sealed type byte and payload, and the resulting
+// share envelopes with their BBQr series. Feeding rand_hex through a
+// bytes.Reader must reproduce a randomized vector's envelopes and
+// parts exactly, in any implementation; a derived vector reproduces
+// from (T, payload, k, n) alone. type_byte and payload_hex are
+// recorded because DEFLATE output is not unique: an independent
 // generator starts from the sealed payload, and validates the
 // compression by inflating it back to data_hex.
 //
@@ -37,7 +45,8 @@ type shareVector struct {
 	DataHex    string `json:"data_hex"`
 	K          int    `json:"k"`
 	N          int    `json:"n"`
-	RandHex    string `json:"rand_hex"`
+	Profile    string `json:"profile"`
+	RandHex    string `json:"rand_hex,omitempty"`
 	TypeByte   string `json:"type_byte"`
 	PayloadHex string `json:"payload_hex"`
 	Shares     []struct {
@@ -72,34 +81,67 @@ type shareVectorFile struct {
 	Vectors []shareVector `json:"vectors"`
 }
 
+// A vectorSpec is one vector's inputs. seed feeds math/rand for the
+// randomized profile's stream and is unused under the derived one.
+type vectorSpec struct {
+	name    string
+	profile string
+	typ     byte
+	data    []byte
+	k, n    int
+	seed    int64
+}
+
 // specs are the vector inputs, regenerated with -update. The random
 // streams come from math/rand at generation time and are frozen into
 // the vectors; their provenance does not matter, only that they are
-// recorded.
-func specs(t *testing.T) []struct {
-	name string
-	typ  byte
-	data []byte
-	k, n int
-	seed int64
-} {
-	return []struct {
-		name string
-		typ  byte
-		data []byte
-		k, n int
-		seed int64
-	}{
-		{"mnemonic-2-of-4", bbqr.TypeText, []byte("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"), 2, 4, 101},
-		{"descriptor-3-of-5", bbqr.TypeText, []byte(descriptorText), 3, 5, 102},
-		{"binary-2-of-2", bbqr.TypeBinary, []byte{0x42}, 2, 2, 103},
-		{"compressible-2-of-3", bbqr.TypeText, bytes.Repeat([]byte("seedhammer "), 100), 2, 3, 104},
-		{"random-16-of-16", bbqr.TypeBinary, rngBytes(t, 64), 16, 16, 105},
-		{"descriptor-cbor-2-of-3", bbqr.TypeCBOR, mustHex(t, descriptorCBORHex), 2, 3, 106},
+// recorded. Derived vectors reuse randomized inputs, so the two
+// profiles are pinned side by side on the same data.
+func specs(t *testing.T) []vectorSpec {
+	mnemonic := []byte("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
+	compressible := bytes.Repeat([]byte("seedhammer "), 100)
+	descriptorCBOR := mustHex(t, descriptorCBORHex)
+	return []vectorSpec{
+		{"mnemonic-2-of-4", profileRandomized, bbqr.TypeText, mnemonic, 2, 4, 101},
+		{"descriptor-3-of-5", profileRandomized, bbqr.TypeText, []byte(descriptorText), 3, 5, 102},
+		{"binary-2-of-2", profileRandomized, bbqr.TypeBinary, []byte{0x42}, 2, 2, 103},
+		{"compressible-2-of-3", profileRandomized, bbqr.TypeText, compressible, 2, 3, 104},
+		{"random-16-of-16", profileRandomized, bbqr.TypeBinary, rngBytes(t, 64), 16, 16, 105},
+		{"descriptor-cbor-2-of-3", profileRandomized, bbqr.TypeCBOR, descriptorCBOR, 2, 3, 106},
 		// 2709-byte envelopes exceed one QR at any version, so this
 		// vector pins the part sizing: two parts per share.
-		{"random-2700-2-of-2", bbqr.TypeBinary, rngBytes(t, 2700), 2, 2, 107},
+		{"random-2700-2-of-2", profileRandomized, bbqr.TypeBinary, rngBytes(t, 2700), 2, 2, 107},
+		{"mnemonic-2-of-4-derived", profileDerived, bbqr.TypeText, mnemonic, 2, 4, 0},
+		{"descriptor-cbor-2-of-3-derived", profileDerived, bbqr.TypeCBOR, descriptorCBOR, 2, 3, 0},
+		{"compressible-2-of-3-derived", profileDerived, bbqr.TypeText, compressible, 2, 3, 0},
+		// The same data and threshold at a larger n: its first three
+		// shares equal the 2-of-3 set's, pinning the prefix property
+		// of the derived profile on frozen bytes.
+		{"descriptor-cbor-2-of-5-derived", profileDerived, bbqr.TypeCBOR, descriptorCBOR, 2, 5, 0},
 	}
+}
+
+// splitSpec splits one vector's inputs under its profile, recording the
+// random stream a randomized split consumed.
+func splitSpec(t *testing.T, spec vectorSpec) ([]bbqr.Series, string) {
+	t.Helper()
+	switch spec.profile {
+	case profileRandomized:
+		r := &countingReader{r: rand.New(rand.NewSource(spec.seed))}
+		series, err := SplitData(spec.typ, spec.data, spec.k, spec.n, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return series, hex.EncodeToString(r.buf.Bytes())
+	case profileDerived:
+		series, err := SplitDataDerived(spec.typ, spec.data, spec.k, spec.n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return series, ""
+	}
+	t.Fatalf("%s: unknown profile %q", spec.name, spec.profile)
+	return nil, ""
 }
 
 func mustHex(t *testing.T, s string) []byte {
@@ -155,18 +197,15 @@ func TestVectors(t *testing.T) {
 	if *update {
 		var vf shareVectorFile
 		for _, spec := range specs(t) {
-			r := &countingReader{r: rand.New(rand.NewSource(spec.seed))}
-			series, err := SplitData(spec.typ, spec.data, spec.k, spec.n, r)
-			if err != nil {
-				t.Fatal(err)
-			}
+			series, randHex := splitSpec(t, spec)
 			v := shareVector{
 				Name:     spec.name,
 				FileType: string(spec.typ),
 				DataHex:  hex.EncodeToString(spec.data),
 				K:        spec.k,
 				N:        spec.n,
-				RandHex:  hex.EncodeToString(r.buf.Bytes()),
+				Profile:  spec.profile,
+				RandHex:  randHex,
 			}
 			var envelopes [][]byte
 			for _, s := range series {
@@ -208,15 +247,34 @@ func TestVectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			randStream, err := hex.DecodeString(v.RandHex)
-			if err != nil {
-				t.Fatal(err)
-			}
 
-			// Exact reproduction from the recorded rand stream.
-			series, err := SplitData(v.FileType[0], data, v.K, v.N, bytes.NewReader(randStream))
-			if err != nil {
-				t.Fatal(err)
+			// Exact reproduction: from the recorded rand stream under
+			// the randomized profile, from the inputs alone under the
+			// derived one.
+			var series []bbqr.Series
+			switch v.Profile {
+			case profileRandomized:
+				randStream, err := hex.DecodeString(v.RandHex)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(randStream) == 0 {
+					t.Fatal("randomized vector records no rand stream")
+				}
+				series, err = SplitData(v.FileType[0], data, v.K, v.N, bytes.NewReader(randStream))
+				if err != nil {
+					t.Fatal(err)
+				}
+			case profileDerived:
+				if v.RandHex != "" {
+					t.Fatal("derived vector records a rand stream")
+				}
+				series, err = SplitDataDerived(v.FileType[0], data, v.K, v.N)
+				if err != nil {
+					t.Fatal(err)
+				}
+			default:
+				t.Fatalf("unknown profile %q", v.Profile)
 			}
 			if len(series) != len(v.Shares) {
 				t.Fatalf("got %d shares, want %d", len(series), len(v.Shares))
@@ -315,6 +373,30 @@ func TestVectors(t *testing.T) {
 			}
 		})
 	}
+
+	// A derived set issued at a larger n extends the smaller one share
+	// for share (SPEC.md, section 3a): every pair of derived vectors
+	// that differ in n alone agrees on the shorter one's shares.
+	t.Run("derived-prefix", func(t *testing.T) {
+		pairs := 0
+		for _, short := range vf.Vectors {
+			for _, long := range vf.Vectors {
+				if short.Profile != profileDerived || long.Profile != profileDerived || short.N >= long.N ||
+					short.FileType != long.FileType || short.DataHex != long.DataHex || short.K != long.K {
+					continue
+				}
+				pairs++
+				for i, sh := range short.Shares {
+					if sh.EnvelopeHex != long.Shares[i].EnvelopeHex || !equalStrings(sh.Parts, long.Shares[i].Parts) {
+						t.Fatalf("%s share %d differs from %s share %d", short.Name, i+1, long.Name, i+1)
+					}
+				}
+			}
+		}
+		if pairs == 0 {
+			t.Fatal("no pair of derived vectors differing in n alone")
+		}
+	})
 }
 
 func mustParseTag(t *testing.T, envelopeHex string) uint16 {

@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	qr "github.com/seedhammer/kortschak-qr"
@@ -233,6 +234,10 @@ func cmdCombine(stdin io.Reader, stdout, stderr io.Writer, args []string) error 
 		}
 	}
 	rec, err := s.Recover()
+	if errors.Is(err, shamir.ErrAmbiguous) {
+		have, _ := s.Progress()
+		return fmt.Errorf("cannot tell which shares are corrupt: more than one reading of the %d shares verifies with equal support; add another share", have)
+	}
 	if err != nil {
 		return err
 	}
@@ -253,10 +258,23 @@ func cmdCombine(stdin io.Reader, stdout, stderr io.Writer, args []string) error 
 		return err
 	}
 	fmt.Fprintf(stderr, "recovered %d bytes, type %c\n", len(rec.Data), rec.FileType)
-	if rec.Corrupt != 0 {
-		fmt.Fprintf(stderr, "warning: share %d is corrupt; recovered from the others\n", rec.Corrupt)
+	if len(rec.Corrupt) > 0 {
+		fmt.Fprintf(stderr, "warning: %s; recovered from the others\n", corruptWarning(rec.Corrupt))
 	}
 	return nil
+}
+
+// corruptWarning names every corrupt share index, in the singular for
+// one: "share 4 is corrupt", "shares 1, 4 are corrupt".
+func corruptWarning(idx []int) string {
+	list := make([]string, len(idx))
+	for i, x := range idx {
+		list[i] = strconv.Itoa(x)
+	}
+	if len(idx) == 1 {
+		return "share " + list[0] + " is corrupt"
+	}
+	return "shares " + strings.Join(list, ", ") + " are corrupt"
 }
 
 // readInput reads all data from the named file, or stdin with no file.

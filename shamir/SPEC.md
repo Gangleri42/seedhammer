@@ -157,11 +157,58 @@ Verify the digest, then, if bit 7 of `T` is set, inflate the payload
 under a size cap. The digest covers the compressed payload, so only
 verified content is ever inflated.
 
-With more than k shares held and a failed digest, exclude each member
-of the failed combination in turn for a spare and retry: at most k
-further attempts. One corrupt share among spares is thereby survived,
-and its index is known and should be reported, so the holder learns
-which plate to re-make instead of only that recovery failed.
+With more than k shares held, a corrupt share anywhere in the set is
+survived whenever enough clean shares remain, and every corrupt share
+is named, so the holder learns which plates to re-make while the
+quorum is present instead of only that recovery succeeded. The digest
+alone does not settle which shares those are: it vouches for the
+polynomial's value at x=0 only, and two corrupt shares whose errors
+cancel there (per byte, λ_i·e_i ⊕ λ_j·e_j = 0) verify with a wrong
+polynomial that the clean spares disagree with. Attribute by maximal
+agreement instead:
+
+1. Combine the first k shares and verify the digest. If it verifies,
+   evaluate the polynomial at the x of every other held share and
+   compare all bytes; when every share agrees, the set is clean and
+   recovery is done.
+2. Otherwise enumerate every k-subset of the held shares and keep the
+   ones whose digest verifies. Group them by polynomial: two subsets
+   read the same polynomial when its values at every held x agree,
+   and since k points fix a polynomial of degree below k, a subset
+   lying inside a known polynomial's agreement set reads that
+   polynomial again and can be skipped.
+3. Take the polynomial with the largest number of agreeing held
+   shares. Every held share off it is corrupt: report every such
+   index. Two polynomials tied for the largest agreement are an
+   error, ambiguous attribution, and no data is returned; one more
+   clean share breaks the tie, so receivers keep the set and ask for
+   another share, as they do when no subset verifies at all.
+
+Guarantee: with at most one corrupt share among those held, the
+attribution is exact. With several, it is exact when the clean shares
+outnumber the support of every wrong verifying polynomial (its k
+members plus any share that happens to lie on it). With k+1 shares
+held, two of them corrupt members whose errors cancel, only the wrong
+polynomial verifies and the single clean spare cannot outvote its k
+members: the data is right, the spare is the share named, and the
+evidence supports no other reading. Identical errors on two shares
+produce a wrong verifying polynomial whenever some combination weighs
+the two equally at x=0; for k = 3 that is the combination completed
+by the share whose index is the XOR of theirs, so a 3-of-5 with the
+same byte wrong on shares 1 and 4 and all five held reads two ways.
+
+The enumeration is bounded: it runs while C(held, k) <= 1024, which
+covers every set of 13 or fewer shares. Above that the reference
+implementation reads one verifying combination: the first k or, when
+that fails, the first k with each member swapped for each spare in
+turn (at most k·(held-k) further attempts), then the disjoint windows
+of k positions after the first (with c corrupt shares one of the first
+c+1 windows is clean whenever held >= (c+1)·k). A reading that at most
+half of the held shares agree with is checked against one combination
+of its dissenters, and the larger agreement wins, equal agreement
+being ambiguous; that attribution is exact for one corrupt share and
+for a cancelling pair outnumbered by the clean shares, and unverified
+beyond.
 
 ## Security
 
@@ -185,7 +232,19 @@ which plate to re-make instead of only that recovery failed.
   separation falls back to the digest.
 - The digest provides integrity against accidents only; section 2
   states the insider-forgery caveat. False accept probability is
-  2^-32 per combination attempt.
+  2^-32 per combination attempt. A recovery makes at most C(held, k)
+  attempts below the enumeration cap of 1024 and 1 + k·(held-k) above
+  it, so under 2^-18 per recovery for any set. The check of the
+  remaining shares against a verified polynomial compares bytes
+  exactly and adds no attempt.
+- The share index byte is outside the digest, which covers k, `T` and
+  the payload only. A share whose index byte is corrupt is named by
+  the index it claims: plate 3 read as index 5 lies off the polynomial
+  at x=5 and is reported as share 5, or, when a share with index 5 is
+  already held, is rejected as a conflicting copy of it (arriving
+  first, it is the genuine share 5 that is rejected instead). The
+  holder should compare the named number against the plates tapped
+  and, on a conflict, tap a different spare.
 - A compressed payload can inflate to many times its share size.
   Receivers bound the decompressed size before use; the reference
   implementation caps it at 1 MiB by default (`Set.Limit`). Memory

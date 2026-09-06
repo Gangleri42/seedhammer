@@ -7,11 +7,18 @@ holds enough seed plates to spend also holds enough steel to reconstruct the
 wallet, with no descriptor plate as a separate single point of loss.
 
 The split is Shamir's secret sharing over a BBQr transport, specified in
-[shamir/SPEC.md](../shamir/SPEC.md): below the quorum the shares reveal
-nothing about the descriptor, mathematically, no matter how many sit in a
-stranger's drawer. What a lost plate does reveal is its engraved pairing
-header: plate number, threshold, cosigner fingerprint, wallet title. That
-names whose wallet the plate belongs to, not what is in it.
+[shamir/SPEC.md](../shamir/SPEC.md), under its derived generator profile
+([section 3a](../shamir/SPEC.md#3a-generator-profiles)): the shares are a
+function of the descriptor and the threshold, with no randomness in them,
+so the same wallet always cuts the same plates. That reproducibility has
+a price. Below the quorum a share yields no descriptor, and fewer than
+the quorum in a stranger's drawer yield none either; what one share does
+allow is verifying a descriptor its holder already has, since a guessed
+descriptor splits to a checkable share. The descriptor's extended public
+keys carry enough entropy that nobody guesses one from outside. A lost
+plate also shows its engraved pairing header: plate number, threshold,
+cosigner fingerprint, wallet title. That names whose wallet the plate
+belongs to and says nothing about what is in it.
 
 ## What you need
 
@@ -78,20 +85,25 @@ wrapped around its code:
    hands over to the engrave screen, which shows the share as it will be
    cut (the header, the wrapped text and the code) with its dimensions and
    duration. Insert the blank (or the cosigner's seed plate, back side up),
-   close the lock, hold the button. SKIP leaves a cosigner without a share:
-   the issued plates still recover at the same threshold, there are simply
-   fewer of them, and the machine warns before finishing a session whose
-   plate count fell below the threshold itself.
+   close the lock, hold the button. SKIP leaves the plate for a later run:
+   the plates cut so far recover at the same threshold once there are
+   enough of them, and a run that stops with some plates cut and others
+   not closes on a Set unfinished screen that counts them and says to
+   split again (step 5).
 4. **Copies.** After each finished plate: NEXT PLATE (or DONE on the last)
    moves on, ANOTHER COPY routes back through the gate to cut the same share
    again. Copies of the same plate are identical and interchangeable.
-5. **One session, one set.** The split draws fresh randomness every time,
-   so only plates cut in the same session combine; the shared session tag
-   in the header is the marker. An aborted set is not resumed, it is
-   re-cut: split again and engrave every plate, and scrap the orphans of
-   the earlier tag. Before any plate is offered, the machine recovers the
-   descriptor from its own freshly cut shares in memory and refuses the
-   session if that fails.
+5. **One wallet, one set.** The split is derived from the descriptor and
+   the threshold, so any run of the same wallet reproduces the same
+   plates under the same #tag; nothing about a set is tied to the run
+   that cut it. An interrupted set is finished by splitting again and
+   skipping the plates already in hand. A lost plate is re-cut alone the
+   same way: split, skip every plate except the missing one. The tag is
+   the set's fingerprint: plates printing a different tag were split from
+   a different descriptor (or at a different threshold) and do not
+   combine with these. Before any plate is offered, the machine recovers
+   the descriptor from its own shares in memory and refuses the split if
+   that fails.
 
 Share plates carry no secrets in their codes, so the middle button's hide
 toggle matters less here than on a seed plate; it is there on every plate
@@ -100,8 +112,8 @@ for the times you would rather the room did not read the screen.
 ## Keep the pairing straight
 
 **Share k belongs to cosigner k.** The header on every plate names its plate
-number, the recovery rule (ANY 2), its cosigner fingerprint, and the split
-session tag (#5C71): plates of one set share one tag. Plate numbers follow
+number, the recovery rule (ANY 2), its cosigner fingerprint, and the set's
+tag (#F2C5): plates of one wallet share one tag. Plate numbers follow
 the machine's canonical key order (keys sorted by their bytes), which can
 differ from the order your wallet listed them in; pair each plate by the
 fingerprint printed in its header. Keep each share with that cosigner's
@@ -121,7 +133,9 @@ usual ways.
   phone NFC app, `write-nfc.py`, or Studio), one plate per tap. The
   progress line counts SHARE 1 OF 2; at the quorum the descriptor
   screen opens as if the wallet had been scanned whole, ready to
-  re-engrave or to build plates. A bad plate inside the quorum keeps
+  re-engrave or to build plates. To replace a lost plate, choose SPLIT
+  again and cut only the missing one: it comes out identical to the
+  plates in hand. A bad plate inside the quorum keeps
   the set open (BAD SHARE, TAP A SPARE), and with the spare tapped the
   machine names the corrupt plate to re-cut before the descriptor
   screen opens. When the plates in hand read two ways (BAD PLATES, TAP
@@ -147,7 +161,10 @@ wrong or damaged plate cannot pass unnoticed.
 
 - The wire format is [specified](../shamir/SPEC.md) and pinned by test
   vectors in this repo: plates cut today remain decodable by tomorrow's
-  firmware, or by anyone implementing the spec.
+  firmware, or by anyone implementing the spec. The derived profile
+  changed nothing on the wire: a set split under the randomized
+  profile recovers the same way and cannot be reproduced, so one of
+  those that loses a plate is re-cut whole.
 - Share codes engrave at level L error correction and the set's one QR scale,
   like the single descriptor plate.
 - The single-plate flow is unchanged and remains the right choice when one

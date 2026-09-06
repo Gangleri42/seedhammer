@@ -32,7 +32,7 @@ type scanner struct {
 	overflow bool
 
 	// Multi-record BBQr assembly: series collects the parts of one
-	// series, shares the share envelopes of one split session, and
+	// series, shares the share envelopes of one set, and
 	// detail is the progress label reported with errScanProgress.
 	series bbqr.Decoder
 	shares shamir.Set

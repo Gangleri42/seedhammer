@@ -311,9 +311,9 @@ func TestMultisigPassphraseWarning(t *testing.T) {
 // be the plates a rescan of its own exported descriptor cuts. The
 // descriptor string carries no title, so the rescan reinstates it the
 // way the flow's operator would; the single-plate variants must then
-// agree byte for byte. Share sessions differ by fresh randomness, so
-// for the split only the partitioning and the pairing headers up to
-// the session tag are comparable.
+// agree byte for byte, and so must the share plates: the split is
+// derived from the canonical descriptor and the threshold, so the
+// parts, the tag and the pairing headers are identical.
 func TestBuiltDescriptorPlateParity(t *testing.T) {
 	built := goldenDescriptor(t)
 	rescanned, err := bip380.Parse(built.Encode())
@@ -345,10 +345,9 @@ func TestBuiltDescriptorPlateParity(t *testing.T) {
 		}
 	}
 
-	// The split sessions differ by fresh randomness, so the share
-	// bytes and session tags are not comparable; what must agree is
-	// the partitioning: the CBOR input, the fit cell and the plate
-	// shapes.
+	// The split is derived from the CBOR input, so everything on the
+	// share plates must agree: the fit cell, the tag, the parts and
+	// the composed paragraphs.
 	if got, want := urtypes.EncodeDescriptor(built), urtypes.EncodeDescriptor(rescanned); !bytes.Equal(got, want) {
 		t.Fatal("descriptor CBOR diverges between built and rescanned")
 	}
@@ -367,7 +366,13 @@ func TestBuiltDescriptorPlateParity(t *testing.T) {
 	if bSP.fontSize != rSP.fontSize || bSP.scale != rSP.scale {
 		t.Fatal("share partitions diverge between built and rescanned")
 	}
-	// Composed the way the plates are, so the pairing mirrors them.
+	if bSP.tag != rSP.tag {
+		t.Errorf("share tags diverge: %04X vs %04X", bSP.tag, rSP.tag)
+	}
+	// Composed the way the plates are, so the pairing mirrors them:
+	// the header (plate number, threshold, fingerprint, title, tag)
+	// and the part text must agree, or a rescan would cut plates
+	// that no longer match the built set.
 	for k := range built.Keys {
 		bTxt, bParts, err := bSP.plateContent(k)
 		if err != nil {
@@ -377,25 +382,17 @@ func TestBuiltDescriptorPlateParity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(bParts) != len(rParts) {
-			t.Fatalf("share %d part counts diverge", k)
-		}
-		for i := range bParts {
-			if len(bParts[i]) != len(rParts[i]) {
-				t.Errorf("share %d part %d lengths diverge", k, i)
-			}
+		if !slices.Equal(bParts, rParts) {
+			t.Errorf("share %d parts diverge", k)
 		}
 		if len(bTxt.Paragraphs) != len(rTxt.Paragraphs) {
 			t.Fatalf("share %d paragraph counts diverge", k)
 		}
-		// The pairing header (plate number, threshold, fingerprint,
-		// title) must agree up to the per-session tag, or a rescan
-		// would cut plates that no longer name their cosigners the
-		// same way.
-		bHead, _, bOK := strings.Cut(bTxt.Paragraphs[0].Text, " #")
-		rHead, _, rOK := strings.Cut(rTxt.Paragraphs[0].Text, " #")
-		if !bOK || !rOK || bHead != rHead {
-			t.Errorf("share %d headers diverge:\n%q\n%q", k, bHead, rHead)
+		for j := range bTxt.Paragraphs {
+			bp, rp := bTxt.Paragraphs[j], rTxt.Paragraphs[j]
+			if bp.Text != rp.Text || bp.QRScale != rp.QRScale {
+				t.Errorf("share %d paragraph %d diverges:\n%q\n%q", k, j, bp.Text, rp.Text)
+			}
 		}
 	}
 }

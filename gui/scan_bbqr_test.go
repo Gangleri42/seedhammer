@@ -491,11 +491,14 @@ func TestCosignerEntryCorruptShares(t *testing.T) {
 	}
 }
 
-// TestScanBBQrShareForeignResets: a share of another split is not a
-// corrupt plate. It drops the held set and starts its own, as before.
+// TestScanBBQrShareForeignResets: a share of another wallet's split
+// is not a corrupt plate. It drops the held set and starts its own,
+// as before. The split is derived from the descriptor, so the foreign
+// set must come from a different wallet; a second split of the same
+// one is the same set.
 func TestScanBBQrShareForeignResets(t *testing.T) {
 	a, _ := sharePlates(t, 3, 5)
-	b, _ := sharePlates(t, 3, 5)
+	b, _ := sharePlates(t, 3, 4)
 	s := new(scanner)
 	for k := range 2 {
 		if _, err := scanPlate(t, s, a[k]); !errors.Is(err, errScanProgress) {

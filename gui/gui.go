@@ -625,14 +625,14 @@ func planDescriptorPlate(ctx *Context, th *Colors, params engrave.Params, plateS
 
 // shareText composes cosigner k's descriptor share plate: a pairing
 // header (plate number, cosigner fingerprint, wallet title, and the
-// split session tag so plates of one session are recognizable), then
+// set's tag so plates of one wallet are recognizable), then
 // every BBQr part of the share as text wrapped around its code. The
 // codes are all-dark stand-ins sized by qr.MinSize; planDescriptorPlate
 // swaps in the real encodes, keeping the fit ladder encode-free like
 // the single-plate path.
 // shareHeader is the pairing line every share plate opens with: plate
 // number, the recovery threshold, cosigner fingerprint, wallet title,
-// and the split session tag so plates of one session are recognizable.
+// and the set's tag so plates of one wallet are recognizable.
 // The threshold is the one fact a drawer of plates must know before
 // scanning anything; it reaches the metal here, not only the envelope.
 func shareHeader(desc *bip380.Descriptor, k int, tag uint16) string {
@@ -748,32 +748,32 @@ func splitDescriptor(desc *bip380.Descriptor) *bip380.Descriptor {
 }
 
 // fitShares splits the canonical descriptor's CBOR encoding
-// (splitDescriptor) into a Shamir threshold-of-cosigners session
-// (one split, so every plate of the run belongs together and every
-// offered variant engraves the same shares) and fits each
-// composition variant the way fitDescriptor fits the single plate:
-// per variant, the ladder cell (QR scale outranking font size, and
-// within a scale the largest font whose pairing header stays on one
-// line) at which EVERY cosigner's share plate fits. The returned
-// variants, in offer order, are the full layout (header, part texts,
-// codes), the pure text plate for camera-less recovery, and the
-// header plus bare codes; a variant that fits no cell is not offered.
-// Plate k is cosigner k of the canonical descriptor, whatever order
-// the scan arrived in.
+// (splitDescriptor) into one Shamir threshold-of-cosigners set under
+// the derived profile of shamir/SPEC.md: the shares are a function
+// of the canonical descriptor and the threshold alone, so every run
+// of the same wallet at the same threshold produces the same plates
+// and the same tag, and a plate skipped or lost is cut again by
+// splitting again. One split serves every offered variant, so they
+// all engrave the same shares. Each composition variant is fitted
+// the way fitDescriptor fits the single plate: per variant, the
+// ladder cell (QR scale outranking font size, and within a scale the
+// largest font whose pairing header stays on one line) at which
+// EVERY cosigner's share plate fits. The returned variants, in offer
+// order, are the full layout (header, part texts, codes), the pure
+// text plate for camera-less recovery, and the header plus bare
+// codes; a variant that fits no cell is not offered. Plate k is
+// cosigner k of the canonical descriptor, whatever order the scan
+// arrived in. No randomness takes part: the descriptor's extended
+// public keys carry the entropy the derived profile requires.
 func fitShares(params engrave.Params, desc *bip380.Descriptor, pump func(done, total int) bool) (labels []string, plans []*splitPlan, err error) {
-	if Rand == nil {
-		// A build problem, not a hardware one: cmd/controller
-		// installs the source at startup.
-		return nil, nil, errNoRNG
-	}
 	canon := splitDescriptor(desc)
 	data := urtypes.EncodeDescriptor(canon)
 	n := len(canon.Keys)
-	shares, err := shamir.SplitData(bbqr.TypeCBOR, data, canon.Threshold, n, Rand)
+	shares, err := shamir.SplitDataDerived(bbqr.TypeCBOR, data, canon.Threshold, n)
 	if err != nil {
 		return nil, nil, err
 	}
-	// The session tag for the plate headers, from the first share's
+	// The set's tag for the plate headers, from the first share's
 	// envelope.
 	_, payload, err := bbqr.Join(shares[0].Parts)
 	if err != nil {
@@ -805,8 +805,8 @@ func fitShares(params engrave.Params, desc *bip380.Descriptor, pump func(done, t
 		}
 	}
 	// The widest pairing header of the set: the font preference below
-	// keeps it on one line where any ladder font can, so the session
-	// tag never breaks across lines.
+	// keeps it on one line where any ladder font can, so the tag
+	// never breaks across lines.
 	headerLen := 0
 	for k := range n {
 		headerLen = max(headerLen, len(shareHeader(canon, k, sh0.Tag)))
@@ -838,7 +838,7 @@ func fitShares(params engrave.Params, desc *bip380.Descriptor, pump func(done, t
 				if attempts++; pump != nil && !pump(attempts, total) {
 					return nil, nil, errPlanCanceled
 				}
-				// All shares of one session carry identical part
+				// All shares of one set carry identical part
 				// lengths, so their plates differ only in the pairing
 				// header. Fit-check the widest plate of the cell, not
 				// all n: the layout walk is the expensive step and it
@@ -2750,17 +2750,18 @@ func descriptorFlow(ctx *Context, th *Colors, desc *bip380.Descriptor) {
 }
 
 // splitEngraveFlow cuts the descriptor backup as one plate per
-// cosigner. Every plate opens on an insert prompt — the physical
-// pause to load a blank, with SKIP to leave that cosigner without a
-// share (shares of one session never combine with another's, so
-// there is no earlier run to fill in from), and closes on the
+// cosigner. Every plate opens on an insert prompt, the physical
+// pause to load a blank, with SKIP to leave that plate for a later
+// run (the shares are derived from the descriptor, so splitting the
+// same wallet again offers the same plate), and closes on the
 // another-copy prompt, so extra duplicates of a plate cost one
 // choice instead of a rescan. Plates plan just in time, one layout
 // and one code held at a time; a copy re-engraves the planned plate
 // without replanning. It reports whether the operator finished the
-// set; false unwinds to the descriptor screen. Every exit passes the
-// set-completeness warning, back-outs included: cut steel below the
-// threshold is scrap, and a partial set invites mixing sessions.
+// set; false unwinds to the descriptor screen. Every exit that
+// leaves the set unfinished passes the same informational screen,
+// back-outs included, so the operator knows how many plates remain
+// and that another split completes the set.
 func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitPlan) bool {
 	params := ctx.Platform.EngraverParams()
 	desc := ds.Descriptor
@@ -2774,22 +2775,22 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 	var view *CurvesScreen
 	planned := false
 	engraved := 0
-	// warn tells the operator about a set that cannot serve as cut:
-	// below the threshold nothing recovers, and above it but short of
-	// n, the missing plates cannot come from another session. Full
-	// copies each stand alone, so only the share path warns.
-	warn := func() {
+	// unfinished tells the operator how far the set got and how to
+	// finish it: split the same wallet again and the remaining plates
+	// come out identical. Below the threshold the lead also says the
+	// plates in hand cannot recover yet. Full copies each stand alone,
+	// so only the share path reports.
+	unfinished := func() {
 		if sp.copies || engraved == 0 || engraved == n {
 			return
 		}
 		w := &ChoiceScreen{
-			Title:   "Partial set",
-			Lead:    fmt.Sprintf("%d of %d plates cut. Plates from another session will not combine with these.", engraved, n),
+			Title:   "Set unfinished",
+			Lead:    fmt.Sprintf("%d of %d plates cut. Split this wallet again to cut the rest: the same plates come out.", engraved, n),
 			Choices: []string{"OK"},
 		}
 		if engraved < desc.Threshold {
-			w.Title = "Set incomplete"
-			w.Lead = fmt.Sprintf("%d plates cut; recovery needs %d. Split again and cut a full set.", engraved, desc.Threshold)
+			w.Lead = fmt.Sprintf("%d of %d plates cut; recovery needs %d. Split again: the same plates come out.", engraved, n, desc.Threshold)
 		}
 		w.Choose(ctx, th)
 	}
@@ -2818,7 +2819,12 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 			}
 			g, ok := gate.Choose(ctx, th)
 			if !ok {
-				warn()
+				// The gate follows ANOTHER COPY too, with this
+				// plate already cut once.
+				if cut {
+					engraved++
+				}
+				unfinished()
 				return false
 			}
 			if g == 1 {
@@ -2834,6 +2840,7 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 						continue
 					}
 					showError(ctx, th, err, ds.Draw)
+					unfinished()
 					return false
 				}
 				planned = true
@@ -2856,7 +2863,7 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 				if cut {
 					engraved++
 				}
-				warn()
+				unfinished()
 				return false
 			}
 			if c == 1 {
@@ -2868,7 +2875,7 @@ func splitEngraveFlow(ctx *Context, th *Colors, ds *DescriptorScreen, sp *splitP
 			engraved++
 		}
 	}
-	warn()
+	unfinished()
 	return true
 }
 
@@ -3454,7 +3461,7 @@ func confirmScreen(ctx *Context, th *Colors, draw func(*Context, *Colors, image.
 
 // splitPlan carries the operator's choice to cut the descriptor
 // backup as one plate per cosigner out of the descriptor confirm:
-// one Shamir split session of the descriptor's CBOR encoding plus the
+// one derived Shamir split of the descriptor's CBOR encoding plus the
 // partition cell, or the chosen single-plate variant when every
 // cosigner receives a full copy instead.
 type splitPlan struct {
@@ -3462,9 +3469,9 @@ type splitPlan struct {
 	// (splitDescriptor): plate k pairs with desc.Keys[k], whose
 	// position can differ from the scanned order. Unset for copies.
 	desc *bip380.Descriptor
-	// shares is the split session: one BBQr series per cosigner, cut
-	// once so every plate of the run belongs together; tag is the
-	// session identifier printed on each plate.
+	// shares is the derived split: one BBQr series per cosigner, the
+	// same on every run of this wallet at this threshold; tag is the
+	// set's fingerprint printed on each plate.
 	shares   []bbqr.Series
 	tag      uint16
 	fontSize float32

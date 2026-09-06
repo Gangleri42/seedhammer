@@ -191,15 +191,16 @@ through the machine or a computer
 ([how](howto-multisig-plates.md#recover-into-a-wallet)), a single
 descriptor plate, or the coordinator's own backup.
 
-An aborted plate session is re-cut, not resumed: scan the descriptor
-back in (from a plate QR, the coordinator, or a text record), split
-again, and engrave the whole set. Each split draws fresh randomness, so
-plates of different sessions never combine; the session tag in the
-header tells the sets apart, and partial plates of an earlier tag are
-scrap. One nuance: the descriptor string itself carries no title, so a
-rescan from raw text produces share headers without the wallet name;
-scanning the coordinator's export with the name attached (or a
-`{label, descriptor}` record) keeps the headers matching.
+An aborted plate run is finished by splitting again: scan the
+descriptor back in (from a plate QR, the coordinator, or a text
+record), choose the split, and skip the plates already cut. The codes
+are identical on every pass, since the shares are derived from the
+descriptor and the threshold; a different tag in the header means a
+different set, and matching tags are what to expect, not proof. One
+catch: the descriptor string itself carries
+no title, so a rescan from raw text produces share headers without the
+wallet name; scanning the coordinator's export with the name attached
+(or a `{label, descriptor}` record) keeps the headers matching.
 
 Seeds live only inside one run of the flow. Backing out discards them
 after a held warning, and finished or abandoned, the machine forgets the

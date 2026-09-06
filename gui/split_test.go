@@ -91,9 +91,9 @@ func testFitSharesVariant(t *testing.T, threshold, nkeys, parts int, desc *bip38
 				t.Errorf("%d-of-%d share %d: header %q missing from %.40q",
 					threshold, nkeys, k, head, txt.Paragraphs[0].Text)
 			}
-			// The session tag marks the plate's split session.
+			// The tag marks the set the plate belongs to.
 			if !strings.Contains(txt.Paragraphs[0].Text, fmt.Sprintf("#%04X", sp.tag)) {
-				t.Errorf("%d-of-%d share %d: session tag missing from %.40q",
+				t.Errorf("%d-of-%d share %d: tag missing from %.40q",
 					threshold, nkeys, k, txt.Paragraphs[0].Text)
 			}
 			// The fit verdict must agree with the planner: the plate
@@ -312,8 +312,11 @@ func TestSplitInputCanonical(t *testing.T) {
 
 	// The plate headers of every form name the same cosigner at the
 	// same plate number (the swapped form's plates are not swapped),
-	// and the bytes the split sealed are the canonical CBOR: the
-	// plates' own quorum recovers them.
+	// the bytes the split sealed are the canonical CBOR (the plates'
+	// own quorum recovers them), and every form cuts the same plates:
+	// the split is derived from the canonical CBOR, so the parts and
+	// the tag are identical across the four spellings.
+	var first *splitPlan
 	for _, f := range forms {
 		desc, err := bip380.Parse(f.text)
 		if err != nil {
@@ -324,6 +327,18 @@ func TestSplitInputCanonical(t *testing.T) {
 			t.Fatalf("%s: %v", f.name, err)
 		}
 		sp := plans[slices.Index(labels, "QR ONLY")]
+		if first == nil {
+			first = sp
+		} else {
+			if sp.tag != first.tag {
+				t.Errorf("%s: tag %04X, the %s form's is %04X", f.name, sp.tag, forms[0].name, first.tag)
+			}
+			for k := range canon.Keys {
+				if !slices.Equal(sp.shares[k].Parts, first.shares[k].Parts) {
+					t.Errorf("%s: plate %d parts differ from the %s form's", f.name, k+1, forms[0].name)
+				}
+			}
+		}
 		var set shamir.Set
 		for k := range canon.Keys {
 			txt, _, err := sp.plateContent(k)
@@ -349,6 +364,59 @@ func TestSplitInputCanonical(t *testing.T) {
 		}
 		if !bytes.Equal(rec.Data, want) || len(rec.Corrupt) != 0 {
 			t.Errorf("%s: the split sealed %d bytes that differ from the canonical CBOR (corrupt %v)", f.name, len(rec.Data), rec.Corrupt)
+		}
+	}
+}
+
+// TestSplitReproducible: the split is derived from the canonical
+// descriptor and the threshold, so two runs of the same wallet cut
+// identical plates under the same tag, and the split draws no
+// randomness at all: gui.Rand is an exhausted reader for the
+// duration, which fails any read.
+func TestSplitReproducible(t *testing.T) {
+	oldRand := Rand
+	Rand = bytes.NewReader(nil)
+	defer func() { Rand = oldRand }()
+	for _, kn := range [][2]int{{2, 2}, {2, 3}, {3, 5}} {
+		desc := testMultisig(t, kn[0], kn[1])
+		labels, first, err := fitShares(engraverParams, desc, nil)
+		if err != nil {
+			t.Fatalf("%d-of-%d: %v", kn[0], kn[1], err)
+		}
+		again, second, err := fitShares(engraverParams, desc, nil)
+		if err != nil {
+			t.Fatalf("%d-of-%d, second run: %v", kn[0], kn[1], err)
+		}
+		if !slices.Equal(labels, again) {
+			t.Fatalf("%d-of-%d: variants %v, then %v", kn[0], kn[1], labels, again)
+		}
+		if len(first) == 0 {
+			t.Fatalf("%d-of-%d: no variant offered", kn[0], kn[1])
+		}
+		for vi := range first {
+			a, b := first[vi], second[vi]
+			if a.tag != b.tag {
+				t.Errorf("%d-of-%d %s: tag %04X, then %04X", kn[0], kn[1], labels[vi], a.tag, b.tag)
+			}
+			if a.fontSize != b.fontSize || a.scale != b.scale {
+				t.Errorf("%d-of-%d %s: fit cell differs between runs", kn[0], kn[1], labels[vi])
+			}
+			for k := range kn[1] {
+				if !slices.Equal(a.shares[k].Parts, b.shares[k].Parts) {
+					t.Errorf("%d-of-%d %s: plate %d parts differ between runs", kn[0], kn[1], labels[vi], k+1)
+				}
+				aTxt, aQR, err := a.plateContent(k)
+				if err != nil {
+					t.Fatal(err)
+				}
+				bTxt, bQR, err := b.plateContent(k)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !slices.Equal(aQR, bQR) || !slices.Equal(splitParagraphTexts(aTxt), splitParagraphTexts(bTxt)) {
+					t.Errorf("%d-of-%d %s: plate %d composes differently between runs", kn[0], kn[1], labels[vi], k+1)
+				}
+			}
 		}
 	}
 }
@@ -462,9 +530,9 @@ func splitFlowHarness(t *testing.T, desc *bip380.Descriptor, script func(ctx *Co
 
 // TestSplitDescriptorFlow cuts a 2-of-2 as share plates: plate one
 // twice (the another-copy prompt routes back through the insert
-// gate), then skips plate two. Shares of one session never combine
-// with another's, so one cut plate of a 2-of-2 is unrecoverable
-// steel: the flow must end on the incomplete-set warning.
+// gate), then skips plate two. One of two needed plates is cut, so
+// the flow must end on the set-unfinished screen, which says that
+// splitting again cuts the missing plate.
 func TestSplitDescriptorFlow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		splitFlowHarness(t, testMultisig(t, 2, 2), func(ctx *Context, await func(string) string, engrave func()) {
@@ -494,14 +562,50 @@ func TestSplitDescriptorFlow(t *testing.T) {
 			engrave()
 			await("NEXT PLATE")
 			click(&ctx.Router, Button3)
-			// Plate 2: skip. One of two needed plates cut: the warning
-			// gates the way out.
+			// Plate 2: skip. One of two needed plates cut: the
+			// set-unfinished screen gates the way out.
 			await("Plate 2 of 2")
 			click(&ctx.Router, Down)
 			await("SKIP")
 			click(&ctx.Router, Button3)
-			await("Set incomplete")
+			await("Set unfinished")
+			await("1 of 2 plates cut; recovery needs 2")
 			click(&ctx.Router, Button3)
+		})
+	})
+}
+
+// TestSplitBackOutAfterCopy backs out at the insert gate that follows
+// ANOTHER COPY: the plate already cut counts, so the unfinished-set
+// screen reports one plate cut of the two the recovery needs.
+func TestSplitBackOutAfterCopy(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		splitFlowHarness(t, testMultisig(t, 2, 2), func(ctx *Context, await func(string) string, engrave func()) {
+			await("Engrave Descriptor")
+			click(&ctx.Router, Button3)
+			await("SPLIT: 2 PLATES")
+			click(&ctx.Router, Down)
+			await("Any 2 of 2 plates recover")
+			click(&ctx.Router, Button3)
+			await("Choose engraving")
+			click(&ctx.Router, Button3)
+			await("Plate 1 of 2")
+			click(&ctx.Router, Button3)
+			engrave()
+			await("ANOTHER COPY")
+			click(&ctx.Router, Down)
+			await("NEXT PLATE")
+			click(&ctx.Router, Button3)
+			// Back at the gate for the copy: leave.
+			await("Plate 1 of 2")
+			click(&ctx.Router, Button1)
+			await("Set unfinished")
+			await("1 of 2 plates cut; recovery needs 2")
+			click(&ctx.Router, Button3)
+			// The back-out unwinds to the descriptor screen; leave it
+			// so the flow completes.
+			await("Engrave Descriptor")
+			click(&ctx.Router, Button1)
 		})
 	})
 }
@@ -536,8 +640,8 @@ func TestCopiesDescriptorFlow(t *testing.T) {
 }
 
 // TestSplitPartialSetFlow cuts two plates of a 2-of-3 and skips the
-// third: the set recovers, but its missing plate can never come from
-// another session, and the flow must say so before finishing.
+// third: the set recovers as cut, and the flow still reports the
+// plate left for a later run before finishing.
 func TestSplitPartialSetFlow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		splitFlowHarness(t, testMultisig(t, 2, 3), func(ctx *Context, await func(string) string, engrave func()) {
@@ -560,15 +664,16 @@ func TestSplitPartialSetFlow(t *testing.T) {
 			click(&ctx.Router, Down)
 			await("SKIP")
 			click(&ctx.Router, Button3)
-			await("Partial set")
+			await("Set unfinished")
+			await("2 of 3 plates cut. Split this wallet again to cut the rest")
 			click(&ctx.Router, Button3)
 		})
 	})
 }
 
 // TestShareHeaderOneLine: within a scale the ladder prefers the
-// largest font whose pairing header stays on one line, so the session
-// tag never breaks across lines; an absurd title falls back to
+// largest font whose pairing header stays on one line, so the tag
+// never breaks across lines; an absurd title falls back to
 // wrapping rather than failing.
 func TestShareHeaderOneLine(t *testing.T) {
 	for _, title := range []string{"", "BENCH VAULT 3OF7"} {

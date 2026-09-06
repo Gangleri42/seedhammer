@@ -2,9 +2,18 @@
 // a BBQr transport for the shares: any data is compressed, sealed with
 // its BBQr file type and an integrity digest, split into a threshold
 // number of shares, and each share is carried by its own type M BBQr
-// series. Fewer shares than the threshold reveal nothing about the
-// data beyond its sealed length, in the information-theoretic sense;
-// see SPEC.md for the format and the security argument.
+// series. Two generator profiles produce the same wire format and the
+// same receiver handles both. Under the randomized profile
+// (SplitData), the polynomial coefficients come from a cryptographic
+// random source and fewer shares than the threshold reveal nothing
+// about the data beyond its sealed length, in the
+// information-theoretic sense. Under the derived profile
+// (SplitDataDerived), the whole set is a function of the threshold and
+// the sealed content, so the same data splits to the same shares on
+// every generator that seals the same bytes; privacy is then
+// computational, and the
+// profile is for data whose entropy defeats guessing, such as a wallet
+// descriptor. See SPEC.md for the format and the security argument.
 //
 // [BBQr]: https://github.com/coinkite/BBQr
 package shamir
@@ -19,9 +28,9 @@ import (
 	"io"
 )
 
-// Split splits secret into n shares, any k of which recover it. The
-// shares are the raw (x, y) form: one index byte followed by one value
-// byte per secret byte.
+// Split splits secret into n shares, any k of which recover it, under
+// the randomized profile. The shares are the raw (x, y) form: one
+// index byte followed by one value byte per secret byte.
 //
 // For each secret byte s, Split samples a random polynomial
 // p(X) = s + c1·X + ... + c[k-1]·X^(k-1) over GF(256) and evaluates it
@@ -41,24 +50,31 @@ func Split(secret []byte, k, n int, rand io.Reader) ([][]byte, error) {
 	if k < 1 || n > 255 || k > n {
 		return nil, fmt.Errorf("shamir: invalid threshold %d of %d", k, n)
 	}
+	return split(secret, k, n, newHedge(secret, rand))
+}
+
+// split is the core of both profiles. For each secret byte it reads
+// the k-1 higher coefficients from coeffs, in ascending degree, and
+// evaluates the polynomial at x = 1..n. The callers validate the
+// arguments.
+func split(secret []byte, k, n int, coeffs io.Reader) ([][]byte, error) {
 	shares := make([][]byte, n)
 	for i := range shares {
 		shares[i] = make([]byte, 1+len(secret))
 		shares[i][0] = byte(i + 1)
 	}
-	coeffs := make([]byte, k)
-	hedged := newHedge(secret, rand)
+	poly := make([]byte, k)
 	for j, s := range secret {
-		coeffs[0] = s
-		if _, err := io.ReadFull(hedged, coeffs[1:]); err != nil {
-			return nil, fmt.Errorf("shamir: reading random coefficients: %w", err)
+		poly[0] = s
+		if _, err := io.ReadFull(coeffs, poly[1:]); err != nil {
+			return nil, fmt.Errorf("shamir: reading coefficients: %w", err)
 		}
 		for _, share := range shares {
 			// Horner evaluation at the share's x.
 			x := share[0]
-			y := coeffs[k-1]
+			y := poly[k-1]
 			for m := k - 2; m >= 0; m-- {
-				y = mul(y, x) ^ coeffs[m]
+				y = mul(y, x) ^ poly[m]
 			}
 			share[1+j] = y
 		}
@@ -127,44 +143,71 @@ func interpolate(shares [][]byte, x byte) []byte {
 	return out
 }
 
-// hedge XORs the random stream with an HMAC-SHA256 counter-mode
-// stream keyed by the split secret (SP 800-108 counter mode; the
-// exact derivation is in SPEC.md). With a working random source the
-// XOR stays uniform and independent of the secret; with a failed one
-// the coefficients degrade to the PRF stream, so a share verifies a
-// guessed secret instead of revealing the secret outright.
-type hedge struct {
-	rand  io.Reader
+// prf is an HMAC-SHA256 counter-mode stream (SP 800-108 counter mode;
+// the exact derivations are in SPEC.md): prk = HMAC-SHA256(label,
+// input) and block i = HMAC-SHA256(prk, u64be(i)). Both generator
+// profiles read their coefficients through one. The hedge of the
+// randomized profile (label v0, keyed by the split secret) XORs the
+// stream into the bytes of the random source: with a working source
+// the XOR stays uniform and independent of the secret, and with a
+// failed one the coefficients degrade to the PRF stream, so a share
+// verifies a guessed secret instead of revealing the secret outright.
+// The derived profile (label v1, keyed by the threshold and the sealed
+// content) reads the stream itself, coefficients first and then the
+// tag.
+type prf struct {
+	rand  io.Reader // XORed into the stream; nil reads the stream alone
 	mac   hash.Hash
 	block [sha256.Size]byte
 	n     uint64
 	off   int
 }
 
-func newHedge(secret []byte, rand io.Reader) *hedge {
-	extract := hmac.New(sha256.New, []byte("seedhammer.com/shamir hedge v0"))
-	extract.Write(secret)
-	return &hedge{
+func newPRF(label string, input []byte, rand io.Reader) *prf {
+	extract := hmac.New(sha256.New, []byte(label))
+	extract.Write(input)
+	return &prf{
 		rand: rand,
 		mac:  hmac.New(sha256.New, extract.Sum(nil)),
 		off:  sha256.Size,
 	}
 }
 
-func (h *hedge) Read(p []byte) (int, error) {
-	n, err := h.rand.Read(p)
+// newHedge is the randomized profile's coefficient stream: rand,
+// hedged by the PRF keyed by secret.
+func newHedge(secret []byte, rand io.Reader) *prf {
+	return newPRF("seedhammer.com/shamir hedge v0", secret, rand)
+}
+
+// newDerived is the derived profile's stream, coefficients then tag:
+// the PRF keyed by the threshold byte followed by the sealed content.
+func newDerived(k int, sealed []byte) *prf {
+	input := make([]byte, 0, 1+len(sealed))
+	input = append(input, byte(k))
+	input = append(input, sealed...)
+	return newPRF("seedhammer.com/shamir derived v1", input, nil)
+}
+
+func (s *prf) Read(p []byte) (int, error) {
+	n := len(p)
+	var err error
+	if s.rand != nil {
+		n, err = s.rand.Read(p)
+	} else {
+		clear(p) // XORing into zeros yields the stream itself
+	}
 	for i := range p[:n] {
-		if h.off == len(h.block) {
+		if s.off == len(s.block) {
 			var ctr [8]byte
-			binary.BigEndian.PutUint64(ctr[:], h.n)
-			h.mac.Reset()
-			h.mac.Write(ctr[:])
-			h.mac.Sum(h.block[:0])
-			h.n++
-			h.off = 0
+			binary.BigEndian.PutUint64(ctr[:], s.n)
+			s.mac.Reset()
+			s.mac.Write(ctr[:])
+			s.mac.Sum(s.block[:0])
+			s.n++
+			s.off = 0
 		}
-		p[i] ^= h.block[h.off]
-		h.off++
+		p[i] ^= s.block[s.off]
+		s.off++
 	}
 	return n, err
 }

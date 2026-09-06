@@ -6,7 +6,7 @@
 //	bbqr encode [-type B] [-enc auto|H|2|Z] [-minver N] [-maxver N]
 //	            [-minsplit N] [-maxsplit N] [-png dir] [input]
 //	bbqr decode [-limit N] [parts]
-//	bbqr split -k K -n N [-type B] [-png dir] [input]
+//	bbqr split -k K -n N [-type B] [-derived] [-png dir] [input]
 //	bbqr combine [-limit N] [-descriptor] [parts]
 //
 // Parts are one QR content per line; share series are separated by
@@ -14,6 +14,12 @@
 // recovered data goes to stdout. With -png, each part is also written
 // as a QR image at error correction level L, the alphanumeric mode
 // chosen automatically by the QR library.
+//
+// split uses the randomized generator profile by default, since the
+// command splits arbitrary data; -derived selects the derived profile,
+// whose shares are a function of the data and k and reproduce on any
+// machine, for data whose entropy defeats guessing (a wallet
+// descriptor), never for a mnemonic or a short text.
 package main
 
 import (
@@ -73,12 +79,14 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, `usage:
   bbqr encode [-type B] [-enc auto|H|2|Z] [-minver N] [-maxver N] [-minsplit N] [-maxsplit N] [-png dir] [input]
   bbqr decode [-limit N] [parts]
-  bbqr split -k K -n N [-type B] [-png dir] [input]
+  bbqr split -k K -n N [-type B] [-derived] [-png dir] [input]
   bbqr combine [-limit N] [-descriptor] [parts]
 
 parts are one QR content per line; share series are separated by a
 blank line. data is read from stdin or the input file; recovered data
-is written to stdout.`)
+is written to stdout. split -derived makes shares reproducible from
+the data and k; use it for high-entropy data such as a descriptor,
+never for a mnemonic or a short text.`)
 }
 
 func cmdEncode(stdin io.Reader, stdout io.Writer, args []string) error {
@@ -170,6 +178,7 @@ func cmdSplit(stdin io.Reader, stdout io.Writer, args []string) error {
 	k := fs.Int("k", 0, "threshold: shares needed to recover")
 	n := fs.Int("n", 0, "total shares to issue")
 	typ := fs.String("type", "B", "file type of the split data: P, T, J, C, U, B or a name: psbt, txn, json, cbor, text, binary")
+	derived := fs.Bool("derived", false, "derived profile: shares reproducible from the data and k; high-entropy data only")
 	pngDir := fs.String("png", "", "also write one QR PNG per part into this directory")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -188,7 +197,12 @@ func cmdSplit(stdin io.Reader, stdout io.Writer, args []string) error {
 	if err != nil {
 		return err
 	}
-	series, err := shamir.SplitData(t, data, *k, *n, rand.Reader)
+	var series []bbqr.Series
+	if *derived {
+		series, err = shamir.SplitDataDerived(t, data, *k, *n)
+	} else {
+		series, err = shamir.SplitData(t, data, *k, *n, rand.Reader)
+	}
 	if err != nil {
 		return err
 	}

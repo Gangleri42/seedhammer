@@ -15,7 +15,9 @@ import (
 // A share envelope is the payload of one share's BBQr series (file
 // type M). The wire format is:
 //
-//	tag                2 bytes, random, common to the shares of one split
+//	tag                2 bytes, common to the shares of one split:
+//	                   random under the randomized profile, a
+//	                   fingerprint of (k, sealed) under the derived one
 //	index              1 byte, x coordinate of this share, 1..255
 //	threshold          1 byte, k, at least 2
 //	share data         y values of the sealed content, one byte each
@@ -77,7 +79,7 @@ const attributionCap = 1024
 type Share struct {
 	Threshold int    // k: shares needed to recover
 	Index     int    // x coordinate of this share, 1..255
-	Tag       uint16 // random identifier common to the shares of one split
+	Tag       uint16 // identifier common to the shares of one split
 
 	data []byte // share y values, len == sealedOverhead + payload length
 }
@@ -130,17 +132,21 @@ type Recovered struct {
 }
 
 // SplitData splits data of the given BBQr file type into n shares, any
-// k of which recover it, and encodes each share as its own type M BBQr
-// series in base 32 encoding. The data is DEFLATE-compressed when
-// compression shrinks it, sealed with its type and an integrity
-// digest, and only then split, so shares carry no compressible
-// structure and reveal neither type nor flag below the threshold. rand
-// must be a cryptographic random source; on the device it is the TRNG.
+// k of which recover it, under the randomized generator profile of
+// SPEC.md, and encodes each share as its own type M BBQr series in
+// base 32 encoding. The data is DEFLATE-compressed when compression
+// shrinks it, sealed with its type and an integrity digest, and only
+// then split, so shares carry no compressible structure and reveal
+// neither type nor flag below the threshold. rand must be a
+// cryptographic random source; on the device it is the TRNG. Privacy
+// below the threshold is information-theoretic, so the profile suits
+// data of any entropy; SplitDataDerived is the profile for shares
+// that must be reproducible.
 //
 // rand supplies, in order: the k-1 random polynomial coefficients per
 // sealed byte (see Split), then 2 bytes of share tag. Fixing a rand
-// stream therefore reproduces a split exactly, which is how the test
-// vectors in SPEC.md are defined.
+// stream therefore reproduces a split exactly, which is how the
+// randomized test vectors in SPEC.md are defined.
 //
 // A 1-of-n split is rejected: its shares would be plain copies of the
 // data, which vanilla BBQr series of the data's own type express
@@ -151,6 +157,43 @@ type Recovered struct {
 // every share. Steel is write-once; an encoder defect surfaces here,
 // not on a recovery attempt years later.
 func SplitData(fileType byte, data []byte, k, n int, rand io.Reader) ([]bbqr.Series, error) {
+	return splitData(fileType, data, k, n, func(sealed []byte) (coeffs, tag io.Reader) {
+		return newHedge(sealed, rand), rand
+	})
+}
+
+// SplitDataDerived splits data under the derived generator profile of
+// SPEC.md: the same validation, compression, sealing, envelope, BBQr
+// encoding and self-verification as SplitData, with the polynomial
+// coefficients and the tag drawn from an HMAC-SHA256 stream keyed by
+// the threshold and the sealed content. No random source takes part.
+// The whole set is a function of (k, data): splitting the same data at
+// the same threshold yields identical
+// shares, and a set issued at a larger n extends a smaller one share
+// for share, so a lost share is cut again from the data. The tag is a
+// 16-bit fingerprint of (k, sealed): a re-split whose tag differs from
+// the shares in hand has different sealed content.
+//
+// Privacy below the threshold is computational: every share is a
+// deterministic function of the sealed content, so a holder of one share can
+// verify a guessed data value against it. The profile is for data
+// whose min-entropy defeats guessing, such as a wallet descriptor
+// whose extended public keys each carry a 256-bit chain code. A
+// mnemonic, a short text or a PIN does not qualify and must use
+// SplitData.
+func SplitDataDerived(fileType byte, data []byte, k, n int) ([]bbqr.Series, error) {
+	return splitData(fileType, data, k, n, func(sealed []byte) (coeffs, tag io.Reader) {
+		stream := newDerived(k, sealed)
+		return stream, stream
+	})
+}
+
+// splitData is the core shared by both profiles: validation,
+// compression, sealing, the split, the envelopes and the
+// self-verification. source builds the profile's streams from the
+// sealed content: coeffs yields the k-1 coefficients of each sealed
+// byte in order, then tag yields the 2 tag bytes.
+func splitData(fileType byte, data []byte, k, n int, source func(sealed []byte) (coeffs, tag io.Reader)) ([]bbqr.Series, error) {
 	if fileType < 'A' || fileType > 'Z' {
 		return nil, fmt.Errorf("shamir: invalid file type %q", fileType)
 	}
@@ -168,12 +211,13 @@ func SplitData(fileType byte, data []byte, k, n int, rand io.Reader) ([]bbqr.Ser
 	inner = append(inner, typ)
 	inner = append(inner, payload...)
 	inner = append(inner, digest(k, typ, payload)...)
-	raw, err := Split(inner, k, n, rand)
+	coeffs, tagSource := source(inner)
+	raw, err := split(inner, k, n, coeffs)
 	if err != nil {
 		return nil, err
 	}
 	var tag [2]byte
-	if _, err := io.ReadFull(rand, tag[:]); err != nil {
+	if _, err := io.ReadFull(tagSource, tag[:]); err != nil {
 		return nil, fmt.Errorf("shamir: reading share tag: %w", err)
 	}
 	series := make([]bbqr.Series, n)
@@ -237,7 +281,7 @@ func verifySplit(fileType byte, data []byte, k int, series []bbqr.Series) error 
 	return nil
 }
 
-// Set collects the shares of one split session, in any order, for
+// Set collects the shares of one split, in any order, for
 // recovery. The zero value is ready to use.
 type Set struct {
 	// Limit caps the recovered data size in bytes; zero means
@@ -253,7 +297,7 @@ type Set struct {
 
 // Add consumes one share envelope, the payload of a complete type M
 // BBQr series. Adding an identical share twice is a no-op; shares from
-// other split sessions or with different parameters are rejected.
+// other splits or with different parameters are rejected.
 func (s *Set) Add(payload []byte) error {
 	sh, err := ParseShare(payload)
 	if err != nil {

@@ -3,13 +3,16 @@
 A threshold extension to [BBQr](https://github.com/coinkite/BBQr): any
 data is compressed, sealed with its file type and an integrity digest,
 split into a k-of-n Shamir scheme, and each share is carried by its
-own independent BBQr series of file type `M`. Any set of fewer than k
-shares reveals nothing about the data beyond the metadata listed in
-the Security section (the threshold, a random tag, and the exact
-sealed length), in the information-theoretic sense. BBQr's framing is
-unchanged: transport, encodings and chunking work exactly as for any
-other file type, and the recovered result is an ordinary (file type,
-data) pair that re-enters BBQr dispatch.
+own independent BBQr series of file type `M`. Under the randomized
+generator profile, any set of fewer than k shares reveals nothing
+about the data beyond the metadata listed in the Security section
+(the threshold, the tag, and the exact sealed length), in the
+information-theoretic sense; the derived profile (section 3a) trades
+that guarantee for shares reproducible from the data, for data whose
+entropy defeats guessing. BBQr's framing is unchanged: transport,
+encodings and chunking work exactly as for any other file type, and
+the recovered result is an ordinary (file type, data) pair that
+re-enters BBQr dispatch.
 
 The file type `M`, as in m-of-n, is currently reserved upstream; this
 document is the proposal for its assignment ('S' is out: Coldcard key
@@ -79,22 +82,25 @@ out-of-band check of the result.
 
 ### 3. Split
 
-For each byte `s` of `sealed`, sample a random polynomial over GF(256)
+For each byte `s` of `sealed`, form a polynomial over GF(256)
 (the Rijndael field, polynomial `0x11b`):
 
 ```
 p(X) = s + c1·X + ... + c[k-1]·X^(k-1)
 ```
 
-with `c1..c[k-1]` uniform random bytes, and evaluate it at `x = 1..n`,
+with `c1..c[k-1]` drawn from the profile's coefficient stream in
+ascending degree, `c1` first (section 3a; uniform random bytes under
+the randomized profile), and evaluate it at `x = 1..n`,
 with `2 <= k <= n <= 255`. Share `i` is `p(x_i)` per byte. The point
 x=0 is never issued; it would be the secret itself. A 1-of-n split is
 invalid: its shares would be plain copies, which vanilla BBQr series
 of the data's own type express honestly.
 
-Coefficient bytes are hedged against a failed random source: each byte
-of the random stream is XORed with the matching byte of a PRF stream
-keyed by the sealed content,
+Under the randomized profile (section 3a), coefficient bytes are
+hedged against a failed random source: each byte of the random stream
+is XORed with the matching byte of a PRF stream keyed by the sealed
+content,
 
 ```
 prk       = HMAC-SHA256(key = "seedhammer.com/shamir hedge v0", sealed)
@@ -109,14 +115,57 @@ verifies a guessed secret rather than revealing the secret outright.
 The split consumes the random stream in order: the k-1 coefficients of
 each sealed byte in order, then 2 bytes of share tag, which is not
 hedged (it is public metadata; see Security). Fixing the stream
-reproduces a split exactly; the test vectors record the raw stream,
-before hedging.
+reproduces a split exactly; the randomized test vectors record the
+raw stream, before hedging.
+
+### 3a. Generator profiles
+
+The envelope, the sealed content and the receiver are the same under
+both profiles. A profile is the generator's choice per split and is
+not marked on the wire: a receiver cannot tell, and does not need to
+tell, which profile produced a set.
+
+**Randomized.** The default for data of unknown entropy. Coefficients
+come from a cryptographic random source, hedged as in section 3; the
+tag comes from the raw source. Privacy below the threshold is
+information-theoretic (see Security).
+
+**Derived.** For data whose entropy defeats guessing, such as a wallet
+descriptor carrying extended public keys. No random source is used;
+the whole set is a function of the threshold and the sealed content:
+
+```
+prk    = HMAC-SHA256(key = "seedhammer.com/shamir derived v1", k ‖ sealed)
+stream = HMAC-SHA256(prk, u64be(0)) ‖ HMAC-SHA256(prk, u64be(1)) ‖ ...
+```
+
+(SP 800-108 counter mode; k is one byte.) The stream is consumed
+exactly as the randomized profile consumes its random source: the k-1
+coefficients of each sealed byte in order, `c1` first, then the 2 tag
+bytes. No hedge is applied; the stream already is the PRF. Splitting
+the same
+data at the same threshold yields identical envelopes and parts on
+every generator that produces the same sealed content. The sealed
+content includes the compressor's output, so two generators agree
+when they share the compressor or when the data does not compress;
+the reference compressor is deterministic, and one firmware family
+reproduces its own sets. n is not an input to the stream: a set
+issued at a larger n extends a smaller one, share for share.
+
+Rationale: engraved shares are replaced one at a time over years, and
+a generator that cannot reproduce a set turns every lost plate into a
+full re-cut and every interrupted run into scrap. Derivation trades
+the information-theoretic guarantee for reproducibility, and it is
+offered only where that guarantee was already unreachable in practice:
+a guesser who can enumerate candidate descriptors already holds their
+extended public keys.
 
 ### 4. Envelope and transport
 
 ```
 offset  field       size
-0       tag         2       random, big endian, common to one split
+0       tag         2       big endian, common to one split; random or
+                            derived by profile (section 3a)
 2       index       1       x coordinate of this share, 1..255
 3       threshold   1       k, at least 2
 4       share data  ...     1 + len(payload) + 4 y values of sealed
@@ -215,8 +264,9 @@ beyond.
 
 ## Security
 
-- Privacy below the threshold is information-theoretic, scoped by the
-  public metadata: any k-1 shares are consistent with every value of
+- Privacy below the threshold is information-theoretic under the
+  randomized profile, scoped by the public metadata: any k-1 shares
+  are consistent with every value of
   every sealed byte (Shamir's scheme; see the bijection test in the
   reference implementation). Visible to anyone holding any number of
   shares: k, the split tag, and the exact sealed length. Padding is
@@ -227,12 +277,25 @@ beyond.
   a failed source: privacy degrades from information-theoretic to
   computational instead of collapsing, at the price that a holder of
   one share can then verify a guessed secret.
-- The tag is drawn from the raw source, never hedged and never derived
-  from the data: a data-derived tag would hand any single-share holder
-  a guess-verification oracle, and a hedged one would be a public
-  function of the secret under exactly the failure the hedge exists
-  for. Under a failed source, tags collide across splits and set
-  separation falls back to the digest.
+- Under the randomized profile the tag is drawn from the raw source,
+  never hedged and never derived from the data: a data-derived tag
+  would hand any single-share holder a guess-verification oracle, and
+  a hedged one would be a public function of the secret under exactly
+  the failure the hedge exists for. Under a failed source, tags
+  collide across splits and set separation falls back to the digest.
+- Under the derived profile, privacy is computational: every share and
+  the tag are deterministic functions of (k, sealed), hence of the
+  data and the compressor's output, so a holder of any
+  single share can verify a guessed data value against it. Derived
+  splits are for data whose min-entropy defeats guessing (a
+  descriptor's extended public keys each carry a 256-bit chain code; a
+  short text or a PIN does not qualify). Identical data yields
+  identical shares by design, so unlinkability of two splits of the
+  same data is not a goal. The tag is then a 16-bit fingerprint of
+  (k, sealed): a re-split that prints a different tag than the plates
+  in hand has different sealed content, which is other data, another
+  threshold or another file type; matching tags are what to expect,
+  not proof.
 - The digest provides integrity against accidents only; section 2
   states the insider-forgery caveat. False accept probability is
   2^-32 per combination attempt. A recovery makes at most C(held, k)
@@ -267,27 +330,38 @@ beyond.
 ## Conformance and test vectors
 
 `testdata/vectors.json` lists, per vector: the data (`data_hex`) and
-its file type, k and n, the exact random byte stream consumed
-(`rand_hex`), the sealed type byte `T` as two hex digits
-(`type_byte`, bit 7 set when compressed), the sealed payload
-(`payload_hex`, compressed or not), and the resulting envelopes with
-their BBQr parts.
+its file type, k and n, the generator profile (`profile`, either
+`randomized` or `derived`), the exact random byte stream consumed
+(`rand_hex`, present for randomized vectors only), the sealed type
+byte `T` as two hex digits (`type_byte`, bit 7 set when compressed),
+the sealed payload (`payload_hex`, compressed or not), and the
+resulting envelopes with their BBQr parts.
 
 The payload is recorded because DEFLATE output is not unique: two
 correct compressors emit different bitstreams for the same data, and
 the format accepts any of them within the 1 KiB window rule of
-section 1. The bitstream is an implementation choice, so an
-independent generator starts from the sealed payload, never from the
-data. Compression is validated by the receiver round trip: when
+section 1. For the randomized profile the bitstream is an
+implementation choice, so an independent generator starts from the
+sealed payload, never from the data. For the derived profile the
+compressor is part of the generator: the derived vectors pin the
+reference compressor's output (`internal/deflate` in the reference
+implementation, frozen by its own golden test), and a generator that
+must reproduce a set byte for byte must emit that bitstream or take
+the payload from a conforming generator. Compression is validated by
+the receiver round trip: when
 bit 7 of `T` is set, `inflate(payload)` must equal the data and the
 payload must be shorter than the data; when it is clear, the payload
 is the data.
 
-Generator conformance: from (`T`, payload, k, n, rand stream),
-reproduce the envelopes byte for byte. This deliberately pins the
-hedge and the stream consumption order, both invisible on the wire,
-because vectors are the only way to catch a silently skipped hedge.
-The BBQr parts also pin the reference part sizing. For each QR
+Generator conformance: for a randomized vector, from (`T`, payload,
+k, n, rand stream), reproduce the envelopes byte for byte; for a
+derived vector, from (`T`, payload, k, n) alone. This deliberately
+pins the hedge, the derived stream and the stream consumption order,
+all invisible on the wire, because vectors are the only way to catch
+a silently skipped hedge or a stream keyed on the wrong input. Two
+derived vectors that differ in n alone share their leading envelopes,
+which pins the prefix property of section 3a. The BBQr parts also pin
+the reference part sizing. For each QR
 version from 5 to 40, a part holds the version's alphanumeric
 capacity at error correction level L minus the 8 header characters,
 rounded down to a multiple of 8 characters so that every part decodes
@@ -302,10 +376,10 @@ k-subset of a vector's shares, in any order of shares and parts;
 reject any set below k as incomplete; enforce the parser constraints
 of section 4.
 
-`testdata/check_vectors.py` implements both classes from this
-document and BBQr.md (with the ISO 18004 alphanumeric capacity
-table), standard library only, sharing no code with the Go package;
-the vectors are regenerated by `go test ./shamir -run TestVectors
--update`. Run the checker from the repository root:
+`testdata/check_vectors.py` implements both classes for both profiles
+from this document and BBQr.md (with the ISO 18004 alphanumeric
+capacity table), standard library only, sharing no code with the Go
+package; the vectors are regenerated by `go test ./shamir -run
+TestVectors -update`. Run the checker from the repository root:
 
     python3 shamir/testdata/check_vectors.py

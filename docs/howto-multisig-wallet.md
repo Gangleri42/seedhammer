@@ -148,11 +148,14 @@ changes.
    single point of failure. Each share pairs with its cosigner's seed
    plate by fingerprint (the back of the seed plate is the natural
    spot), exactly as [the split how-to](howto-multisig-plates.md)
-   describes. Each plate opens on its pairing gate and previews its
-   share before the cut:
+   describes. Share plates number cosigners in the machine's canonical
+   key order (keys sorted by their bytes), which can differ from the
+   order they were entered; pair by the fingerprint in the header.
+   Each plate opens on its pairing gate and previews its share before
+   the cut:
 
    ![The share plate's pairing gate](images/msw-18-share-gate.png)
-   ![Cosigner 1's share plate before the cut](images/msw-19-share-plate.png)
+   ![Share plate 1 of 3, paired by its header with cosigner 34B242EC, before the cut](images/msw-19-share-plate.png)
 
    Both endings as engraved, rendered from the same planned strokes
    the machine cuts. The complete descriptor on its single plate, title
@@ -160,10 +163,10 @@ changes.
 
    ![The titled descriptor plate as engraved](images/plate-descriptor.png)
 
-   And cosigner 1's share of the split, the pairing header over the
-   share's code; two more like it complete the set:
+   And share plate 1 of 3, its header pairing it with cosigner
+   34B242EC over the share's code; two more like it complete the set:
 
-   ![Cosigner 1's share plate as engraved](images/plate-share-1of3.png)
+   ![Share plate 1 of 3, paired by its header with cosigner 34B242EC, as engraved](images/plate-share-1of3.png)
 
 ## Passphrases multiply
 

@@ -305,7 +305,10 @@ func shootMultisig(t *testing.T, dir string) {
 	click(&s.ctx.Router, Button3)
 	s.await("Choose engraving")
 	click(&s.ctx.Router, Button3) // TEXT + QR
-	s.await("For cosigner 9A6A2580")
+	s.await("Plate 1 of 3")
+	// Plate 1 is the lowest key by bytes in the manual's fixture
+	// wallet: the pizza seed, cosigner 3 of 3 in the builder.
+	s.await("For cosigner 34B242EC")
 	s.capture("msw-18-share-gate")
 	click(&s.ctx.Router, Button3) // ENGRAVE PLATE
 	s.await("mm")
@@ -661,7 +664,7 @@ func shootPlates(t *testing.T, dir string) {
 	if sLabels[0] != "TEXT + QR" {
 		t.Fatalf("expected TEXT + QR first, got %v", sLabels)
 	}
-	stxt, parts, err := sPlans[0].plateContent(desc, 0)
+	stxt, parts, err := sPlans[0].plateContent(0)
 	if err != nil {
 		t.Fatal(err)
 	}

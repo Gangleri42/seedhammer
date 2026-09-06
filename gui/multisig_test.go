@@ -367,12 +367,13 @@ func TestBuiltDescriptorPlateParity(t *testing.T) {
 	if bSP.fontSize != rSP.fontSize || bSP.scale != rSP.scale {
 		t.Fatal("share partitions diverge between built and rescanned")
 	}
+	// Composed the way the plates are, so the pairing mirrors them.
 	for k := range built.Keys {
-		bTxt, bParts, err := shareText(built, bSP.shares[k].Parts, k, bSP.tag, bSP.fontSize, bSP.scale)
+		bTxt, bParts, err := bSP.plateContent(k)
 		if err != nil {
 			t.Fatal(err)
 		}
-		rTxt, rParts, err := shareText(rescanned, rSP.shares[k].Parts, k, rSP.tag, rSP.fontSize, rSP.scale)
+		rTxt, rParts, err := rSP.plateContent(k)
 		if err != nil {
 			t.Fatal(err)
 		}

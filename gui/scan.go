@@ -37,7 +37,22 @@ type scanner struct {
 	series bbqr.Decoder
 	shares shamir.Set
 	detail string
+	// corrupt belongs to the object the last record delivered: when it
+	// came out of a share set, the share index (the plate number) of
+	// every held share whose bytes disagreed with it, ascending. Nil
+	// for a clean set and for every other object.
+	corrupt []int
 }
+
+// detailCorrupt is the progress label of a complete share set whose
+// digest failed: the quorum is present, one plate is bad, and a spare
+// lets the recovery name it.
+const detailCorrupt = "BAD SHARE, TAP A SPARE"
+
+// detailAmbiguous is the label when the held shares read two ways
+// with equal support: another distinct plate settles it, and n is not
+// on the wire, so the machine cannot know whether one exists.
+const detailAmbiguous = "BAD PLATES, TAP ANOTHER"
 
 const (
 	// scanSeriesLimit caps one decoded BBQr payload and the data
@@ -48,9 +63,11 @@ const (
 	scanSeriesLimit = 16 * 1024
 	scanShareLimit  = 8 * 1024
 	// scanSetLimit caps the bytes a share set may retain in total:
-	// the threshold announced by a share times its envelope size.
-	// Legit sets stay far below it; a hostile threshold byte cannot
-	// make the scanner clone envelopes until the heap dies.
+	// the threshold announced by a share times its envelope size, and
+	// the held count plus one times it while spares join a set kept
+	// past its threshold for a corrupt share. Legit sets stay far
+	// below it; a hostile threshold byte cannot make the scanner
+	// clone envelopes until the heap dies.
 	scanSetLimit = 64 * 1024
 	// maxUnwrapDepth bounds nesting of a BBQr series inside another's
 	// payload.
@@ -69,6 +86,9 @@ func (s *scanner) Scan(r io.Reader) (any, error) {
 	if cap(s.buf) == 0 {
 		s.buf = make([]byte, 32*1024)
 	}
+	// The corrupt verdict belongs to the record this call completes;
+	// a partial read or a failed one carries none.
+	s.corrupt = nil
 	nn, err := r.Read(s.buf[s.n:])
 	s.n += nn
 	s.overflow = s.overflow || s.n == len(s.buf)
@@ -199,17 +219,39 @@ func (s *scanner) scanPayload(typ byte, payload []byte, depth int) (any, error) 
 				return nil, err
 			}
 		}
+		if have, _ := s.shares.Progress(); have*len(payload) > scanSetLimit {
+			// A set kept past its threshold for a corrupt share grows
+			// by one envelope per spare; measured after Add, so a
+			// duplicate tap or a fresh set never trips it. One that
+			// cannot take another cannot recover either, so it goes.
+			s.shares = shamir.Set{}
+			return nil, fmt.Errorf("scan: share set exceeds %d byte limit", scanSetLimit)
+		}
 		if !s.shares.Complete() {
 			have, need := s.shares.Progress()
 			s.detail = fmt.Sprintf("SHARE %d OF %d", have, need)
 			return nil, errScanProgress
 		}
 		rec, err := s.shares.Recover()
+		if errors.Is(err, shamir.ErrCorrupt) {
+			// The quorum is present and a plate in it is bad. The set
+			// stays: every further distinct share retries, and a
+			// clean spare lets the retry name the corrupt plate.
+			s.detail = detailCorrupt
+			if errors.Is(err, shamir.ErrAmbiguous) {
+				s.detail = detailAmbiguous
+			}
+			return nil, errScanProgress
+		}
 		s.shares = shamir.Set{}
 		if err != nil {
 			return nil, err
 		}
-		return s.sniff(rec.Data, depth+1)
+		obj, err := s.sniff(rec.Data, depth+1)
+		if err == nil {
+			s.corrupt = rec.Corrupt
+		}
+		return obj, err
 	}
 	return s.sniff(payload, depth+1)
 }

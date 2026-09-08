@@ -211,6 +211,38 @@ func TestScanBBQrTextLookalike(t *testing.T) {
 	}
 }
 
+// TestScanBBQrReservedType: the letter decides whether a payload is
+// sniffed. Readable text under the generic U letter lands on the text
+// screen; the same bytes under a reserved letter, or under P, are
+// refused, since a letter this firmware does not know may be another
+// decoder's extension whose payload is not the data it looks like.
+func TestScanBBQrReservedType(t *testing.T) {
+	payload := []byte("hello from a future extension")
+	series := func(typ byte) string {
+		s, err := bbqr.Split(payload, typ, bbqr.SplitOptions{Encoding: bbqr.EncBase32})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(s.Parts) != 1 {
+			t.Fatalf("test wants one part, got %d", len(s.Parts))
+		}
+		return s.Parts[0]
+	}
+	obj, err := scanRecord(t, new(scanner), series(bbqr.TypeText))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := obj.(plainText); !ok || string(got) != string(payload) {
+		t.Fatalf("type U: got %v, want the text", obj)
+	}
+	for _, typ := range []byte{'Q', bbqr.TypePSBT, bbqr.TypeTxn, bbqr.TypeExec} {
+		obj, err := scanRecord(t, new(scanner), series(typ))
+		if obj != nil || !errors.Is(err, errScanUnknownFormat) {
+			t.Fatalf("type %c: %v %v, want the unknown-format error", typ, obj, err)
+		}
+	}
+}
+
 // TestScanBBQrShareDescriptor recovers the machine's own share plates:
 // the exact part strings fitShares engraves, fed back through the
 // scanner, must land a descriptor object, or the split how-to's

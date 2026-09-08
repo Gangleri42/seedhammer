@@ -254,7 +254,18 @@ func (s *scanner) scanPayload(typ byte, payload []byte, depth int) (any, error) 
 		}
 		return obj, err
 	}
-	return s.sniff(payload, depth+1)
+	switch typ {
+	case bbqr.TypeText, bbqr.TypeCBOR, bbqr.TypeBinary, bbqr.TypeJSON:
+		// The generic letters carry the payload kinds the sniff
+		// cascade reads (text, crypto-output CBOR, and whatever a
+		// sender labelled binary or JSON).
+		return s.sniff(payload, depth+1)
+	}
+	// Every other letter is reserved (BBQr.md) or names a payload the
+	// machine does not render (PSBT, transaction, executable). A
+	// reserved letter may be another decoder's extension whose payload
+	// is not the data it looks like, so it is never sniffed.
+	return nil, fmt.Errorf("%w: bbqr file type %c", errScanUnknownFormat, typ)
 }
 
 // sniffContent is the content-sniffing cascade for a complete payload.

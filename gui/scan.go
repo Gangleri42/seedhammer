@@ -255,10 +255,20 @@ func (s *scanner) scanPayload(typ byte, payload []byte, depth int) (any, error) 
 		return obj, err
 	}
 	switch typ {
-	case bbqr.TypeText, bbqr.TypeCBOR, bbqr.TypeBinary, bbqr.TypeJSON:
+	case bbqr.TypeCBOR:
+		// The letter names the parser: a wallet descriptor's
+		// crypto-output CBOR goes to it first. The cascade below is
+		// the fallback for a payload the letter mislabels.
+		if d, err := urtypes.Parse("crypto-output", payload); err == nil {
+			if desc, ok := d.(*bip380.Descriptor); ok {
+				return desc, nil
+			}
+		}
+		return s.sniff(payload, depth+1)
+	case bbqr.TypeText, bbqr.TypeBinary, bbqr.TypeJSON:
 		// The generic letters carry the payload kinds the sniff
-		// cascade reads (text, crypto-output CBOR, and whatever a
-		// sender labelled binary or JSON).
+		// cascade reads (text, and whatever a sender labelled binary
+		// or JSON).
 		return s.sniff(payload, depth+1)
 	}
 	// Every other letter is reserved (BBQr.md) or names a payload the

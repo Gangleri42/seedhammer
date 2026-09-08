@@ -15,6 +15,7 @@ import (
 
 	"github.com/Gangleri42/BBQr/go/bbqr"
 	"github.com/Gangleri42/BBQr/go/shamir"
+	"seedhammer.com/bc/urtypes"
 	"seedhammer.com/bip380"
 	"seedhammer.com/bip39"
 )
@@ -240,6 +241,41 @@ func TestScanBBQrReservedType(t *testing.T) {
 		if obj != nil || !errors.Is(err, errScanUnknownFormat) {
 			t.Fatalf("type %c: %v %v, want the unknown-format error", typ, obj, err)
 		}
+	}
+}
+
+// TestScanBBQrCBORLetter: a C series carrying a descriptor's
+// crypto-output CBOR lands on the descriptor screen, and a C series
+// whose bytes are not CBOR at all still reaches the cascade, so a
+// mislabelled payload loses nothing. No earlier cascade stage accepts
+// CBOR bytes, so the parser order itself has no observable witness;
+// the fallback is what this pins.
+func TestScanBBQrCBORLetter(t *testing.T) {
+	desc := testMultisig(t, 2, 3)
+	series := func(payload []byte) string {
+		s, err := bbqr.Split(payload, bbqr.TypeCBOR, bbqr.SplitOptions{Encoding: bbqr.EncBase32})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(s.Parts, "\n")
+	}
+	var got any
+	for _, part := range strings.Split(series(urtypes.EncodeDescriptor(desc)), "\n") {
+		obj, err := scanRecord(t, new(scanner), part)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = obj
+	}
+	if d, ok := got.(*bip380.Descriptor); !ok || d.Encode() != desc.Encode() {
+		t.Fatalf("type C descriptor: got %v", got)
+	}
+	obj, err := scanRecord(t, new(scanner), series([]byte("not cbor, just text")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := obj.(plainText); !ok || string(got) != "not cbor, just text" {
+		t.Fatalf("type C text: got %v, want the text through the cascade", obj)
 	}
 }
 

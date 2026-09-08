@@ -13,10 +13,10 @@ import (
 	"testing/synctest"
 	"time"
 
-	"seedhammer.com/bbqr"
+	"github.com/Gangleri42/BBQr/go/bbqr"
+	"github.com/Gangleri42/BBQr/go/shamir"
 	"seedhammer.com/bip380"
 	"seedhammer.com/bip39"
-	"seedhammer.com/shamir"
 )
 
 // scanRecord delivers one NFC record and returns the scanner's verdict

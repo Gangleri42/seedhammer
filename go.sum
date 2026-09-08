@@ -1,3 +1,5 @@
+github.com/Gangleri42/BBQr/go v0.1.0 h1:egLeDJM2FdbmFYdIJnUWBb08kaVb4C+mTosFFEKylrM=
+github.com/Gangleri42/BBQr/go v0.1.0/go.mod h1:FqnzZYfJV+1HFDwgzHMXWyBi5LRw0fycNKgv9sVblEE=
 github.com/Gangleri42/kortschak-qr v0.3.3 h1:yVJT1CvOmFdxnAjRsjyan92/akBGob+mk+XR+47ogKQ=
 github.com/Gangleri42/kortschak-qr v0.3.3/go.mod h1:zapN/iP6EUgPZCGPRI1SXZqUOgaw1/7nWIJVlunN8VQ=
 github.com/btcsuite/btcd/address/v2 v2.0.0 h1:UVu8Hal6Siu4XastFe+JX5JkeBYONbDUIY5E+SVTs6I=

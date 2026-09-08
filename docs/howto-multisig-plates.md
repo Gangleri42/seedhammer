@@ -7,8 +7,10 @@ holds enough seed plates to spend also holds enough steel to reconstruct the
 wallet, with no descriptor plate as a separate single point of loss.
 
 The split is Shamir's secret sharing over a BBQr transport, specified in
-[shamir/SPEC.md](../shamir/SPEC.md), under its derived generator profile
-([section 3a](../shamir/SPEC.md#3a-generator-profiles)): the shares are a
+[SPEC.md](https://github.com/Gangleri42/BBQr/blob/go/v0.1.0/go/shamir/SPEC.md) of the
+[BBQr Go module](https://github.com/Gangleri42/BBQr/tree/master/go) the
+firmware depends on, under its derived generator profile
+([section 3a](https://github.com/Gangleri42/BBQr/blob/go/v0.1.0/go/shamir/SPEC.md#3a-generator-profiles)): the shares are a
 function of the descriptor and the threshold, with no randomness in them,
 so the same wallet always cuts the same plates. That reproducibility has
 a price. Below the quorum a share yields no descriptor, and fewer than
@@ -143,11 +145,16 @@ usual ways.
   screen and coming back clears a held set.
 - **On a computer.** Collect each plate's code into a file, one line
   per QR, a blank line between plates, and run
-  `bbqr combine -descriptor` from [cmd/bbqr](../cmd/bbqr). It prints
-  the wallet descriptor as text and, given spare plates beyond the
-  quorum, survives corrupt shares while the clean plates outnumber
-  them and names every bad plate; when the evidence is ambiguous it
-  says so and asks for one more plate.
+
+  ```
+  go run github.com/Gangleri42/BBQr/go/cmd/bbqr@v0.1.0 combine shares.txt | go run ./cmd/descriptor
+  ```
+
+  The first command recovers the descriptor's CBOR from the shares and,
+  given spare plates beyond the quorum, survives corrupt shares while
+  the clean plates outnumber them and names every bad plate; when the
+  evidence is ambiguous it says so and asks for one more plate. The
+  second prints the CBOR as wallet descriptor text.
 
 The engraved part text, on the TEXT + QR and TEXT ONLY styles, is the
 exact QR content, character for character, so hand transcription
@@ -159,8 +166,8 @@ wrong or damaged plate cannot pass unnoticed.
 
 ## Fine print
 
-- The wire format is [specified](../shamir/SPEC.md) and pinned by test
-  vectors in this repo: plates cut today remain decodable by tomorrow's
+- The wire format is [specified](https://github.com/Gangleri42/BBQr/blob/go/v0.1.0/go/shamir/SPEC.md) and pinned by test
+  vectors in the module: plates cut today remain decodable by tomorrow's
   firmware, or by anyone implementing the spec. The derived profile
   changed nothing on the wire: a set split under the randomized
   profile recovers the same way and cannot be reproduced, so one of

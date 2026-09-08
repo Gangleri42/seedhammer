@@ -14,7 +14,8 @@ import (
 )
 
 // The descriptor plate splits this package's Split used to produce
-// moved to Shamir shares over BBQr (seedhammer.com/shamir): threshold
+// moved to Shamir shares over BBQr (github.com/Gangleri42/BBQr/go/shamir):
+// threshold
 // security with any k-of-n instead of the hardcoded XOR schemes here.
 // The decoder stays: plates engraved by earlier firmware keep
 // recovering through it, and the export path keeps its fountain-coded

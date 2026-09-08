@@ -10,13 +10,13 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/Gangleri42/BBQr/go/bbqr"
+	"github.com/Gangleri42/BBQr/go/shamir"
 	qr "github.com/seedhammer/kortschak-qr"
 	"seedhammer.com/backup"
-	"seedhammer.com/bbqr"
 	"seedhammer.com/bc/urtypes"
 	"seedhammer.com/bip380"
 	"seedhammer.com/font/sh"
-	"seedhammer.com/shamir"
 )
 
 func testMultisig(t testing.TB, threshold, nkeys int) *bip380.Descriptor {

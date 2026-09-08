@@ -19,11 +19,12 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Gangleri42/BBQr/go/bbqr"
+	"github.com/Gangleri42/BBQr/go/shamir"
 	"github.com/btcsuite/btcd/btcutil/v2/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg/v2"
 	qr "github.com/seedhammer/kortschak-qr"
 	"seedhammer.com/backup"
-	"seedhammer.com/bbqr"
 	"seedhammer.com/bc/urtypes"
 	"seedhammer.com/bezier"
 	"seedhammer.com/bip32"
@@ -44,7 +45,6 @@ import (
 	"seedhammer.com/nip19"
 	"seedhammer.com/nonstandard"
 	"seedhammer.com/seedqr"
-	"seedhammer.com/shamir"
 	slip39words "seedhammer.com/slip39"
 )
 
@@ -749,7 +749,7 @@ func splitDescriptor(desc *bip380.Descriptor) *bip380.Descriptor {
 
 // fitShares splits the canonical descriptor's CBOR encoding
 // (splitDescriptor) into one Shamir threshold-of-cosigners set under
-// the derived profile of shamir/SPEC.md: the shares are a function
+// the derived profile of the shamir package's SPEC.md: the shares are a function
 // of the canonical descriptor and the threshold alone, so every run
 // of the same wallet at the same threshold produces the same plates
 // and the same tag, and a plate skipped or lost is cut again by
@@ -3763,7 +3763,7 @@ func corruptScreen(plates []int, obj any) *ChoiceScreen {
 	}
 	// The recovered object names what to re-cut from; a descriptor
 	// is what the machine's own plates hold, anything else came from
-	// cmd/bbqr split.
+	// the bbqr tool's split.
 	noun := "backup"
 	if _, ok := obj.(*bip380.Descriptor); ok {
 		noun = "descriptor"

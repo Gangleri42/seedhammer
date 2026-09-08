@@ -8,7 +8,8 @@ import (
 	"log"
 	"unicode/utf8"
 
-	"seedhammer.com/bbqr"
+	"github.com/Gangleri42/BBQr/go/bbqr"
+	"github.com/Gangleri42/BBQr/go/shamir"
 	"seedhammer.com/bc/urtypes"
 	"seedhammer.com/bip380"
 	"seedhammer.com/bip39"
@@ -18,7 +19,6 @@ import (
 	"seedhammer.com/nip19"
 	"seedhammer.com/nonstandard"
 	"seedhammer.com/seedqr"
-	"seedhammer.com/shamir"
 )
 
 // recordTyper is implemented by NFC readers that surface the type of

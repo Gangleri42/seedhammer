@@ -148,11 +148,14 @@ changes.
    single point of failure. Each share pairs with its cosigner's seed
    plate by fingerprint (the back of the seed plate is the natural
    spot), exactly as [the split how-to](howto-multisig-plates.md)
-   describes. Each plate opens on its pairing gate and previews its
-   share before the cut:
+   describes. Share plates number cosigners in the machine's canonical
+   key order (keys sorted by their bytes), which can differ from the
+   order they were entered; pair by the fingerprint in the header.
+   Each plate opens on its pairing gate and previews its share before
+   the cut:
 
    ![The share plate's pairing gate](images/msw-18-share-gate.png)
-   ![Cosigner 1's share plate before the cut](images/msw-19-share-plate.png)
+   ![Share plate 1 of 3, paired by its header with cosigner 34B242EC, before the cut](images/msw-19-share-plate.png)
 
    Both endings as engraved, rendered from the same planned strokes
    the machine cuts. The complete descriptor on its single plate, title
@@ -160,10 +163,10 @@ changes.
 
    ![The titled descriptor plate as engraved](images/plate-descriptor.png)
 
-   And cosigner 1's share of the split, the pairing header over the UR
-   fragment; two more like it complete the set:
+   And share plate 1 of 3, its header pairing it with cosigner
+   34B242EC over the share's code; two more like it complete the set:
 
-   ![Cosigner 1's share plate as engraved](images/plate-share-1of3.png)
+   ![Share plate 1 of 3, paired by its header with cosigner 34B242EC, as engraved](images/plate-share-1of3.png)
 
 ## Passphrases multiply
 
@@ -183,18 +186,21 @@ exactly which threat the passphrase answers.
 
 The wallet recovers from any M of the N seeds plus the descriptor,
 which is what the plate set holds in steel. The seed plates restore into
-any BIP39 signer; the descriptor restores into any wallet from the split
-plates' codes ([how](howto-multisig-plates.md#recover-into-a-wallet)), a
-single descriptor plate, or the coordinator's own backup.
+any BIP39 signer; the descriptor restores from the split plates' codes
+through the machine or a computer
+([how](howto-multisig-plates.md#recover-into-a-wallet)), a single
+descriptor plate, or the coordinator's own backup.
 
-An aborted plate session resumes the way the split how-to describes:
-scan the descriptor back in (from a plate QR, the coordinator, or a
-text record), split again, and skip the plates already cut. The share
-codes are byte-identical on every pass. One nuance: the descriptor
-string itself carries no title, so a rescan from raw text produces share
-headers without the wallet name; scanning the coordinator's export with
-the name attached (or a `{label, descriptor}` record) keeps the headers
-identical too.
+An aborted plate run is finished by splitting again: scan the
+descriptor back in (from a plate QR, the coordinator, or a text
+record), choose the split, and skip the plates already cut. The codes
+are identical on every pass, since the shares are derived from the
+descriptor and the threshold; a different tag in the header means a
+different set, and matching tags are what to expect, not proof. One
+catch: the descriptor string itself carries
+no title, so a rescan from raw text produces share headers without the
+wallet name; scanning the coordinator's export with the name attached
+(or a `{label, descriptor}` record) keeps the headers matching.
 
 Seeds live only inside one run of the flow. Backing out discards them
 after a held warning, and finished or abandoned, the machine forgets the

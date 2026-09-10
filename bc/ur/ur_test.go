@@ -1,11 +1,7 @@
 package ur
 
 import (
-	"bytes"
-	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
-	"math/bits"
 	"slices"
 	"strings"
 	"testing"
@@ -122,124 +118,7 @@ func TestDecode(t *testing.T) {
 	}
 }
 
-func TestSplit(t *testing.T) {
-	t.Parallel()
-
-	// recoverable is exhaustive over the 2^n share subsets; past 13
-	// shares the runtime balloons while the schemes add no new
-	// structure (m == n-1 is the only branch up there).
-	maxShares := 13
-	if testing.Short() {
-		maxShares = 9
-	}
-	data := make([]byte, 10e3)
-	for i := range data {
-		data[i] = byte(i)
-	}
-	for n := 1; n <= maxShares; n++ {
-		name := fmt.Sprintf("%d-shares", n)
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			for m := 1; m <= n; m++ {
-				data := Data{
-					Data:      data,
-					Threshold: m,
-					Shards:    n,
-				}
-				if !recoverable(data) {
-					t.Errorf("%d-of-%d: failed to recover", m, n)
-				}
-			}
-		})
-	}
-}
-
-func recoverable(data Data) bool {
-	var shares [][]string
-	for k := range data.Shards {
-		shares = append(shares, Split(data, k))
-	}
-	// Count to all bit patterns of n length, choose the ones with
-	// m bits. Every m-sized subset must recover; a scheme that favors
-	// particular selections defeats the point of the split.
-	allPerm := uint64(1)<<data.Shards - 1
-	for c := uint64(1); c <= allPerm; c++ {
-		if bits.OnesCount64(c) != data.Threshold {
-			continue
-		}
-		d := new(Decoder)
-		for rem := c; rem != 0; {
-			share := bits.TrailingZeros64(rem)
-			rem &^= 1 << share
-			for _, ur := range shares[share] {
-				d.Add(ur)
-			}
-		}
-		_, enc, err := d.Result()
-		if err != nil || enc == nil || !bytes.Equal(enc, data.Data) {
-			return false
-		}
-	}
-	return true
-}
-
-// TestHasScheme pins HasScheme to Split's observable behavior: a
-// quorum has a scheme exactly when Split emits fragment URs (a
-// "seq-len/" segment) instead of a single-part full copy on every
-// share.
-func TestHasScheme(t *testing.T) {
-	data := make([]byte, 331)
-	for i := range data {
-		data[i] = byte(i * 13)
-	}
-	for n := 1; n <= 12; n++ {
-		for m := 1; m <= n; m++ {
-			fragmented := false
-			for k := range n {
-				for _, u := range Split(Data{Data: data, Threshold: m, Shards: n}, k) {
-					if len(strings.SplitN(u, "/", 3)) == 3 {
-						fragmented = true
-					}
-				}
-			}
-			if got, want := HasScheme(m, n), fragmented; got != want {
-				t.Errorf("HasScheme(%d, %d) = %t, but Split fragments = %t", m, n, got, want)
-			}
-		}
-	}
-}
-
-// TestSplitShares pins Split's exact output for every scheme branch.
-// Engraved plates are forever: a change to the partition — part
-// assignment, seqNum search, encoding — would strand plates cut by
-// earlier firmware, so any diff here must be treated as a
-// compatibility break, not a golden refresh.
-func TestSplitShares(t *testing.T) {
-	data := make([]byte, 200)
-	for i := range data {
-		data[i] = byte(i * 7)
-	}
-	golden := []struct {
-		m, n   int
-		shares []string
-	}{
-		{2, 3, nil},
-		{3, 4, nil},
-		{2, 4, nil},
-		{3, 5, nil},
-		{1, 3, nil},
-	}
-	for gi := range golden {
-		g := &golden[gi]
-		for k := range g.n {
-			urs := Split(Data{Data: data, Threshold: g.m, Shards: g.n}, k)
-			h := sha256.Sum256([]byte(strings.Join(urs, "\n")))
-			g.shares = append(g.shares, hex.EncodeToString(h[:8]))
-		}
-	}
-	got := fmt.Sprintf("%v", golden)
-	const want = `[{2 3 [196e93f0d8e20d3c bc14b1186b2d8c47 9d59f8396a28c8aa]} {3 4 [446c39083fa82e0c cb6ae3f774b22b1c 048d82532fa99d99 5bdbf18635a0bb6a]} {2 4 [95cded9086f42d7b 32f6cf756172d475 8021a70a89e47bf2 abb1cb167d3ce182]} {3 5 [94f95e1c9423e3eb 723ad11bc65620a6 5929b1e397320746 691f1a8cf8f31ebd bfbf16858f76137e]} {1 3 [ff59cc60e76dbc27 ff59cc60e76dbc27 ff59cc60e76dbc27]}]`
-	if got != want {
-		t.Errorf("Split output drifted:\ngot  %s\nwant %s", got, want)
-	}
-}
+// The legacy descriptor plate splits (the Split function and its
+// tests) were removed with the migration to Shamir shares over BBQr.
+// The plates they engraved stay recoverable through Decoder, pinned
+// by the multi-part cases of TestDecode above.

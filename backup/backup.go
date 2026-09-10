@@ -443,22 +443,37 @@ func EngraveText(params engrave.Params, plate Text) engrave.Engraving {
 					}
 				}
 			}
+			qrBottom := 0
 			if qr != nil {
 				qrx := plateDims.X - qrsz - margin - qrBorder
 				qry := offy + (qrLines*fontSize-qrsz)/2
 				if len(p.Text) == 0 {
-					// Center QR.
-					qrx, qry = (plateDims.X-qrsz)/2, (plateDims.Y-qrsz)/2
+					// Center the code: on the whole plate when it is
+					// the plate's only content, otherwise in the band
+					// remaining after the text so far, so it never
+					// overlaps a header above it.
+					qrx = (plateDims.X - qrsz) / 2
+					if i == 0 && len(plate.Paragraphs) == 1 {
+						qry = (plateDims.Y - qrsz) / 2
+					} else {
+						qry = offy + (plateDims.Y-margin-offy-qrsz)/2
+					}
 				}
 				t.Offset(qrx, qry)
 				qr(t.Yield)
+				qrBottom = qry + qrsz
 			}
-			// A QR taller than its text owns the band: advancing by
-			// text lines alone would start the next paragraph inside
-			// it. Unreachable today (descriptor plates are a single
-			// paragraph; share paragraphs are text-dominated), kept
-			// correct for the next caller.
-			offy += max(lineno, qrLines) * fontSize
+			if len(p.Text) == 0 && qr != nil {
+				// A band-centered code sits below where a text advance
+				// would reach; continue from its bottom edge so a
+				// following paragraph never engraves through it.
+				offy = qrBottom
+			} else {
+				// A QR taller than its text owns the band: advancing
+				// by text lines alone would start the next paragraph
+				// inside it.
+				offy += max(lineno, qrLines) * fontSize
+			}
 			if i != len(plate.Paragraphs)-1 {
 				// Space UR sections.
 				offy += params.I(1)

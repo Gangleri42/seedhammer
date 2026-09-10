@@ -3,6 +3,7 @@ module seedhammer.com
 go 1.25.10
 
 require (
+	github.com/Gangleri42/BBQr/go v0.1.0
 	github.com/btcsuite/btcd/address/v2 v2.0.0
 	github.com/btcsuite/btcd/btcec/v2 v2.4.0
 	github.com/btcsuite/btcd/btcutil/v2 v2.0.0

@@ -329,3 +329,34 @@ func TestValidRejectsOutOfRangeWords(t *testing.T) {
 		}()
 	}
 }
+
+// TestParseRejectsAmbiguousPrefixes uses two checksum-valid mnemonics whose
+// differing word shares a three-letter prefix. The checksum cannot choose
+// which word the sender intended.
+func TestParseRejectsAmbiguousPrefixes(t *testing.T) {
+	const original = "sheriff old profit deer borrow salad document wide crazy know virus later"
+	const other = "sheriff old profit deer borrow salad document wide crazy know virtual later"
+	for _, sentence := range []string{original, other} {
+		if _, err := ParseMnemonic(sentence); err != nil {
+			t.Fatalf("invalid fixture: %v", err)
+		}
+	}
+	for _, prefix := range []string{"vir", "VIR"} {
+		input := strings.Replace(original, "virus", prefix, 1)
+		if got, err := Parse([]byte(input)); err == nil {
+			t.Errorf("ambiguous prefix accepted as %q", got.String())
+		}
+	}
+	// A four-letter prefix remains unambiguous, including when the exact
+	// short word is also a prefix of another dictionary entry.
+	for _, sentence := range []string{original, other} {
+		var abbreviated []string
+		for word := range strings.SplitSeq(sentence, " ") {
+			abbreviated = append(abbreviated, word[:min(len(word), 4)])
+		}
+		got, err := Parse([]byte(strings.Join(abbreviated, " ")))
+		if err != nil || got.String() != sentence {
+			t.Errorf("unambiguous input = %q, %v", got.String(), err)
+		}
+	}
+}

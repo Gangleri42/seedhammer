@@ -277,9 +277,8 @@ func Parse(buf []byte) (Mnemonic, error) {
 			return nil, fmt.Errorf("bip39: parse: mnemonic too long")
 		}
 		wu := bytes.ToUpper(w)
-		closest, valid := ClosestWord(string(wu))
-		if !valid || len(wu) < 3 ||
-			!bytes.HasPrefix([]byte(LabelFor(closest)), wu) {
+		closest, valid := Complete(string(wu))
+		if !valid || len(wu) < 3 {
 			return nil, fmt.Errorf("bip39: parse: unknown word: %q", w)
 		}
 		m = append(m, closest)

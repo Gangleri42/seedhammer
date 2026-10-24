@@ -75,6 +75,11 @@ func TestScan(t *testing.T) {
 			Content: b39,
 		},
 		{
+			Name:    "Ambiguous BIP39 Prefix",
+			Encoded: "sheriff old profit deer borrow salad document wide crazy know vir later",
+			Content: plainText("sheriff old profit deer borrow salad document wide crazy know vir later"),
+		},
+		{
 			Name:    "SeedQR",
 			Encoded: "101920151790203919831533203119191019201517902040",
 			Content: b39,

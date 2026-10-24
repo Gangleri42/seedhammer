@@ -57,6 +57,11 @@ func addressAt(desc *bip380.Descriptor, index uint32, change bool) (string, erro
 			if err != nil {
 				return "", fmt.Errorf("address: %w", err)
 			}
+			for _, previous := range keys {
+				if previous.PubKey().IsEqual(pub) {
+					return "", fmt.Errorf("address: two cosigners derive the same key: %w", errUnsupported)
+				}
+			}
 			keys = append(keys, addrPub)
 		}
 		slices.SortFunc(keys, func(addr1, addr2 *address.AddressPubKey) int {

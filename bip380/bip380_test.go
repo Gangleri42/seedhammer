@@ -298,7 +298,7 @@ func TestValidate(t *testing.T) {
 		{"single key", Descriptor{Type: Singlesig, Keys: []Key{key}}, true},
 		{"single, no key", Descriptor{Type: Singlesig}, false},
 		{"single, two keys", Descriptor{Type: Singlesig, Keys: []Key{key, key}}, false},
-		{"2 of 3", Descriptor{Type: SortedMulti, Threshold: 2, Keys: []Key{key, key, key}}, true},
+		{"2 of 3", Descriptor{Type: SortedMulti, Threshold: 2, Keys: []Key{{KeyData: []byte{1}}, {KeyData: []byte{2}}, {KeyData: []byte{3}}}}, true},
 		{"1 of 1", Descriptor{Type: SortedMulti, Threshold: 1, Keys: []Key{key}}, true},
 		{"0 of 2", Descriptor{Type: SortedMulti, Threshold: 0, Keys: []Key{key, key}}, false},
 		{"3 of 2", Descriptor{Type: SortedMulti, Threshold: 3, Keys: []Key{key, key}}, false},
@@ -307,6 +307,50 @@ func TestValidate(t *testing.T) {
 	} {
 		if err := tc.d.Validate(); (err == nil) != tc.ok {
 			t.Errorf("%s: Validate = %v, want ok=%v", tc.name, err, tc.ok)
+		}
+	}
+}
+
+// Origin metadata does not make the same spending expression another signer.
+func TestRejectDuplicateCosignerKeys(t *testing.T) {
+	root, err := hdkeychain.NewMaster(make([]byte, 32), &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := root.ECPubKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := Key{Network: &chaincfg.MainNetParams, MasterFingerprint: 1,
+		DerivationPath: []uint32{0}, KeyData: pub.SerializeCompressed(), ChainCode: root.ChainCode()}
+	for _, explicit := range []bool{false, true} {
+		other := key
+		other.MasterFingerprint = 2
+		other.ParentFingerprint = 3
+		other.DerivationPath = []uint32{99}
+		if explicit {
+			other.Children = []Derivation{{Type: RangeDerivation, Index: 0, End: 1}, {Type: WildcardDerivation}}
+		}
+		desc := &Descriptor{Type: SortedMulti, Script: P2WSH, Threshold: 2, Keys: []Key{key, other}}
+		if err := desc.Validate(); err == nil {
+			t.Error("repeated key accepted under different origin metadata")
+		}
+		if _, err := Parse(desc.Encode()); err == nil {
+			t.Error("imported repeated key accepted")
+		}
+	}
+	// A different child expression or chain code is not this duplicate.
+	{
+		other := key
+		other.Children = []Derivation{{Type: ChildDerivation, Index: 2}, {Type: WildcardDerivation}}
+		if err := (&Descriptor{Type: SortedMulti, Threshold: 2, Keys: []Key{key, other}}).Validate(); err != nil {
+			t.Fatal(err)
+		}
+		other = key
+		other.ChainCode = append([]byte(nil), key.ChainCode...)
+		other.ChainCode[0] ^= 1
+		if err := (&Descriptor{Type: SortedMulti, Threshold: 2, Keys: []Key{key, other}}).Validate(); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

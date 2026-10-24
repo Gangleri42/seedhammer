@@ -4,6 +4,7 @@
 package bip380
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -118,11 +119,12 @@ const (
 )
 
 // Validate checks the arithmetic every entry path and every consumer
-// rely on: a single-key descriptor carries exactly one key, and a
+// rely on: a single-key descriptor carries exactly one key, a
 // multisig quorum lies in 1..n, since 0-of-n is anyone-can-spend and
-// m > n is unspendable. Parse, the nonstandard and UR decoders and
-// address derivation all call it, so a hand-built Descriptor meets
-// the same line as a scanned one.
+// m > n is unspendable, and no key appears twice, since one key
+// signing for two slots lowers the quorum. Parse, the nonstandard and
+// UR decoders and address derivation all call it, so a hand-built
+// Descriptor meets the same line as a scanned one.
 func (d *Descriptor) Validate() error {
 	switch d.Type {
 	case Singlesig:
@@ -133,10 +135,61 @@ func (d *Descriptor) Validate() error {
 		if d.Threshold < 1 || d.Threshold > len(d.Keys) {
 			return fmt.Errorf("bip380: threshold %d of %d keys is not a spendable quorum", d.Threshold, len(d.Keys))
 		}
+		for i, key := range d.Keys {
+			for j := range i {
+				if key.SameSpend(d.Keys[j]) {
+					return fmt.Errorf("bip380: cosigners %d and %d are the same key", j+1, i+1)
+				}
+			}
+		}
 	default:
 		return fmt.Errorf("bip380: unknown descriptor type %d", d.Type)
 	}
 	return nil
+}
+
+// SameSpend reports whether k and other reach the same script keys:
+// the same public key and chain code under the same child
+// expressions, an absent expression read as <0;1>/*. Origin metadata
+// stays out of it. A fingerprint or path is the sender's claim about
+// where a key came from, and a claim cannot turn a repeated xpub into
+// another cosigner. Two expressions that reach one derived key by
+// different routes are caught where the key is derived, in address.
+func (k Key) SameSpend(other Key) bool {
+	if !bytes.Equal(k.KeyData, other.KeyData) || !bytes.Equal(k.ChainCode, other.ChainCode) {
+		return false
+	}
+	defaultChildren := [...]Derivation{{Type: RangeDerivation, Index: 0, End: 1}, {Type: WildcardDerivation}}
+	ac, bc := k.Children, other.Children
+	if len(ac) == 0 {
+		ac = defaultChildren[:]
+	}
+	if len(bc) == 0 {
+		bc = defaultChildren[:]
+	}
+	if len(ac) != len(bc) {
+		return false
+	}
+	for i, x := range ac {
+		y := bc[i]
+		if x.Type != y.Type || x.Hardened != y.Hardened {
+			return false
+		}
+		switch x.Type {
+		case ChildDerivation:
+			if x.Index != y.Index {
+				return false
+			}
+		case RangeDerivation:
+			if x.Index != y.Index || x.End != y.End {
+				return false
+			}
+		case WildcardDerivation:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (k Key) ExtendedKey() *hdkeychain.ExtendedKey {

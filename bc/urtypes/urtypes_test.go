@@ -351,13 +351,19 @@ func TestDecodeRejects(t *testing.T) {
 		}
 	}
 	multi := func(threshold int) *bip380.Descriptor {
-		return &bip380.Descriptor{Script: bip380.P2WSH, Type: bip380.SortedMulti, Threshold: threshold, Keys: []bip380.Key{key(), key()}}
+		first, second := key(), key()
+		second.ChainCode[0] ^= 1
+		return &bip380.Descriptor{Script: bip380.P2WSH, Type: bip380.SortedMulti, Threshold: threshold, Keys: []bip380.Key{first, second}}
 	}
+	duplicate := multi(2)
+	duplicate.Keys[1] = duplicate.Keys[0]
+	duplicate.Keys[1].MasterFingerprint++
 	hardened := key()
 	hardened.Children = []bip380.Derivation{{Type: bip380.ChildDerivation, Index: 0, Hardened: true}, {Type: bip380.WildcardDerivation}}
 	deep := key()
 	deep.DerivationPath = make(bip32.Path, 256)
 	for name, desc := range map[string]*bip380.Descriptor{
+		"duplicate spending key":  duplicate,
 		"threshold 0":             multi(0),
 		"threshold past the keys": multi(3),
 		"hardened child":          {Script: bip380.P2WPKH, Type: bip380.Singlesig, Threshold: 1, Keys: []bip380.Key{hardened}},

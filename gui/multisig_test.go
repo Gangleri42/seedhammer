@@ -397,3 +397,25 @@ func TestCosignerRejectsHardenedChildren(t *testing.T) {
 		t.Error("an unhardened tapped key was rejected")
 	}
 }
+
+func TestCosignerRejectsDuplicateKeyWithDifferentOrigin(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		key, err := cosignerKey(goldenMnemonic(t, goldenSeedOil), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := newPlatform()
+		nfc := newTestNFC()
+		p.nfc = nfc
+		ctx := NewContext(p)
+		accepted := false
+		frame, quit := runUI(ctx, func() { _, accepted = cosignerFlow(ctx, &descriptorTheme, []cosignerSlot{{key: key}}, 1, 2) })
+		defer quit()
+		awaitUI(t, frame, "Enter the seed words, or tap a seed or cosigner key")
+		nfc.payloads <- []byte("[01020304/48h/0h/0h/2h]" + key.String() + "/<0;1>/*")
+		awaitUI(t, frame, "Already cosigner 1")
+		if accepted {
+			t.Fatal("duplicate cosigner accepted")
+		}
+	})
+}

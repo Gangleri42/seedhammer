@@ -125,3 +125,19 @@ func TestAddressRejects(t *testing.T) {
 		}
 	}
 }
+
+// A fixed child and a receive/change range can alias even though their
+// spending expressions differ. Reject repeated actual script keys too.
+func TestRejectDuplicateDerivedCosigners(t *testing.T) {
+	const xpub = "xpub6DiYrfRwNnjeX4vHsWMajJVFKrbEEnu8gAW9vDuQzgTWEsEHE16sGWeXXUV1LBWQE1yCTmeprSNcqZ3W74hqVdgDbtYHUv3eM4W2TEUhpan"
+	desc, err := bip380.Parse("wsh(sortedmulti(2," + xpub + "/0/*," + xpub + "/<0;1>/*))")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Receive(desc, 0); err == nil {
+		t.Error("same receive key counted twice")
+	}
+	if _, err := Change(desc, 0); err != nil {
+		t.Fatalf("distinct change keys rejected: %v", err)
+	}
+}

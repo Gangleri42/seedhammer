@@ -341,6 +341,13 @@ func cosignerFlow(ctx *Context, th *Colors, slots []cosignerSlot, k, n int) (cos
 			showError(ctx, th, fmt.Errorf("Already cosigner %d: the same master fingerprint %.8X.", dup+1, slot.key.MasterFingerprint), blankScreen)
 			continue
 		}
+		// The fingerprint is the key's own claim about its origin; the
+		// key material decides. The same xpub under another fingerprint
+		// is the signer already in the set.
+		if dup := slotWithKey(slots, slot.key); dup >= 0 {
+			showError(ctx, th, fmt.Errorf("Already cosigner %d: the same key under another fingerprint.", dup+1), blankScreen)
+			continue
+		}
 		if confirmCosigner(ctx, th, slot, k, n) {
 			return slot, true
 		}
@@ -486,6 +493,15 @@ func keyShaped(s string) bool {
 func slotWithFingerprint(slots []cosignerSlot, mfp uint32) int {
 	for i, s := range slots {
 		if s.key.MasterFingerprint == mfp {
+			return i
+		}
+	}
+	return -1
+}
+
+func slotWithKey(slots []cosignerSlot, key bip380.Key) int {
+	for i, s := range slots {
+		if s.key.SameSpend(key) {
 			return i
 		}
 	}

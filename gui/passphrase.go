@@ -293,7 +293,8 @@ func fingerprintHex(fp uint32) string {
 // the room during this specific plate, and the constant-stroke face
 // cannot render one anyway: font/constant covers 52 of the 95 printable
 // ASCII characters, so NewConstantStringer panics on any ordinary
-// passphrase. Extending it is not planned. Anyone who revisits that
+// passphrase. Until the face covers the printable range, the offer in
+// passphrasePlateFlow says so and starts on SKIP. Anyone who extends it
 // should read backup/nostr.go, where the same trade is written down for
 // the npub.
 func passphrasePlate(pass, fingerprint, path, title string) string {
@@ -346,13 +347,14 @@ func passphrasePlateFlow(ctx *Context, th *Colors, mnemonic bip39.Mnemonic, pass
 	if pass == "" {
 		return
 	}
-	// Engraving first, as on the seed plate: the selection lands on the
-	// answer someone who set a passphrase came here for, and declining
-	// costs a keypress instead of being what happens by default.
+	// Unlike the seed plate, this one engraves in time that depends on
+	// what it says (see passphrasePlate), so the offer says so and
+	// starts on SKIP: cutting the secret is the move made on purpose.
 	cs := &ChoiceScreen{
 		Title:   "Passphrase",
-		Lead:    "Engrave the passphrase on its own plate?",
+		Lead:    "Engraving sound can reveal a passphrase. Engrave it on its own plate?",
 		Choices: []string{"ENGRAVE PASSPHRASE", "SKIP"},
+		choice:  1,
 	}
 	choice, ok := cs.Choose(ctx, th)
 	if !ok || choice == 1 {

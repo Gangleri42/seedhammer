@@ -236,7 +236,13 @@ know it is not a key.
 ## The passphrase plate
 
 If you set a passphrase, the machine then offers to engrave it on a plate of its
-own, the third of the set:
+own, the third of the set. The offer starts on SKIP, and it says why:
+
+![The passphrase plate offer](images/seed-07-passphrase-offer.png)
+
+The passphrase plate is a text plate, and text engraves in a time that depends
+on what it says. Engrave it where nobody is listening, or keep the passphrase
+some other way. The plate itself:
 
 ```
 BIP39 PASSPHRASE

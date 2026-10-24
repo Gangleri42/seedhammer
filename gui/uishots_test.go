@@ -359,7 +359,8 @@ func shootXpub(t *testing.T, dir string) {
 }
 
 // shootSeed captures the single-seed additions: the title question,
-// the last-word offer and draw, and a titled small plate's preview.
+// the last-word offer and draw, a titled small plate's preview, and
+// the passphrase plate's offer.
 func shootSeed(t *testing.T, dir string) {
 	// The last-word screens, driven directly on the words flow.
 	{
@@ -416,6 +417,17 @@ func shootSeed(t *testing.T, dir string) {
 		s.frame()
 		time.Sleep(confirmDelay + 50*time.Millisecond)
 		s.pump(3)
+		s.drain()
+	}
+	// The passphrase offer, driven directly on its flow: it starts on
+	// SKIP and says why.
+	{
+		s := newShotUI(t, dir, shotPlatform(nil), func(ctx *Context) {
+			passphrasePlateFlow(ctx, &descriptorTheme, goldenMnemonic(t, goldenSeedOil), "hunter2", "m/84h/0h/0h", "vault 1")
+		})
+		s.await("Engrave it on its own plate?")
+		s.capture("seed-07-passphrase-offer")
+		click(&s.ctx.Router, Button3) // SKIP, the default; the flow returns
 		s.drain()
 	}
 }

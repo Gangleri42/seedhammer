@@ -39,13 +39,22 @@
               ];
             });
           };
-        # Newest TinyGo version.
+        # Newest TinyGo version, built with the Go that go.mod requires:
+        # TinyGo refuses a Go toolchain newer than the one that built it,
+        # and nixpkgs builds it with go_1_25.
         tinygo-overlay =
           let
             version = "0.41.1";
           in
-          final: prev: {
-            tinygo = prev.tinygo.overrideAttrs (prev: {
+          final: prev:
+          let
+            tinygo = prev.tinygo.override {
+              buildGo125Module = final.buildGo126Module;
+              go_1_25 = final.go_1_26;
+            };
+          in
+          {
+            tinygo = tinygo.overrideAttrs (prev: {
               version = "${version}";
               doCheck = false; # TinyGo tests are slow.
               src = final.fetchFromGitHub {

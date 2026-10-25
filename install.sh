@@ -33,11 +33,11 @@ BRIDGE="$REPO/cmd/nfc-bridge/bridge.py"
 # origins, and the local Studio serve (seedhammer-studio/serve.sh).
 ORIGINS="https://studio.seedhammer.space,https://gangleri42.github.io,http://127.0.0.1:8787,http://localhost:8787,http://127.0.0.1:8788,http://localhost:8788"
 
-GO_VERSION=go1.25.10
-GO_SHA_LINUX_AMD64=42d4f7a32316aa66591eca7e89867256057a4264451aca10570a715b3637ba70
-GO_SHA_LINUX_ARM64=654da1f9b50a5d1c2a85ccf8ed405aa89c06e94d18384628bf186f7712677b08
-GO_SHA_DARWIN_AMD64=52321165a3146cd91865ef98371506a846ed4dc4f9f1c9323e5ad90d2a411e06
-GO_SHA_DARWIN_ARM64=795691a425de7e7cdba3544f354dcd2cebcf52e87dc6898193878f34eb6d634f
+GO_VERSION=go1.26.3
+GO_SHA_LINUX_AMD64=2b2cfc7148493da5e73981bffbf3353af381d5f93e789c82c79aff64962eb556
+GO_SHA_LINUX_ARM64=9d89a3ea57d141c2b22d70083f2c8459ba3890f2d9e818e7e933b75614936565
+GO_SHA_DARWIN_AMD64=278d580b32e299fe4a9c990fcf2d02acfe538c7e551a6ee18f9c7164573d2c63
+GO_SHA_DARWIN_ARM64=875cf54a15311eee2c99b9dd67c68c4a49351d489ab622bf2cfd28c8f2078d3c
 
 PICOTOOL_VERSION=2.3.0
 PICOTOOL_BASE=https://github.com/raspberrypi/pico-sdk-tools/releases/download/v2.3.0-0
@@ -322,7 +322,7 @@ then rerun. (This script does not disable other software by itself.)"
   act "= pcscd not active"
 }
 
-go_new_enough() { # 1.21+ can GOTOOLCHAIN-fetch the pinned go1.25.10
+go_new_enough() { # 1.21+ can GOTOOLCHAIN-fetch the pinned go1.26.3
   local v minor
   v=$("$1" version 2>/dev/null | awk '{print $3}')
   case $v in
